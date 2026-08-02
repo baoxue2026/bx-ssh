@@ -32,9 +32,45 @@ impl HostKeyInfo {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RemoteFileKind {
+    Directory,
+    File,
+    Symlink,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteFileEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: RemoteFileKind,
+    pub size: u64,
+    pub modified_at: Option<u64>,
+    pub permissions: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDirectoryListing {
+    pub path: String,
+    pub entries: Vec<RemoteFileEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferSummary {
+    pub bytes: u64,
+    pub elapsed_ms: u64,
+    pub bytes_per_second: u64,
+    pub sha256: String,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AppInfo, HostKeyInfo};
+    use super::{AppInfo, HostKeyInfo, RemoteFileEntry, RemoteFileKind, TransferSummary};
 
     #[test]
     fn creates_app_info() {
@@ -53,5 +89,27 @@ mod tests {
 
         assert_eq!(info.algorithm, "ssh-ed25519");
         assert!(info.fingerprint_sha256.starts_with("SHA256:"));
+    }
+
+    #[test]
+    fn serializes_sftp_contracts_with_stable_field_names() {
+        let entry = RemoteFileEntry {
+            name: "archive.tar".to_owned(),
+            path: "/tmp/archive.tar".to_owned(),
+            kind: RemoteFileKind::File,
+            size: 1024,
+            modified_at: Some(1_700_000_000),
+            permissions: Some(0o640),
+        };
+        let summary = TransferSummary {
+            bytes: 1024,
+            elapsed_ms: 20,
+            bytes_per_second: 51_200,
+            sha256: "abc123".to_owned(),
+        };
+
+        assert_eq!(entry.kind, RemoteFileKind::File);
+        assert_eq!(entry.permissions, Some(0o640));
+        assert_eq!(summary.bytes_per_second, 51_200);
     }
 }

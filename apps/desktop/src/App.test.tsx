@@ -181,4 +181,66 @@ describe("App", () => {
       );
     });
   });
+
+  it("opens an SFTP session and renders the remote directory", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-1",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: {
+            path: "/home/bxssh",
+            entries: [
+              {
+                name: "logs",
+                path: "/home/bxssh/logs",
+                kind: "directory",
+                size: 4096,
+                modifiedAt: 1_700_000_000,
+                permissions: 493,
+              },
+            ],
+          },
+        });
+      }
+      return Promise.resolve();
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByText("SFTP"));
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+
+    expect(await screen.findByText("logs")).toBeInTheDocument();
+    expect(screen.getByLabelText("远端路径")).toHaveValue("/home/bxssh");
+    expect(mocks.invoke).toHaveBeenCalledWith("start_password_sftp", {
+      request: expect.objectContaining({
+        username: "bxssh",
+        password: "secret",
+        initialPath: ".",
+      }),
+    });
+  });
 });

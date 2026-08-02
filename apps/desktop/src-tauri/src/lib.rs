@@ -1,9 +1,15 @@
 use bx_contracts::AppInfo;
 
+mod command_error;
 mod platform;
+mod sftp;
 mod terminal;
 
 use platform::set_webview_memory_usage;
+use sftp::{
+    close_sftp_session, download_sftp_file, hash_remote_sftp_file, list_sftp_directory,
+    start_password_sftp, upload_sftp_file, SftpSessionManager,
+};
 use terminal::{
     acknowledge_terminal_output, close_terminal_session, probe_ssh_host, resize_terminal,
     start_password_shell, write_terminal, TerminalSessionManager,
@@ -18,6 +24,7 @@ fn app_info() -> AppInfo {
 pub fn run() {
     tauri::Builder::default()
         .manage(TerminalSessionManager::default())
+        .manage(SftpSessionManager::default())
         .invoke_handler(tauri::generate_handler![
             app_info,
             probe_ssh_host,
@@ -26,6 +33,12 @@ pub fn run() {
             resize_terminal,
             acknowledge_terminal_output,
             close_terminal_session,
+            start_password_sftp,
+            list_sftp_directory,
+            upload_sftp_file,
+            download_sftp_file,
+            hash_remote_sftp_file,
+            close_sftp_session,
             set_webview_memory_usage
         ])
         .run(tauri::generate_context!())

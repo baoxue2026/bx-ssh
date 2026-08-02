@@ -24,12 +24,26 @@ pub enum SshError {
     LegacyRsaSignatureOnly,
     #[error("terminal columns and rows must be greater than zero")]
     InvalidTerminalSize,
+    #[error("remote SFTP path must not be empty or contain a null byte")]
+    InvalidRemotePath,
+    #[error("local transfer path must reference a regular file")]
+    InvalidLocalFile,
+    #[error("local transfer target already exists")]
+    LocalTargetExists,
+    #[error("remote transfer target already exists")]
+    RemoteTargetExists,
+    #[error("file transfer integrity check failed: expected {expected}, received {actual}")]
+    TransferIntegrityMismatch { expected: String, actual: String },
     #[error("{request} request was rejected by the SSH server")]
     ChannelRequestRejected { request: &'static str },
     #[error("SSH channel closed while waiting for the {request} response")]
     ChannelClosed { request: &'static str },
     #[error("failed to load private key: {0}")]
     PrivateKey(#[from] russh::keys::Error),
+    #[error("SFTP operation failed: {0}")]
+    Sftp(#[from] russh_sftp::client::error::Error),
+    #[error("file transfer I/O failed: {0}")]
+    TransferIo(#[from] std::io::Error),
     #[error("SSH transport failed: {0}")]
     Transport(#[from] russh::Error),
 }
