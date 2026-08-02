@@ -1,0 +1,16 @@
+# <type>(<scope>): <简短中文说明>
+#
+# 为什么需要此变更？
+#
+# 改了什么？有哪些重要取舍？
+#
+# Refs: #<issue>
+#
+# BREAKING CHANGE: <迁移或兼容性影响>
+#
+# 允许的 type：
+# feat, fix, docs, refactor, perf, test, build, ci, chore, revert
+#
+# 推荐的 scope：
+# desktop, ui, ssh, sftp, persistence, platform, contracts, deps,
+# release, docs, repo

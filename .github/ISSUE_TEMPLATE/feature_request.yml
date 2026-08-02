@@ -1,0 +1,47 @@
+name: Feature request
+description: Propose a user-facing capability or workflow improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user problem rather than only the desired control or implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include the normal flow, important failure cases, and platform expectations.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Connection management
+        - SSH or authentication
+        - Terminal
+        - SFTP or file transfer
+        - Settings or desktop integration
+        - Build, release, or documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched the product scope and existing issues for this request.
+          required: true
+        - label: I understand that roadmap placement is decided separately from accepting the problem statement.
+          required: true

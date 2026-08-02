@@ -1,0 +1,58 @@
+# Dependencies and package-manager state
+**/node_modules/
+.pnpm-store/
+.yarn/
+
+# Build and test output
+**/dist/
+**/target/
+**/coverage/
+**/.vite/
+**/.turbo/
+**/test-results/
+**/playwright-report/
+**/src-tauri/gen/schemas/
+
+# Local review and exported design artifacts
+/.review/
+/docs/
+/BX SSH Desktop Client Prototype.zip
+**/.figma/
+
+# Runtime data
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+*.provisionprofile
+*.tauri.key
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local tool state
+.mise.local.toml
+.envrc
+.direnv/

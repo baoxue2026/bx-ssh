@@ -1,0 +1,12 @@
+# Changelog
+
+All notable changes to BX SSH will be documented in this file.
+
+The format follows Keep a Changelog, and release versions follow Semantic Versioning.
+
+## [Unreleased]
+
+### Added
+
+- Initial open-source repository governance, contribution, security, and conduct policies.
+- Apache License 2.0 and project attribution notice.

@@ -1,0 +1,61 @@
+name: Bug report
+description: Report a reproducible BX SSH defect. Do not report vulnerabilities here.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Security vulnerabilities and leaked secrets must be reported privately according to SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Use an application version, release tag, or commit SHA.
+      placeholder: v0.2.0 or 1a2b3c4
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS technical build
+        - Linux technical build
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem
+      description: Describe what happened and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or screenshots
+      description: Remove credentials, private keys, hostnames, usernames, IP addresses, local paths, and terminal contents that are not required.
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This report does not contain a vulnerability, secret, private key, credential, or unredacted user data.
+          required: true
