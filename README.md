@@ -10,7 +10,7 @@ The project is currently preparing its production workspace and technical-valida
 - Core: Rust and Tokio
 - UI: React 18, TypeScript, Vite, Ant Design 5
 - Terminal: xterm.js
-- SSH/SFTP: russh and russh-sftp, subject to the phase-0 compatibility decision
+- SSH/SFTP: russh and russh-sftp are the current candidates and remain under compatibility validation
 - Storage: SQLCipher with operating-system credential storage
 - First release platform: Windows x64
 

@@ -10,7 +10,7 @@ Before the first public release, security fixes are applied to `main`. After rel
 
 Do not create a public GitHub issue, discussion, or pull request for a suspected vulnerability or leaked secret.
 
-Use GitHub Private Vulnerability Reporting from the repository Security tab. Include:
+Use [GitHub Private Vulnerability Reporting](https://github.com/baoxue2026/bx-ssh/security/advisories/new). Include:
 
 - affected version or commit;
 - operating system and environment;
@@ -20,6 +20,17 @@ Use GitHub Private Vulnerability Reporting from the repository Security tab. Inc
 - whether the issue is already public.
 
 Maintainers should acknowledge a complete report within 3 business days and provide an initial triage result within 7 business days. Timelines may change with severity and reproduction complexity.
+
+## Reporting a Conduct Incident
+
+Conduct incidents must also be reported privately. Use the same [private reporting form](https://github.com/baoxue2026/bx-ssh/security/advisories/new), prefix the title with `[Conduct]`, and include:
+
+- the accounts or people involved;
+- when and where the incident occurred;
+- links, screenshots, or other relevant evidence;
+- any immediate safety or privacy concern.
+
+Conduct reports are handled as community moderation matters under [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), not as security advisories. Maintainers must limit access to the report and avoid disclosing the reporter's identity without permission, except when required by law or necessary to address an immediate safety risk.
 
 ## Coordinated Disclosure
 

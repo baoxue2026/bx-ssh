@@ -18,6 +18,6 @@ Unacceptable behavior includes harassment, threats, discrimination, sexualized c
 
 Maintainers may edit or remove comments, commits, issues, discussions, pull requests, or other contributions that violate this policy. Responses may include a warning, temporary restriction, or permanent ban depending on severity and repeated behavior.
 
-Report conduct problems privately through the repository's GitHub Security reporting channel described in [SECURITY.md](SECURITY.md). Do not include sensitive conduct reports in a public issue.
+Report conduct problems using the private procedure in [Reporting a Conduct Incident](SECURITY.md#reporting-a-conduct-incident). Do not include sensitive conduct reports in a public issue.
 
 Maintainers handling a report must protect the reporter's privacy, avoid conflicts of interest, and document the enforcement decision.

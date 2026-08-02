@@ -1,1 +1,5 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Private security or conduct report
+    url: https://github.com/baoxue2026/bx-ssh/security/advisories/new
+    about: Report vulnerabilities, exposed secrets, or conduct incidents privately. Do not open a public issue.

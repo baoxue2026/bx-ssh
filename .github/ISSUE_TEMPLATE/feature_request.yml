@@ -41,7 +41,7 @@ body:
     attributes:
       label: Confirmation
       options:
-        - label: I searched the product scope and existing issues for this request.
+        - label: I searched the README and existing issues for this request.
           required: true
         - label: I understand that roadmap placement is decided separately from accepting the problem statement.
           required: true
