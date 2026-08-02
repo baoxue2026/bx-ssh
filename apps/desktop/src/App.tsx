@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { Alert, Button, Checkbox, Input, InputNumber, Tooltip } from "antd";
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Input,
+  InputNumber,
+  Segmented,
+  Tooltip,
+} from "antd";
 import {
   Circle,
   Fingerprint,
+  FolderOpen,
   PlugZap,
   ScanSearch,
   SquareTerminal,
@@ -14,6 +23,12 @@ import {
   type TerminalHandle,
   type TerminalViewport,
 } from "./components/TerminalPane";
+import {
+  SftpPane,
+  type RemoteDirectoryListing,
+  type SftpTransferResult,
+  type TransferSummary,
+} from "./components/SftpPane";
 
 interface AppInfo {
   name: string;
@@ -28,6 +43,12 @@ interface HostKeyInfo {
 interface StartShellResponse {
   sessionId: string;
   hostKey: HostKeyInfo;
+}
+
+interface StartSftpResponse {
+  sessionId: string;
+  hostKey: HostKeyInfo;
+  directory: RemoteDirectoryListing;
 }
 
 type TerminalEvent =
@@ -48,6 +69,8 @@ type ConnectionState =
   | "closing"
   | "disconnected"
   | "failed";
+
+type WorkspaceMode = "terminal" | "sftp";
 
 const fallbackInfo: AppInfo = {
   name: "BX SSH",
@@ -75,8 +98,16 @@ export function App() {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("terminal");
+  const [sftpSessionId, setSftpSessionId] = useState<string | null>(null);
+  const [sftpDirectory, setSftpDirectory] =
+    useState<RemoteDirectoryListing | null>(null);
+  const [sftpBusy, setSftpBusy] = useState(false);
+  const [sftpTransferResult, setSftpTransferResult] =
+    useState<SftpTransferResult | null>(null);
   const terminalRef = useRef<TerminalHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const sftpSessionIdRef = useRef<string | null>(null);
   const inputQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resizeTimerRef = useRef<number | null>(null);
   const memoryUsageTimerRef = useRef<number | null>(null);
@@ -120,6 +151,10 @@ export function App() {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 
+  useEffect(() => {
+    sftpSessionIdRef.current = sftpSessionId;
+  }, [sftpSessionId]);
+
   useEffect(
     () => () => {
       connectionAttemptRef.current += 1;
@@ -133,6 +168,12 @@ export function App() {
       if (activeSessionId) {
         void invoke("close_terminal_session", {
           sessionId: activeSessionId,
+        });
+      }
+      const activeSftpSessionId = sftpSessionIdRef.current;
+      if (activeSftpSessionId) {
+        void invoke("close_sftp_session", {
+          sessionId: activeSftpSessionId,
         });
       }
     },
@@ -164,7 +205,7 @@ export function App() {
     }
   };
 
-  const connect = async () => {
+  const connectTerminal = async () => {
     if (!hostKey || !trusted || !username || !password) {
       return;
     }
@@ -298,18 +339,167 @@ export function App() {
     }
   };
 
+  const connectSftp = async () => {
+    if (!hostKey || !trusted || !username || !password) {
+      return;
+    }
+
+    setConnectionState("connecting");
+    setErrorMessage(null);
+    setSftpTransferResult(null);
+    terminalRef.current?.reset();
+    const attempt = ++connectionAttemptRef.current;
+
+    try {
+      await enableLowMemoryUsage();
+      const response = await invoke<StartSftpResponse>("start_password_sftp", {
+        request: {
+          host,
+          port,
+          username,
+          password,
+          expectedFingerprint: hostKey.fingerprintSha256,
+          initialPath: ".",
+        },
+      });
+      if (connectionAttemptRef.current !== attempt) {
+        void invoke("close_sftp_session", {
+          sessionId: response.sessionId,
+        }).catch(() => undefined);
+        return;
+      }
+
+      sftpSessionIdRef.current = response.sessionId;
+      setPassword("");
+      scheduleNormalMemoryUsage();
+      setSftpSessionId(response.sessionId);
+      setSftpDirectory(response.directory);
+      setHostKey(response.hostKey);
+      setConnectionState("connected");
+    } catch (error) {
+      if (connectionAttemptRef.current !== attempt) {
+        return;
+      }
+      setPassword("");
+      setErrorMessage(errorText(error));
+      setConnectionState("failed");
+    }
+  };
+
+  const connectCurrentMode = async () => {
+    if (workspaceMode === "terminal") {
+      await connectTerminal();
+    } else {
+      await connectSftp();
+    }
+  };
+
   const closeSession = async () => {
-    if (!sessionId) {
+    const activeSessionId =
+      workspaceMode === "terminal" ? sessionId : sftpSessionId;
+    if (!activeSessionId) {
       return;
     }
 
     setConnectionState("closing");
     try {
-      await invoke("close_terminal_session", { sessionId });
+      if (workspaceMode === "terminal") {
+        await invoke("close_terminal_session", { sessionId: activeSessionId });
+      } else {
+        await invoke("close_sftp_session", { sessionId: activeSessionId });
+        sftpSessionIdRef.current = null;
+        setSftpSessionId(null);
+        setSftpDirectory(null);
+        setConnectionState("disconnected");
+        void enableLowMemoryUsage();
+      }
     } catch (error) {
       setErrorMessage(errorText(error));
-      setSessionId(null);
+      if (workspaceMode === "terminal") {
+        sessionIdRef.current = null;
+        setSessionId(null);
+      } else {
+        sftpSessionIdRef.current = null;
+        setSftpSessionId(null);
+        setSftpDirectory(null);
+      }
       setConnectionState("disconnected");
+    }
+  };
+
+  const navigateSftp = async (path: string) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) {
+      return;
+    }
+
+    setSftpBusy(true);
+    setErrorMessage(null);
+    try {
+      const directory = await invoke<RemoteDirectoryListing>(
+        "list_sftp_directory",
+        { sessionId: activeSessionId, path },
+      );
+      setSftpDirectory(directory);
+    } catch (error) {
+      setErrorMessage(errorText(error));
+    } finally {
+      setSftpBusy(false);
+    }
+  };
+
+  const refreshSftp = async () => {
+    await navigateSftp(sftpDirectory?.path ?? ".");
+  };
+
+  const uploadSftp = async (localPath: string, remotePath: string) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) {
+      return;
+    }
+
+    setSftpBusy(true);
+    setErrorMessage(null);
+    setSftpTransferResult(null);
+    try {
+      const summary = await invoke<TransferSummary>("upload_sftp_file", {
+        sessionId: activeSessionId,
+        localPath,
+        remotePath,
+      });
+      setSftpTransferResult({ direction: "upload", summary });
+      const directory = await invoke<RemoteDirectoryListing>(
+        "list_sftp_directory",
+        { sessionId: activeSessionId, path: sftpDirectory?.path ?? "." },
+      );
+      setSftpDirectory(directory);
+    } catch (error) {
+      setErrorMessage(errorText(error));
+    } finally {
+      setSftpBusy(false);
+    }
+  };
+
+  const downloadSftp = async (remotePath: string, localPath: string) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) {
+      return;
+    }
+
+    setSftpBusy(true);
+    setErrorMessage(null);
+    setSftpTransferResult(null);
+    try {
+      const summary = await invoke<TransferSummary>("download_sftp_file", {
+        sessionId: activeSessionId,
+        remotePath,
+        localPath,
+      });
+      setSftpTransferResult({ direction: "download", summary });
+    } catch (error) {
+      setErrorMessage(errorText(error));
+    } finally {
+      setSftpBusy(false);
     }
   };
 
@@ -355,6 +545,8 @@ export function App() {
 
   const busy = ["probing", "connecting", "closing"].includes(connectionState);
   const connected = connectionState === "connected";
+  const activeSessionId =
+    workspaceMode === "terminal" ? sessionId : sftpSessionId;
 
   return (
     <div className="app-shell">
@@ -376,8 +568,34 @@ export function App() {
         <aside className="sidebar" aria-label="SSH 连接验证">
           <div className="sidebar-heading">
             <h1>连接验证</h1>
-            <span>SSH / PTY</span>
+            <span>
+              {workspaceMode === "terminal" ? "SSH / PTY" : "SFTP v3"}
+            </span>
           </div>
+
+          <Segmented<WorkspaceMode>
+            className="workspace-mode"
+            block
+            value={workspaceMode}
+            disabled={connected || busy}
+            options={[
+              {
+                value: "terminal",
+                label: "终端",
+                icon: <SquareTerminal size={14} />,
+              },
+              {
+                value: "sftp",
+                label: "SFTP",
+                icon: <FolderOpen size={14} />,
+              },
+            ]}
+            onChange={(value) => {
+              setWorkspaceMode(value);
+              setErrorMessage(null);
+              setConnectionState(hostKey ? "ready" : "idle");
+            }}
+          />
 
           <div className="connection-form">
             <label className="field-group">
@@ -452,11 +670,11 @@ export function App() {
                 autoComplete="current-password"
                 disabled={connected || busy}
                 onChange={(event) => setPassword(event.target.value)}
-                onPressEnter={() => void connect()}
+                onPressEnter={() => void connectCurrentMode()}
               />
             </label>
 
-            {!sessionId ? (
+            {!activeSessionId ? (
               <Button
                 type="primary"
                 icon={<PlugZap size={15} />}
@@ -464,7 +682,7 @@ export function App() {
                 disabled={
                   busy || !hostKey || !trusted || !username || !password
                 }
-                onClick={() => void connect()}
+                onClick={() => void connectCurrentMode()}
                 block
               >
                 连接
@@ -474,6 +692,7 @@ export function App() {
                 danger
                 icon={<Unplug size={15} />}
                 loading={connectionState === "closing"}
+                disabled={workspaceMode === "sftp" && sftpBusy}
                 onClick={() => void closeSession()}
                 block
               >
@@ -487,7 +706,7 @@ export function App() {
               className="connection-error"
               type="error"
               showIcon
-              message="连接失败"
+              message={connected ? "操作失败" : "连接失败"}
               description={errorMessage}
               closable
               onClose={() => setErrorMessage(null)}
@@ -495,31 +714,47 @@ export function App() {
           )}
         </aside>
 
-        <main className="terminal-workspace">
-          <div className="terminal-toolbar">
-            <div className="terminal-title">
-              <SquareTerminal size={14} />
-              <span>终端</span>
-            </div>
-            <span className="endpoint-label">
-              {connected ? `${username}@${host}:${port}` : "未连接"}
-            </span>
-          </div>
-          <div className="terminal-stage">
-            <TerminalPane
-              ref={terminalRef}
-              connected={connected}
-              onData={writeTerminal}
-              onResize={resizeTerminal}
-            />
-            {!connected && (
-              <div className="terminal-empty" aria-live="polite">
-                <SquareTerminal size={36} strokeWidth={1.3} />
-                <span>{connectionLabel(connectionState)}</span>
+        {workspaceMode === "terminal" ? (
+          <main className="terminal-workspace">
+            <div className="terminal-toolbar">
+              <div className="terminal-title">
+                <SquareTerminal size={14} />
+                <span>终端</span>
               </div>
-            )}
-          </div>
-        </main>
+              <span className="endpoint-label">
+                {connected ? `${username}@${host}:${port}` : "未连接"}
+              </span>
+            </div>
+            <div className="terminal-stage">
+              <TerminalPane
+                ref={terminalRef}
+                connected={connected}
+                onData={writeTerminal}
+                onResize={resizeTerminal}
+              />
+              {!connected && (
+                <div className="terminal-empty" aria-live="polite">
+                  <SquareTerminal size={36} strokeWidth={1.3} />
+                  <span>{connectionLabel(connectionState)}</span>
+                </div>
+              )}
+            </div>
+          </main>
+        ) : (
+          <main className="sftp-workspace">
+            <SftpPane
+              busy={sftpBusy}
+              connected={connected}
+              directory={sftpDirectory}
+              endpoint={`${username}@${host}:${port}`}
+              transferResult={sftpTransferResult}
+              onNavigate={navigateSftp}
+              onRefresh={refreshSftp}
+              onUpload={uploadSftp}
+              onDownload={downloadSftp}
+            />
+          </main>
+        )}
       </div>
 
       <footer className="statusbar">
@@ -532,8 +767,10 @@ export function App() {
           {connectionLabel(connectionState)}
         </span>
         <span className="status-spacer" />
-        <Tooltip title="终端类型">
-          <span>xterm-256color</span>
+        <Tooltip title={workspaceMode === "terminal" ? "终端类型" : "协议版本"}>
+          <span>
+            {workspaceMode === "terminal" ? "xterm-256color" : "SFTP v3"}
+          </span>
         </Tooltip>
         <span className="status-divider" />
         <span>UTF-8</span>

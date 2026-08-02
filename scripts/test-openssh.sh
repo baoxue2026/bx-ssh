@@ -50,6 +50,7 @@ PermitRootLogin no
 PermitEmptyPasswords no
 StrictModes yes
 AllowUsers ${test_user}
+Subsystem sftp internal-sftp
 LogLevel VERBOSE
 EOF
 
@@ -76,4 +77,4 @@ BX_SSH_TEST_PORT=2222 \
 BX_SSH_TEST_USERNAME="${test_user}" \
 BX_SSH_TEST_PASSWORD="${test_password}" \
 BX_SSH_TEST_PRIVATE_KEY="${client_key}" \
-  cargo test -p bx-ssh-core --test openssh -- --ignored --nocapture
+  cargo test -p bx-ssh-core --test openssh --test sftp -- --ignored --nocapture

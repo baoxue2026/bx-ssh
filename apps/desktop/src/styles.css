@@ -155,6 +155,17 @@ select {
   gap: 11px;
 }
 
+.workspace-mode {
+  margin-bottom: 12px;
+}
+
+.workspace-mode .ant-segmented-item-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .field-group {
   display: grid;
   min-width: 0;
@@ -264,6 +275,180 @@ select {
   height: 100%;
 }
 
+.sftp-workspace {
+  min-width: 0;
+  min-height: 0;
+  background: #f7f9fb;
+}
+
+.sftp-pane {
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sftp-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  background: #ffffff;
+  border-bottom: 1px solid #d8dde4;
+}
+
+.sftp-path-controls {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 636px;
+  min-width: 0;
+  gap: 6px;
+}
+
+.sftp-toolbar > .endpoint-label {
+  flex: 0 0 auto;
+  max-width: 28%;
+}
+
+.sftp-path-controls .ant-btn {
+  width: 32px;
+  padding: 0;
+}
+
+.sftp-list {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  background: #ffffff;
+}
+
+.sftp-list table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: #303741;
+  font-size: 11px;
+}
+
+.sftp-list th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  height: 30px;
+  padding: 0 10px;
+  color: #6b7582;
+  background: #f2f5f8;
+  border-bottom: 1px solid #d8dde4;
+  font-weight: 600;
+  text-align: left;
+}
+
+.sftp-list th:first-child {
+  width: 46%;
+}
+
+.sftp-list th:nth-child(2) {
+  width: 14%;
+}
+
+.sftp-list th:nth-child(3) {
+  width: 27%;
+}
+
+.sftp-list th:nth-child(4) {
+  width: 13%;
+}
+
+.sftp-list td {
+  height: 32px;
+  overflow: hidden;
+  padding: 0 10px;
+  border-bottom: 1px solid #edf0f3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-list tbody tr {
+  cursor: default;
+  outline: none;
+}
+
+.sftp-list tbody tr:hover,
+.sftp-list tbody tr:focus {
+  background: #edf5ff;
+}
+
+.sftp-file-name {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 7px;
+}
+
+.sftp-file-name svg {
+  flex: 0 0 auto;
+  color: #4776a8;
+}
+
+.sftp-file-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sftp-empty {
+  position: absolute;
+  inset: 30px 0 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: #798491;
+  pointer-events: none;
+}
+
+.sftp-empty span {
+  font-size: 11px;
+}
+
+.sftp-transfer-panel {
+  display: grid;
+  gap: 7px;
+  padding: 9px 12px;
+  background: #f2f5f8;
+  border-top: 1px solid #d8dde4;
+}
+
+.sftp-transfer-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr) 82px;
+  align-items: center;
+  gap: 7px;
+  color: #687482;
+}
+
+.sftp-transfer-result {
+  display: grid;
+  grid-template-columns: 16px auto auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #287449;
+  font-size: 10px;
+}
+
+.sftp-transfer-result code {
+  overflow: hidden;
+  color: #596675;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .terminal-empty {
   position: absolute;
   inset: 0;
@@ -346,6 +531,37 @@ select {
   .fingerprint-panel code,
   .fingerprint-panel .ant-checkbox-wrapper {
     color: #c3d5e8;
+  }
+
+  .sftp-workspace,
+  .sftp-list,
+  .sftp-toolbar {
+    background: #1f2329;
+  }
+
+  .sftp-toolbar,
+  .sftp-list th,
+  .sftp-transfer-panel {
+    border-color: #343a43;
+  }
+
+  .sftp-list table {
+    color: #d5dae1;
+  }
+
+  .sftp-list th,
+  .sftp-transfer-panel {
+    color: #aeb6c1;
+    background: #252a31;
+  }
+
+  .sftp-list td {
+    border-bottom-color: #2d333b;
+  }
+
+  .sftp-list tbody tr:hover,
+  .sftp-list tbody tr:focus {
+    background: #263647;
   }
 
   .statusbar {

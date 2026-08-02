@@ -15,6 +15,8 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
 use uuid::Uuid;
 
+use crate::command_error::CommandError;
+
 const COMMAND_QUEUE_CAPACITY: usize = 128;
 const OUTPUT_BATCH_MAX_BYTES: usize = 64 * 1024;
 const OUTPUT_BATCH_MAX_DELAY: Duration = Duration::from_millis(8);
@@ -78,13 +80,6 @@ pub(crate) enum TerminalEvent {
         code: String,
         message: String,
     },
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CommandError {
-    code: String,
-    message: String,
 }
 
 #[tauri::command]
@@ -193,11 +188,11 @@ pub(crate) async fn close_terminal_session(
         .lock()
         .await
         .remove(&session_id)
-        .ok_or_else(CommandError::session_not_found)?;
+        .ok_or_else(|| CommandError::session_not_found("terminal"))?;
     sender
         .send(SessionCommand::Close)
         .await
-        .map_err(|_| CommandError::session_closed())
+        .map_err(|_| CommandError::session_closed("terminal"))
 }
 
 impl TerminalSessionManager {
@@ -208,11 +203,11 @@ impl TerminalSessionManager {
             .await
             .get(session_id)
             .cloned()
-            .ok_or_else(CommandError::session_not_found)?;
+            .ok_or_else(|| CommandError::session_not_found("terminal"))?;
         sender
             .send(command)
             .await
-            .map_err(|_| CommandError::session_closed())
+            .map_err(|_| CommandError::session_closed("terminal"))
     }
 }
 
@@ -375,70 +370,16 @@ fn send_error(channel: &Channel<TerminalEvent>, error: SshError) {
     });
 }
 
-impl CommandError {
-    fn session_not_found() -> Self {
-        Self {
-            code: "session_not_found".to_owned(),
-            message: "terminal session was not found".to_owned(),
-        }
-    }
-
-    fn session_closed() -> Self {
-        Self {
-            code: "session_closed".to_owned(),
-            message: "terminal session is already closed".to_owned(),
-        }
-    }
-}
-
-impl From<SshError> for CommandError {
-    fn from(error: SshError) -> Self {
-        let code = match &error {
-            SshError::InvalidHost => "invalid_host",
-            SshError::InvalidPort => "invalid_port",
-            SshError::InvalidUsername => "invalid_username",
-            SshError::InvalidFingerprint => "invalid_fingerprint",
-            SshError::InvalidTerminalSize => "invalid_terminal_size",
-            SshError::ConnectTimeout => "connect_timeout",
-            SshError::AuthenticationTimeout => "authentication_timeout",
-            SshError::HostKeyUnavailable => "host_key_unavailable",
-            SshError::HostKeyMismatch { .. } => "host_key_mismatch",
-            SshError::AuthenticationRejected { .. } => "authentication_rejected",
-            SshError::LegacyRsaSignatureOnly => "legacy_rsa_signature_only",
-            SshError::ChannelRequestRejected { .. } => "channel_request_rejected",
-            SshError::ChannelClosed { .. } => "channel_closed",
-            SshError::PrivateKey(_) => "private_key_error",
-            SshError::Transport(_) => "transport_error",
-        };
-
-        Self {
-            code: code.to_owned(),
-            message: error.to_string(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex as StdMutex};
 
     use super::{
-        CommandError, SessionCommand, TerminalOutputFlow, TerminalSessionManager,
-        OUTPUT_BATCH_MAX_BYTES, OUTPUT_MAX_IN_FLIGHT_BATCHES,
+        SessionCommand, TerminalOutputFlow, TerminalSessionManager, OUTPUT_BATCH_MAX_BYTES,
+        OUTPUT_MAX_IN_FLIGHT_BATCHES,
     };
-    use bx_ssh_core::SshError;
     use tauri::ipc::{Channel, InvokeResponseBody};
     use tokio::sync::mpsc;
-
-    #[test]
-    fn maps_ssh_errors_to_stable_codes() {
-        let error = CommandError::from(SshError::HostKeyMismatch {
-            expected: "SHA256:expected".to_owned(),
-            actual: "SHA256:actual".to_owned(),
-        });
-
-        assert_eq!(error.code, "host_key_mismatch");
-    }
 
     #[tokio::test]
     async fn rejects_unknown_session_handles() {
