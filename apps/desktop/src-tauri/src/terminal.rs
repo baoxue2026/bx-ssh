@@ -1,5 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::future::pending;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bx_contracts::HostKeyInfo;
 use bx_ssh_core::{
@@ -7,12 +9,16 @@ use bx_ssh_core::{
     SshShell, TerminalSize,
 };
 use serde::{Deserialize, Serialize};
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 use tokio::sync::{mpsc, Mutex};
+use tokio::time::Instant;
 use uuid::Uuid;
 
 const COMMAND_QUEUE_CAPACITY: usize = 128;
+const OUTPUT_BATCH_MAX_BYTES: usize = 64 * 1024;
+const OUTPUT_BATCH_MAX_DELAY: Duration = Duration::from_millis(8);
+const OUTPUT_MAX_IN_FLIGHT_BATCHES: usize = 8;
 
 #[derive(Clone, Default)]
 pub(crate) struct TerminalSessionManager {
@@ -22,7 +28,15 @@ pub(crate) struct TerminalSessionManager {
 enum SessionCommand {
     Write(Vec<u8>),
     Resize(TerminalSize),
+    AcknowledgeOutput(u64),
     Close,
+}
+
+struct TerminalOutputFlow {
+    pending: Vec<u8>,
+    pending_since: Option<Instant>,
+    in_flight: VecDeque<u64>,
+    next_sequence: u64,
 }
 
 #[derive(Deserialize)]
@@ -56,9 +70,6 @@ pub(crate) struct StartShellResponse {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum TerminalEvent {
-    Output {
-        data: Vec<u8>,
-    },
     Exited {
         code: Option<u32>,
         signal: Option<String>,
@@ -87,6 +98,7 @@ pub(crate) async fn start_password_shell(
     manager: State<'_, TerminalSessionManager>,
     request: StartShellRequest,
     on_event: Channel<TerminalEvent>,
+    on_output: Channel<InvokeResponseBody>,
 ) -> Result<StartShellResponse, CommandError> {
     let endpoint = SshEndpoint::new(request.host, request.port)?;
     let size = TerminalSize::with_pixels(
@@ -123,6 +135,7 @@ pub(crate) async fn start_password_shell(
             shell,
             command_rx,
             on_event,
+            on_output,
         )
         .await;
     });
@@ -156,6 +169,17 @@ pub(crate) async fn resize_terminal(
     let size = TerminalSize::with_pixels(columns, rows, pixel_width, pixel_height)?;
     manager
         .send(&session_id, SessionCommand::Resize(size))
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn acknowledge_terminal_output(
+    manager: State<'_, TerminalSessionManager>,
+    session_id: String,
+    sequence: u64,
+) -> Result<(), CommandError> {
+    manager
+        .send(&session_id, SessionCommand::AcknowledgeOutput(sequence))
         .await
 }
 
@@ -199,11 +223,14 @@ async fn run_session(
     mut shell: SshShell,
     mut commands: mpsc::Receiver<SessionCommand>,
     on_event: Channel<TerminalEvent>,
+    on_output: Channel<InvokeResponseBody>,
 ) {
     let mut exit_code = None;
     let mut exit_signal = None;
+    let mut output = TerminalOutputFlow::new();
 
     loop {
+        let flush_deadline = output.flush_deadline();
         tokio::select! {
             command = commands.recv() => {
                 match command {
@@ -219,6 +246,9 @@ async fn run_session(
                             break;
                         }
                     }
+                    Some(SessionCommand::AcknowledgeOutput(sequence)) => {
+                        output.acknowledge(sequence);
+                    }
                     Some(SessionCommand::Close) | None => {
                         if let Err(error) = shell.close().await {
                             send_error(&on_event, error);
@@ -227,11 +257,14 @@ async fn run_session(
                     }
                 }
             }
-            event = shell.next_event() => {
+            event = shell.next_event(), if output.can_read() => {
                 match event {
                     Ok(ShellEvent::Output(data))
                     | Ok(ShellEvent::ExtendedOutput { data, .. }) => {
-                        if on_event.send(TerminalEvent::Output { data }).is_err() {
+                        output.push(data);
+                        if output.should_flush()
+                            && output.flush(&on_output).is_err()
+                        {
                             break;
                         }
                     }
@@ -245,9 +278,15 @@ async fn run_session(
                     }
                 }
             }
+            _ = wait_for_flush(flush_deadline), if flush_deadline.is_some() => {
+                if output.flush(&on_output).is_err() {
+                    break;
+                }
+            }
         }
     }
 
+    let _ = output.flush(&on_output);
     let _ = on_event.send(TerminalEvent::Exited {
         code: exit_code,
         signal: exit_signal,
@@ -255,6 +294,77 @@ async fn run_session(
     manager.sessions.lock().await.remove(&session_id);
     drop(shell);
     let _ = session.disconnect().await;
+}
+
+impl TerminalOutputFlow {
+    fn new() -> Self {
+        Self {
+            pending: Vec::with_capacity(OUTPUT_BATCH_MAX_BYTES),
+            pending_since: None,
+            in_flight: VecDeque::with_capacity(OUTPUT_MAX_IN_FLIGHT_BATCHES),
+            next_sequence: 1,
+        }
+    }
+
+    fn can_read(&self) -> bool {
+        self.in_flight.len() < OUTPUT_MAX_IN_FLIGHT_BATCHES
+    }
+
+    fn push(&mut self, data: Vec<u8>) {
+        if data.is_empty() {
+            return;
+        }
+        if self.pending.is_empty() {
+            self.pending_since = Some(Instant::now());
+        }
+        self.pending.extend(data);
+    }
+
+    fn should_flush(&self) -> bool {
+        self.pending.len() >= OUTPUT_BATCH_MAX_BYTES
+    }
+
+    fn flush_deadline(&self) -> Option<Instant> {
+        self.pending_since
+            .map(|started| started + OUTPUT_BATCH_MAX_DELAY)
+    }
+
+    fn flush(&mut self, channel: &Channel<InvokeResponseBody>) -> tauri::Result<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+
+        let data = std::mem::replace(
+            &mut self.pending,
+            Vec::with_capacity(OUTPUT_BATCH_MAX_BYTES),
+        );
+        channel.send(InvokeResponseBody::Raw(data))?;
+        self.pending_since = None;
+        self.in_flight.push_back(self.next_sequence);
+        self.next_sequence += 1;
+        Ok(())
+    }
+
+    fn acknowledge(&mut self, sequence: u64) {
+        if sequence >= self.next_sequence {
+            return;
+        }
+
+        while self
+            .in_flight
+            .front()
+            .is_some_and(|in_flight| *in_flight <= sequence)
+        {
+            self.in_flight.pop_front();
+        }
+    }
+}
+
+async fn wait_for_flush(deadline: Option<Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => pending().await,
+    }
 }
 
 fn send_error(channel: &Channel<TerminalEvent>, error: SshError) {
@@ -310,8 +420,15 @@ impl From<SshError> for CommandError {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandError, TerminalSessionManager};
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    use super::{
+        CommandError, SessionCommand, TerminalOutputFlow, TerminalSessionManager,
+        OUTPUT_BATCH_MAX_BYTES, OUTPUT_MAX_IN_FLIGHT_BATCHES,
+    };
     use bx_ssh_core::SshError;
+    use tauri::ipc::{Channel, InvokeResponseBody};
+    use tokio::sync::mpsc;
 
     #[test]
     fn maps_ssh_errors_to_stable_codes() {
@@ -327,10 +444,79 @@ mod tests {
     async fn rejects_unknown_session_handles() {
         let manager = TerminalSessionManager::default();
         let error = manager
-            .send("missing", super::SessionCommand::Write(Vec::new()))
+            .send("missing", SessionCommand::Write(Vec::new()))
             .await
             .unwrap_err();
 
         assert_eq!(error.code, "session_not_found");
+    }
+
+    #[test]
+    fn batches_binary_output_and_applies_backpressure() {
+        let delivered = Arc::new(StdMutex::new(Vec::new()));
+        let delivered_for_channel = delivered.clone();
+        let channel = Channel::new(move |body| {
+            if let InvokeResponseBody::Raw(data) = body {
+                delivered_for_channel.lock().unwrap().push(data);
+            }
+            Ok(())
+        });
+        let mut flow = TerminalOutputFlow::new();
+
+        for byte in 0..OUTPUT_MAX_IN_FLIGHT_BATCHES {
+            for _ in 0..64 {
+                flow.push(vec![byte as u8; OUTPUT_BATCH_MAX_BYTES / 64]);
+                if flow.should_flush() {
+                    flow.flush(&channel).unwrap();
+                }
+            }
+        }
+
+        assert!(!flow.can_read());
+        assert_eq!(
+            delivered.lock().unwrap().len(),
+            OUTPUT_MAX_IN_FLIGHT_BATCHES
+        );
+
+        flow.acknowledge(OUTPUT_MAX_IN_FLIGHT_BATCHES as u64 / 2);
+        assert!(flow.can_read());
+        assert_eq!(flow.in_flight.len(), OUTPUT_MAX_IN_FLIGHT_BATCHES / 2);
+    }
+
+    #[test]
+    fn ignores_acknowledgements_for_unsent_output() {
+        let channel = Channel::new(|_| Ok(()));
+        let mut flow = TerminalOutputFlow::new();
+        flow.push(b"terminal output".to_vec());
+        flow.flush(&channel).unwrap();
+
+        flow.acknowledge(2);
+        assert_eq!(flow.in_flight.front(), Some(&1));
+
+        flow.acknowledge(1);
+        assert!(flow.in_flight.is_empty());
+    }
+
+    #[tokio::test]
+    async fn routes_commands_to_the_requested_session_only() {
+        let manager = TerminalSessionManager::default();
+        let (first_tx, mut first_rx) = mpsc::channel(1);
+        let (second_tx, mut second_rx) = mpsc::channel(1);
+        {
+            let mut sessions = manager.sessions.lock().await;
+            sessions.insert("first".to_owned(), first_tx);
+            sessions.insert("second".to_owned(), second_tx);
+        }
+
+        assert!(manager
+            .send("second", SessionCommand::AcknowledgeOutput(7))
+            .await
+            .is_ok());
+
+        assert!(first_rx.try_recv().is_err());
+        assert!(matches!(
+            second_rx.recv().await,
+            Some(SessionCommand::AcknowledgeOutput(7))
+        ));
     }
 }

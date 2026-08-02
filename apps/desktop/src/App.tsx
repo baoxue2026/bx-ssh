@@ -31,7 +31,6 @@ interface StartShellResponse {
 }
 
 type TerminalEvent =
-  | { type: "output"; data: number[] }
   | { type: "exited"; code: number | null; signal: string | null }
   | { type: "error"; code: string; message: string };
 
@@ -78,6 +77,7 @@ export function App() {
   const sessionIdRef = useRef<string | null>(null);
   const inputQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resizeTimerRef = useRef<number | null>(null);
+  const connectionAttemptRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -101,6 +101,7 @@ export function App() {
 
   useEffect(
     () => () => {
+      connectionAttemptRef.current += 1;
       if (resizeTimerRef.current !== null) {
         window.clearTimeout(resizeTimerRef.current);
       }
@@ -148,21 +149,75 @@ export function App() {
     setErrorMessage(null);
     terminalRef.current?.clear();
 
-    const eventChannel = new Channel<TerminalEvent>();
-    eventChannel.onmessage = (event) => {
-      if (event.type === "output") {
-        terminalRef.current?.write(Uint8Array.from(event.data));
+    const attempt = ++connectionAttemptRef.current;
+    let ended = false;
+    let acknowledgementSessionId: string | null = null;
+    let receivedSequence = 0;
+    let processedSequence = 0;
+    let queuedSequence = 0;
+    let acknowledgementQueue = Promise.resolve();
+
+    const queueAcknowledgement = (sequence: number) => {
+      processedSequence = Math.max(processedSequence, sequence);
+      const activeSessionId = acknowledgementSessionId;
+      if (!activeSessionId || processedSequence <= queuedSequence) {
         return;
       }
 
+      const sequenceToAcknowledge = processedSequence;
+      queuedSequence = sequenceToAcknowledge;
+      acknowledgementQueue = acknowledgementQueue
+        .then(() =>
+          invoke<void>("acknowledge_terminal_output", {
+            sessionId: activeSessionId,
+            sequence: sequenceToAcknowledge,
+          }),
+        )
+        .catch((error: unknown) => {
+          if (
+            connectionAttemptRef.current === attempt &&
+            sessionIdRef.current === activeSessionId &&
+            !isClosedSessionError(error)
+          ) {
+            setErrorMessage(errorText(error));
+            setConnectionState("failed");
+          }
+        });
+    };
+
+    const eventChannel = new Channel<TerminalEvent>();
+    eventChannel.onmessage = (event) => {
+      if (connectionAttemptRef.current !== attempt) {
+        return;
+      }
+
+      ended = true;
       if (event.type === "error") {
         setErrorMessage(event.message);
         setConnectionState("failed");
         return;
       }
 
+      sessionIdRef.current = null;
       setSessionId(null);
       setConnectionState("disconnected");
+    };
+    const outputChannel = new Channel<ArrayBuffer>();
+    outputChannel.onmessage = (data) => {
+      const sequence = ++receivedSequence;
+      const acknowledge = () => queueAcknowledgement(sequence);
+
+      if (connectionAttemptRef.current !== attempt) {
+        acknowledge();
+        return;
+      }
+
+      const terminal = terminalRef.current;
+      if (terminal) {
+        terminal.write(new Uint8Array(data), acknowledge);
+      } else {
+        acknowledge();
+      }
     };
 
     const viewport = terminalRef.current?.viewport() ?? fallbackViewport;
@@ -180,14 +235,36 @@ export function App() {
             ...viewport,
           },
           onEvent: eventChannel,
+          onOutput: outputChannel,
         },
       );
+      acknowledgementSessionId = response.sessionId;
+      queueAcknowledgement(processedSequence);
+
+      if (connectionAttemptRef.current !== attempt) {
+        void invoke("close_terminal_session", {
+          sessionId: response.sessionId,
+        }).catch(() => undefined);
+        return;
+      }
+
       setPassword("");
+      if (ended) {
+        void invoke("close_terminal_session", {
+          sessionId: response.sessionId,
+        }).catch(() => undefined);
+        return;
+      }
+
+      sessionIdRef.current = response.sessionId;
       setSessionId(response.sessionId);
       setHostKey(response.hostKey);
       setConnectionState("connected");
       terminalRef.current?.focus();
     } catch (error) {
+      if (connectionAttemptRef.current !== attempt) {
+        return;
+      }
       setPassword("");
       setErrorMessage(errorText(error));
       setConnectionState("failed");
@@ -464,4 +541,13 @@ function errorText(error: unknown): string {
     }
   }
   return "SSH 操作失败";
+}
+
+function isClosedSessionError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = (error as CommandError).code;
+  return code === "session_not_found" || code === "session_closed";
 }
