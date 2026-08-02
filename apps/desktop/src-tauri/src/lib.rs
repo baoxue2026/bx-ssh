@@ -1,7 +1,9 @@
 use bx_contracts::AppInfo;
 
+mod platform;
 mod terminal;
 
+use platform::set_webview_memory_usage;
 use terminal::{
     acknowledge_terminal_output, close_terminal_session, probe_ssh_host, resize_terminal,
     start_password_shell, write_terminal, TerminalSessionManager,
@@ -23,7 +25,8 @@ pub fn run() {
             write_terminal,
             resize_terminal,
             acknowledge_terminal_output,
-            close_terminal_session
+            close_terminal_session,
+            set_webview_memory_usage
         ])
         .run(tauri::generate_context!())
         .expect("failed to run BX SSH");

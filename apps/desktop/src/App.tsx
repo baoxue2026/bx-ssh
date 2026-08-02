@@ -61,6 +61,8 @@ const fallbackViewport: TerminalViewport = {
   pixelHeight: 0,
 };
 
+const MEMORY_USAGE_RECOVERY_DELAY_MS = 60_000;
+
 export function App() {
   const [appInfo, setAppInfo] = useState(fallbackInfo);
   const [host, setHost] = useState("127.0.0.1");
@@ -77,7 +79,26 @@ export function App() {
   const sessionIdRef = useRef<string | null>(null);
   const inputQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resizeTimerRef = useRef<number | null>(null);
+  const memoryUsageTimerRef = useRef<number | null>(null);
   const connectionAttemptRef = useRef(0);
+
+  const enableLowMemoryUsage = useCallback(async () => {
+    if (memoryUsageTimerRef.current !== null) {
+      window.clearTimeout(memoryUsageTimerRef.current);
+      memoryUsageTimerRef.current = null;
+    }
+    await setWebviewMemoryUsage(true);
+  }, []);
+
+  const scheduleNormalMemoryUsage = useCallback(() => {
+    if (memoryUsageTimerRef.current !== null) {
+      window.clearTimeout(memoryUsageTimerRef.current);
+    }
+    memoryUsageTimerRef.current = window.setTimeout(() => {
+      memoryUsageTimerRef.current = null;
+      void setWebviewMemoryUsage(false);
+    }, MEMORY_USAGE_RECOVERY_DELAY_MS);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -104,6 +125,9 @@ export function App() {
       connectionAttemptRef.current += 1;
       if (resizeTimerRef.current !== null) {
         window.clearTimeout(resizeTimerRef.current);
+      }
+      if (memoryUsageTimerRef.current !== null) {
+        window.clearTimeout(memoryUsageTimerRef.current);
       }
       const activeSessionId = sessionIdRef.current;
       if (activeSessionId) {
@@ -147,7 +171,7 @@ export function App() {
 
     setConnectionState("connecting");
     setErrorMessage(null);
-    terminalRef.current?.clear();
+    terminalRef.current?.reset();
 
     const attempt = ++connectionAttemptRef.current;
     let ended = false;
@@ -192,6 +216,7 @@ export function App() {
       }
 
       ended = true;
+      void enableLowMemoryUsage();
       if (event.type === "error") {
         setErrorMessage(event.message);
         setConnectionState("failed");
@@ -223,6 +248,7 @@ export function App() {
     const viewport = terminalRef.current?.viewport() ?? fallbackViewport;
 
     try {
+      await enableLowMemoryUsage();
       const response = await invoke<StartShellResponse>(
         "start_password_shell",
         {
@@ -257,6 +283,7 @@ export function App() {
       }
 
       sessionIdRef.current = response.sessionId;
+      scheduleNormalMemoryUsage();
       setSessionId(response.sessionId);
       setHostKey(response.hostKey);
       setConnectionState("connected");
@@ -550,4 +577,8 @@ function isClosedSessionError(error: unknown): boolean {
 
   const code = (error as CommandError).code;
   return code === "session_not_found" || code === "session_closed";
+}
+
+async function setWebviewMemoryUsage(low: boolean): Promise<void> {
+  await invoke("set_webview_memory_usage", { low }).catch(() => undefined);
 }
