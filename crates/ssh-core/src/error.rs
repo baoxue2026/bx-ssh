@@ -22,6 +22,12 @@ pub enum SshError {
     AuthenticationRejected { method: &'static str },
     #[error("server only offered the legacy SHA-1 RSA signature")]
     LegacyRsaSignatureOnly,
+    #[error("terminal columns and rows must be greater than zero")]
+    InvalidTerminalSize,
+    #[error("{request} request was rejected by the SSH server")]
+    ChannelRequestRejected { request: &'static str },
+    #[error("SSH channel closed while waiting for the {request} response")]
+    ChannelClosed { request: &'static str },
     #[error("failed to load private key: {0}")]
     PrivateKey(#[from] russh::keys::Error),
     #[error("SSH transport failed: {0}")]

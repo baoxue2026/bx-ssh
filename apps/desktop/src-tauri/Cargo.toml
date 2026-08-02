@@ -15,4 +15,8 @@ tauri-build.workspace = true
 
 [dependencies]
 bx-contracts.workspace = true
+bx-ssh-core.workspace = true
+serde.workspace = true
 tauri.workspace = true
+tokio.workspace = true
+uuid.workspace = true

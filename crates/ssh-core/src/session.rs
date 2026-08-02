@@ -7,7 +7,7 @@ use russh::keys::{self, ssh_key, HashAlg, PrivateKeyWithHashAlg};
 use tokio::sync::Mutex;
 use tokio::time;
 
-use crate::{HostFingerprint, SshEndpoint, SshError};
+use crate::{HostFingerprint, SshEndpoint, SshError, SshShell, TerminalSize};
 
 #[derive(Clone)]
 struct HostKeyVerifier {
@@ -44,6 +44,11 @@ pub struct ClientSession {
 impl ClientSession {
     pub fn host_key(&self) -> &HostKeyInfo {
         &self.host_key
+    }
+
+    pub async fn open_shell(&self, size: TerminalSize) -> Result<SshShell, SshError> {
+        let channel = self.handle.channel_open_session().await?;
+        SshShell::open(channel, size).await
     }
 
     pub async fn disconnect(self) -> Result<(), SshError> {
