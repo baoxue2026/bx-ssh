@@ -1,0 +1,8 @@
+**/dist/
+**/target/
+**/coverage/
+**/node_modules/
+docs/
+BX SSH Desktop Client Prototype.zip
+Cargo.lock
+pnpm-lock.yaml

@@ -12,6 +12,15 @@
 **/test-results/
 **/playwright-report/
 **/src-tauri/gen/schemas/
+**/*.tsbuildinfo
+
+# Tauri icon generator output not used by the desktop bundles
+/apps/desktop/src-tauri/icons/android/
+/apps/desktop/src-tauri/icons/ios/
+/apps/desktop/src-tauri/icons/64x64.png
+/apps/desktop/src-tauri/icons/icon.png
+/apps/desktop/src-tauri/icons/Square*Logo.png
+/apps/desktop/src-tauri/icons/StoreLogo.png
 
 # Local review and exported design artifacts
 /.review/

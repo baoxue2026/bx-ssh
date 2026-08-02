@@ -2,7 +2,7 @@
 
 BX SSH is an open-source desktop SSH client focused on secure connection management, terminal workflows, and SFTP file transfer.
 
-The project is currently preparing its production workspace and technical-validation baseline.
+The project is currently building its production workspace and technical-validation baseline.
 
 ## Current Direction
 
@@ -21,6 +21,21 @@ Repository, commit, pull-request, and release rules are documented in [GOVERNANC
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request. Security reports must follow [SECURITY.md](SECURITY.md) and must not be filed as public issues.
+
+## Development
+
+The workspace requires Node.js 22, pnpm 10, the pinned Rust toolchain, and the native prerequisites documented by Tauri for the target operating system.
+
+```powershell
+pnpm install
+pnpm dev
+```
+
+Run all local quality checks before opening a pull request:
+
+```powershell
+pnpm check
+```
 
 ## License
 

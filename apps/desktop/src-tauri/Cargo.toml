@@ -1,0 +1,18 @@
+[package]
+name = "bx-ssh-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "bx_ssh_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+bx-contracts.workspace = true
+tauri.workspace = true
