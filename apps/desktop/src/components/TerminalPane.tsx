@@ -14,7 +14,7 @@ export interface TerminalHandle {
   clear(): void;
   focus(): void;
   viewport(): TerminalViewport;
-  write(data: Uint8Array): void;
+  write(data: Uint8Array, onProcessed?: () => void): void;
 }
 
 interface TerminalPaneProps {
@@ -122,8 +122,13 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
             ? viewportFor(terminal, container)
             : { columns: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 };
         },
-        write(data: Uint8Array) {
-          terminalRef.current?.write(data);
+        write(data: Uint8Array, onProcessed?: () => void) {
+          const terminal = terminalRef.current;
+          if (terminal) {
+            terminal.write(data, onProcessed);
+          } else {
+            onProcessed?.();
+          }
         },
       }),
       [],

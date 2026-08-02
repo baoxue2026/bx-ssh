@@ -8,6 +8,7 @@ use bx_ssh_core::{
 };
 
 const WRONG_FINGERPRINT: &str = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const LARGE_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires the isolated OpenSSH test server"]
@@ -89,12 +90,14 @@ async fn validates_host_key_authentication_and_interactive_shell() {
 
     shell
         .write(
-            "printf '__BX_SHELL_READY__\\n'; printf '__BX_TERM__%s\\n' \"$TERM\"; stty size; printf '中文宽字符\\n'; exit 23\n",
+            format!(
+                "printf '__BX_SHELL_READY__\\n'; printf '__BX_TERM__%s\\n' \"$TERM\"; stty size; printf '中文宽字符\\n'; head -c {LARGE_OUTPUT_BYTES} /dev/zero | tr '\\0' 'x'; printf '\\n__BX_LARGE_OUTPUT_DONE__\\n'; exit 23\n"
+            ),
         )
         .await
         .unwrap();
 
-    let (output, exit_status) = tokio::time::timeout(Duration::from_secs(10), async {
+    let (output, exit_status) = tokio::time::timeout(Duration::from_secs(30), async {
         let mut output = Vec::new();
         let mut exit_status = None;
         loop {
@@ -119,6 +122,8 @@ async fn validates_host_key_authentication_and_interactive_shell() {
     assert!(output.contains("__BX_TERM__xterm-256color"));
     assert!(output.contains("31 100"));
     assert!(output.contains("中文宽字符"));
+    assert!(output.contains("__BX_LARGE_OUTPUT_DONE__"));
+    assert!(output.len() >= LARGE_OUTPUT_BYTES);
     assert_eq!(exit_status, Some(23));
     drop(shell);
     password_session.disconnect().await.unwrap();

@@ -3,8 +3,8 @@ use bx_contracts::AppInfo;
 mod terminal;
 
 use terminal::{
-    close_terminal_session, probe_ssh_host, resize_terminal, start_password_shell, write_terminal,
-    TerminalSessionManager,
+    acknowledge_terminal_output, close_terminal_session, probe_ssh_host, resize_terminal,
+    start_password_shell, write_terminal, TerminalSessionManager,
 };
 
 #[tauri::command]
@@ -22,6 +22,7 @@ pub fn run() {
             start_password_shell,
             write_terminal,
             resize_terminal,
+            acknowledge_terminal_output,
             close_terminal_session
         ])
         .run(tauri::generate_context!())
