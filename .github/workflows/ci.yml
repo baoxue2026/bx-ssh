@@ -68,6 +68,7 @@ jobs:
           libwebkit2gtk-4.1-dev
           libayatana-appindicator3-dev
           librsvg2-dev
+          openssh-server
           patchelf
 
       - name: Install pinned Rust toolchain
@@ -81,3 +82,7 @@ jobs:
 
       - name: Run Rust tests
         run: cargo test --workspace --all-targets
+
+      - name: Run OpenSSH integration tests
+        if: runner.os == 'Linux'
+        run: bash scripts/test-openssh.sh
