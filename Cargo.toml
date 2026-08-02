@@ -2,6 +2,7 @@
 members = [
     "apps/desktop/src-tauri",
     "crates/contracts",
+    "crates/persistence",
     "crates/ssh-core",
 ]
 resolver = "2"
@@ -14,10 +15,17 @@ repository = "https://github.com/baoxue2026/bx-ssh"
 rust-version = "1.91"
 
 [workspace.dependencies]
+aes-gcm = { version = "0.10.3", features = ["zeroize"] }
+argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
 bx-contracts = { path = "crates/contracts" }
+bx-persistence = { path = "crates/persistence" }
 bx-ssh-core = { path = "crates/ssh-core" }
+getrandom = { version = "0.3.4", features = ["std"] }
+keyring = "4.1.6"
+rusqlite = { version = "=0.39.0", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }
 russh = { version = "0.62.5", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = "2.3.0"
+secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
 tauri = { version = "2.11.5" }
