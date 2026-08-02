@@ -1,0 +1,23 @@
+[workspace]
+members = ["apps/desktop/src-tauri", "crates/contracts"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/baoxue2026/bx-ssh"
+rust-version = "1.91"
+
+[workspace.dependencies]
+bx-contracts = { path = "crates/contracts" }
+serde = { version = "1.0.229", features = ["derive"] }
+tauri = { version = "2.11.5" }
+tauri-build = { version = "2.6.3" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
