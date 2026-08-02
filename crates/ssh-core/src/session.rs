@@ -149,11 +149,7 @@ async fn connect(
         expected: expected.clone(),
         observed: Arc::clone(&observed),
     };
-    let config = Arc::new(client::Config {
-        inactivity_timeout: Some(endpoint.operation_timeout()),
-        nodelay: true,
-        ..Default::default()
-    });
+    let config = Arc::new(client_config(endpoint));
 
     let result = time::timeout(
         endpoint.connect_timeout(),
@@ -189,10 +185,42 @@ async fn connect(
     Ok((handle, host_key))
 }
 
+fn client_config(endpoint: &SshEndpoint) -> client::Config {
+    client::Config {
+        inactivity_timeout: None,
+        keepalive_interval: Some(endpoint.operation_timeout()),
+        keepalive_max: 3,
+        nodelay: true,
+        ..Default::default()
+    }
+}
+
 fn validate_username(username: &str) -> Result<(), SshError> {
     if username.trim().is_empty() {
         Err(SshError::InvalidUsername)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::client_config;
+    use crate::SshEndpoint;
+
+    #[test]
+    fn keeps_idle_sessions_alive_and_detects_unresponsive_servers() {
+        let endpoint = SshEndpoint::new("ssh.example.com", 22)
+            .unwrap()
+            .with_operation_timeout(Duration::from_secs(45));
+
+        let config = client_config(&endpoint);
+
+        assert_eq!(config.inactivity_timeout, None);
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(45)));
+        assert_eq!(config.keepalive_max, 3);
+        assert!(config.nodelay);
     }
 }

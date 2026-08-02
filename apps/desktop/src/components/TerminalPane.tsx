@@ -11,8 +11,8 @@ export interface TerminalViewport {
 }
 
 export interface TerminalHandle {
-  clear(): void;
   focus(): void;
+  reset(): void;
   viewport(): TerminalViewport;
   write(data: Uint8Array, onProcessed?: () => void): void;
 }
@@ -109,11 +109,11 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
     useImperativeHandle(
       ref,
       () => ({
-        clear() {
-          terminalRef.current?.clear();
-        },
         focus() {
           terminalRef.current?.focus();
+        },
+        reset() {
+          terminalRef.current?.reset();
         },
         viewport() {
           const terminal = terminalRef.current;

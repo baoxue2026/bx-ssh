@@ -12,6 +12,7 @@ import { App } from "./App";
 const mocks = vi.hoisted(() => ({
   channels: [] as Array<{ onmessage(message: unknown): void }>,
   invoke: vi.fn(),
+  terminalReset: vi.fn(),
   terminalWrite: vi.fn(),
 }));
 
@@ -31,8 +32,8 @@ vi.mock("./components/TerminalPane", async () => {
   return {
     TerminalPane: React.forwardRef(function MockTerminalPane(_, ref) {
       React.useImperativeHandle(ref, () => ({
-        clear: vi.fn(),
         focus: vi.fn(),
+        reset: mocks.terminalReset,
         viewport: () => ({
           columns: 80,
           rows: 24,
@@ -50,6 +51,7 @@ describe("App", () => {
   beforeEach(() => {
     mocks.channels.length = 0;
     mocks.invoke.mockReset();
+    mocks.terminalReset.mockReset();
     mocks.terminalWrite.mockReset();
     mocks.invoke.mockImplementation((command: string) => {
       if (command === "app_info") {
@@ -68,6 +70,7 @@ describe("App", () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
   });
 
   it("renders the terminal validation workspace", async () => {
@@ -101,6 +104,7 @@ describe("App", () => {
   });
 
   it("acknowledges binary output after xterm processes it", async () => {
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
     let resolveStart: ((value: unknown) => void) | undefined;
     const startResponse = new Promise((resolve) => {
       resolveStart = resolve;
@@ -135,6 +139,10 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "连接" }));
 
     await waitFor(() => {
+      expect(mocks.terminalReset).toHaveBeenCalledOnce();
+      expect(mocks.invoke).toHaveBeenCalledWith("set_webview_memory_usage", {
+        low: true,
+      });
       expect(mocks.invoke).toHaveBeenCalledWith(
         "start_password_shell",
         expect.objectContaining({
@@ -166,6 +174,11 @@ describe("App", () => {
         sessionId: "session-1",
         sequence: 1,
       });
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 60_000);
+      expect(mocks.invoke).not.toHaveBeenCalledWith(
+        "set_webview_memory_usage",
+        { low: false },
+      );
     });
   });
 });
