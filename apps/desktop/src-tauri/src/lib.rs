@@ -1,5 +1,12 @@
 use bx_contracts::AppInfo;
 
+mod terminal;
+
+use terminal::{
+    close_terminal_session, probe_ssh_host, resize_terminal, start_password_shell, write_terminal,
+    TerminalSessionManager,
+};
+
 #[tauri::command]
 fn app_info() -> AppInfo {
     AppInfo::new("BX SSH", env!("CARGO_PKG_VERSION"))
@@ -8,7 +15,15 @@ fn app_info() -> AppInfo {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![app_info])
+        .manage(TerminalSessionManager::default())
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            probe_ssh_host,
+            start_password_shell,
+            write_terminal,
+            resize_terminal,
+            close_terminal_session
+        ])
         .run(tauri::generate_context!())
         .expect("failed to run BX SSH");
 }

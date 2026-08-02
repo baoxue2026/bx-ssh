@@ -310,8 +310,12 @@ name = "bx-ssh-desktop"
 version = "0.1.0"
 dependencies = [
  "bx-contracts",
+ "bx-ssh-core",
+ "serde",
  "tauri",
  "tauri-build",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

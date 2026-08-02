@@ -1,6 +1,6 @@
 :root {
   color: #1f2328;
-  background: #f5f6f8;
+  background: #eef1f4;
   font-family:
     Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   font-synthesis: none;
@@ -29,12 +29,12 @@ select {
 
 .app-shell {
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr) 24px;
+  grid-template-rows: 46px minmax(0, 1fr) 24px;
   width: 100%;
   height: 100%;
   min-width: 800px;
   min-height: 560px;
-  background: #f5f6f8;
+  background: #eef1f4;
 }
 
 .topbar {
@@ -49,7 +49,10 @@ select {
 }
 
 .brand,
-.status-item {
+.topbar-session,
+.status-item,
+.terminal-title,
+.fingerprint-title {
   display: inline-flex;
   align-items: center;
 }
@@ -71,75 +74,221 @@ select {
   border-radius: 6px;
 }
 
-.version {
-  color: #aeb7c2;
+.topbar-session {
+  gap: 7px;
+  color: #c8d0da;
   font-size: 11px;
-  letter-spacing: 0;
+}
+
+.version {
+  margin-left: 9px;
+  color: #8f9aa8;
+}
+
+.connection-dot {
+  width: 7px;
+  height: 7px;
+  background: #77818e;
+  border-radius: 50%;
+}
+
+.connection-dot.state-connected,
+.status-dot.state-connected {
+  color: #37b26c;
+  background: #37b26c;
+}
+
+.connection-dot.state-probing,
+.connection-dot.state-connecting,
+.connection-dot.state-closing,
+.status-dot.state-probing,
+.status-dot.state-connecting,
+.status-dot.state-closing {
+  color: #e1a83b;
+  background: #e1a83b;
+}
+
+.connection-dot.state-failed,
+.status-dot.state-failed {
+  color: #df5d62;
+  background: #df5d62;
 }
 
 .workspace {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 286px minmax(0, 1fr);
   min-height: 0;
 }
 
 .sidebar {
   min-width: 0;
-  padding: 13px 12px;
+  padding: 16px 14px;
+  overflow-y: auto;
   background: #ffffff;
-  border-right: 1px solid #dfe3e8;
+  border-right: 1px solid #d8dde4;
 }
 
-.sidebar h2 {
-  margin: 0 0 12px;
-  color: #4b5563;
-  font-size: 12px;
+.sidebar-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 15px;
+}
+
+.sidebar-heading h1 {
+  margin: 0;
+  color: #252a31;
+  font-size: 14px;
   font-weight: 650;
   line-height: 20px;
   letter-spacing: 0;
 }
 
-.sidebar-empty {
-  padding: 10px 8px;
+.sidebar-heading span {
   color: #8a939f;
-  font-size: 12px;
-  text-align: center;
-  border: 1px dashed #d9dee5;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.connection-form {
+  display: grid;
+  gap: 11px;
+}
+
+.field-group {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.field-label {
+  color: #4f5966;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 16px;
+}
+
+.field-group .ant-input-number {
+  width: 100%;
+}
+
+.fingerprint-panel {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 10px;
+  background: #f4f8fd;
+  border: 1px solid #cbdcf0;
   border-radius: 6px;
 }
 
-.session {
-  display: flex;
+.fingerprint-title {
+  gap: 6px;
+  color: #315a86;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.fingerprint-panel code {
+  overflow-wrap: anywhere;
+  color: #27384a;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.fingerprint-panel .ant-checkbox-wrapper {
+  color: #3f4a57;
+  font-size: 11px;
+}
+
+.connection-error {
+  margin-top: 12px;
+}
+
+.connection-error .ant-alert-message,
+.connection-error .ant-alert-description {
+  font-size: 11px;
+}
+
+.terminal-workspace {
+  display: grid;
   min-width: 0;
   min-height: 0;
-  flex-direction: column;
+  grid-template-rows: 34px minmax(0, 1fr);
+  background: #111418;
+}
+
+.terminal-toolbar {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  color: #66707c;
-  background: #f8f9fa;
+  justify-content: space-between;
+  padding: 0 12px;
+  color: #b8c1cc;
+  background: #282d34;
+  border-bottom: 1px solid #363c45;
+  user-select: none;
 }
 
-.session-icon {
-  color: #758193;
+.terminal-title {
+  gap: 7px;
+  color: #e0e5eb;
+  font-size: 11px;
+  font-weight: 600;
 }
 
-.session h1 {
-  margin: 12px 0 0;
-  color: #4b5563;
-  font-size: 14px;
-  font-weight: 550;
-  line-height: 22px;
-  letter-spacing: 0;
+.endpoint-label {
+  overflow: hidden;
+  max-width: 65%;
+  color: #98a3af;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: #111418;
+}
+
+.terminal-container {
+  position: absolute;
+  inset: 0;
+  padding: 9px 10px;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+}
+
+.terminal-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: #68727e;
+  background: #111418;
+  pointer-events: none;
+}
+
+.terminal-empty span {
+  font-size: 12px;
 }
 
 .statusbar {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: 0 10px;
   color: #505a66;
-  background: #eef1f4;
-  border-top: 1px solid #d7dce2;
-  font-size: 11px;
+  background: #e8ecf0;
+  border-top: 1px solid #d1d7de;
+  font-size: 10px;
   user-select: none;
 }
 
@@ -148,7 +297,23 @@ select {
 }
 
 .status-dot {
-  color: #168a4a;
+  color: #77818e;
+}
+
+.status-spacer {
+  flex: 1;
+}
+
+.status-divider {
+  width: 1px;
+  height: 10px;
+  background: #c6ccd4;
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 250px minmax(0, 1fr);
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -163,24 +328,33 @@ select {
     border-right-color: #343a43;
   }
 
-  .sidebar h2,
-  .session h1 {
+  .sidebar-heading h1,
+  .field-label {
     color: #d3d8df;
   }
 
-  .sidebar-empty {
-    color: #8f99a6;
-    border-color: #3b424c;
+  .sidebar-heading span {
+    color: #7f8996;
   }
 
-  .session {
-    color: #a6afbb;
-    background: #171a1f;
+  .fingerprint-panel {
+    background: #222c37;
+    border-color: #3b536d;
+  }
+
+  .fingerprint-title,
+  .fingerprint-panel code,
+  .fingerprint-panel .ant-checkbox-wrapper {
+    color: #c3d5e8;
   }
 
   .statusbar {
     color: #bbc2cb;
     background: #242930;
     border-top-color: #363d46;
+  }
+
+  .status-divider {
+    background: #464d57;
   }
 }
