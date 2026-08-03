@@ -22,3 +22,4 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 - Signed full-package update checks and installation with tamper and wrong-key rejection validation.
 - Containerized OpenSSH integration testing across Ubuntu 22.04, Ubuntu 24.04, and Debian 12 with Nextest JUnit reports.
 - Debug-only Tauri end-to-end testing on Windows, macOS, and Linux with WebdriverIO reports and isolated test permissions.
+- G0-09 security and supply-chain gates with Rust/npm vulnerability and license checks, full-history secret scanning, CycloneDX SBOM archival, automated dependency updates, and a threat model.

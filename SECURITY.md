@@ -47,3 +47,11 @@ If a credential or signing key is committed:
 5. Invalidate affected artifacts and publish an incident note when users may be impacted.
 
 Deleting a secret in a later commit does not remove it from Git history.
+
+## Supply-chain controls
+
+The repository applies dependency, license, history-secret, and SBOM checks in
+`.github/workflows/security.yml`. The threat model and time-boxed exceptions
+are maintained in [`security/`](security/), especially
+[`risk-acceptance.md`](security/risk-acceptance.md). Report a new dependency or
+build-system concern privately before proposing a workaround in CI.
