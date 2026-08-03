@@ -22,10 +22,20 @@ const emitError = (title, message) => {
 
 const formatCommandError = (error) => {
   const stderr = error?.stderr?.toString().trim();
-  const detail = stderr
-    ? `${error?.message ?? error}\n${stderr}`
-    : (error?.message ?? error);
-  return String(detail).slice(0, 4000);
+  const stdout = error?.stdout?.toString().trim();
+  const stdoutExcerpt =
+    stdout?.length > 2500
+      ? `${stdout.slice(0, 500)}\n... output truncated ...\n${stdout.slice(-2000)}`
+      : stdout;
+  return [
+    error?.message ?? error,
+    `exit status: ${error?.status ?? "unknown"}; signal: ${error?.signal ?? "none"}`,
+    stderr && `stderr: ${stderr}`,
+    stdoutExcerpt && `stdout: ${stdoutExcerpt}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 4000);
 };
 
 let report;
