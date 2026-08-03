@@ -70,7 +70,10 @@ jobs:
         run: rustup show active-toolchain
 
       - name: Build unsigned prototype bundles
-        run: pnpm --filter @bx-ssh/desktop tauri build --ci --no-sign --bundles "${{ matrix.bundles }}" -- -- --locked
+        run: pnpm --filter @bx-ssh/desktop tauri build --ci --no-sign --bundles "${{ matrix.bundles }}"
+
+      - name: Verify dependency lockfiles are unchanged
+        run: git diff --exit-code -- Cargo.lock pnpm-lock.yaml
 
       - name: Generate and validate bundle-size report
         run: pnpm bundle:report -- --platform ${{ matrix.platform }}
