@@ -10,19 +10,29 @@ const policy = JSON.parse(
 );
 const production = process.argv.includes("--production");
 const command = `pnpm licenses list --json${production ? " --prod" : ""}`;
+const escapeWorkflowCommand = (value) =>
+  value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+
+const emitError = (title, message) => {
+  console.error(message);
+  if (process.env.GITHUB_ACTIONS === "true") {
+    console.log(`::error title=${title}::${escapeWorkflowCommand(message)}`);
+  }
+};
 
 let report;
 try {
   report = JSON.parse(
     execSync(command, {
       encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
       stdio: ["ignore", "pipe", "inherit"],
     }),
   );
 } catch (error) {
-  console.error(
-    "Unable to read the pnpm license inventory:",
-    error?.message ?? error,
+  emitError(
+    "npm license inventory error",
+    `Unable to read the pnpm license inventory: ${error?.message ?? error}`,
   );
   process.exit(1);
 }
@@ -38,9 +48,6 @@ const exceptions = new Map(
     .map((entry) => [`${entry.name}@${entry.versions.join(",")}`, entry]),
 );
 const violations = [];
-
-const escapeWorkflowCommand = (value) =>
-  value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
 
 for (const [license, packages] of Object.entries(report)) {
   for (const pkg of packages) {
@@ -62,12 +69,7 @@ if (violations.length > 0) {
   const scope = production ? "Production" : "Development";
   console.error(`${scope} dependency license gate failed:`);
   for (const violation of violations) {
-    console.error(`- ${violation}`);
-    if (process.env.GITHUB_ACTIONS === "true") {
-      console.error(
-        `::error title=${scope} dependency license violation::${escapeWorkflowCommand(violation)}`,
-      );
-    }
+    emitError(`${scope} dependency license violation`, `- ${violation}`);
   }
   process.exit(1);
 }
