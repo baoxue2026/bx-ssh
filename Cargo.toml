@@ -18,7 +18,7 @@ rust-version = "1.91"
 [workspace.dependencies]
 aes-gcm = { version = "0.10.3", features = ["zeroize"] }
 argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
-base64 = "0.22.1"
+base64 = "0.23.0"
 bx-contracts = { path = "crates/contracts" }
 bx-persistence = { path = "crates/persistence" }
 bx-ssh-core = { path = "crates/ssh-core" }
