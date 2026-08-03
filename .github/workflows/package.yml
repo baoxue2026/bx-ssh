@@ -27,7 +27,7 @@ jobs:
             arch: x86_64
           - platform: macos
             os: macos-14
-            bundles: dmg
+            bundles: app,dmg
             arch: x86_64
           - platform: windows
             os: windows-2025
