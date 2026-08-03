@@ -10,6 +10,7 @@
     "dev": "pnpm --filter @bx-ssh/desktop tauri dev",
     "build": "pnpm --filter @bx-ssh/desktop tauri build",
     "build:web": "pnpm --filter @bx-ssh/desktop build:web",
+    "bundle:report": "node scripts/report-bundle-sizes.mjs",
     "format": "prettier --write . --ignore-path .gitignore",
     "format:check": "prettier --check . --ignore-path .gitignore",
     "lint": "pnpm --filter @bx-ssh/desktop lint",
