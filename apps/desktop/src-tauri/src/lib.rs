@@ -17,6 +17,9 @@ use terminal::{
 };
 use update::{check_for_update, install_update};
 
+#[cfg(all(feature = "e2e", not(debug_assertions)))]
+compile_error!("the e2e feature must never be enabled in release builds");
+
 #[tauri::command]
 fn app_info() -> AppInfo {
     AppInfo::new("BX SSH", env!("CARGO_PKG_VERSION"))
@@ -24,8 +27,13 @@ fn app_info() -> AppInfo {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_updater::Builder::new().build());
+    #[cfg(all(feature = "e2e", debug_assertions))]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .manage(TerminalSessionManager::default())
         .manage(SftpSessionManager::default())
         .invoke_handler(tauri::generate_handler![

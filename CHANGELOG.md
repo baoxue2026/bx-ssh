@@ -20,3 +20,5 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 - SQLCipher database encryption with random system-stored data keys, transactional migrations, Argon2id password fallback, and independently encrypted imported private keys.
 - Unsigned Windows, macOS, and Linux prototype packaging with installation-bundle size reports and enforced desktop size budgets.
 - Signed full-package update checks and installation with tamper and wrong-key rejection validation.
+- Containerized OpenSSH integration testing across Ubuntu 22.04, Ubuntu 24.04, and Debian 12 with Nextest JUnit reports.
+- Debug-only Tauri end-to-end testing on Windows, macOS, and Linux with WebdriverIO reports and isolated test permissions.

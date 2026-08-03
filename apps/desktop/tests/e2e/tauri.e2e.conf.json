@@ -1,0 +1,19 @@
+{
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "e2e",
+          "description": "Debug-only WebdriverIO capability",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "wdio:default",
+            "wdio-webdriver:default"
+          ]
+        }
+      ]
+    }
+  }
+}

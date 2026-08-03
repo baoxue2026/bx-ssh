@@ -1,0 +1,7 @@
+[profile.ci]
+fail-fast = false
+status-level = "all"
+final-status-level = "all"
+
+[profile.ci.junit]
+path = "artifacts/test-reports/openssh.xml"

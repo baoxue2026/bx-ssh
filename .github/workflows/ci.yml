@@ -68,7 +68,6 @@ jobs:
           libwebkit2gtk-4.1-dev
           libayatana-appindicator3-dev
           librsvg2-dev
-          openssh-server
           perl
           patchelf
 
@@ -93,6 +92,114 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --all-targets
 
-      - name: Run OpenSSH integration tests
+  openssh:
+    name: OpenSSH (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 22.04
+            id: ubuntu-22-04
+            image: ubuntu:22.04
+          - name: Ubuntu 24.04
+            id: ubuntu-24-04
+            image: ubuntu:24.04
+          - name: Debian 12
+            id: debian-12
+            image: debian:12-slim
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Run containerized OpenSSH integration tests
+        run: bash scripts/test-openssh-docker.sh "${{ matrix.image }}" "${{ matrix.id }}"
+
+      - name: Publish OpenSSH test summary
+        if: always()
+        run: cat "artifacts/test-reports/openssh-${{ matrix.id }}.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload OpenSSH test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bx-ssh-openssh-${{ matrix.id }}-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            artifacts/test-reports/*
+
+  e2e:
+    name: Tauri E2E (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-14
+          - windows-2025
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: bash scripts/test-openssh.sh
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev
+          libayatana-appindicator3-dev
+          librsvg2-dev
+          xvfb
+          perl
+          patchelf
+
+      - name: Install Windows SQLCipher build dependency
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
+            choco install strawberryperl --no-progress --yes
+          }
+          "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+
+      - name: Install pnpm
+        run: npm install --global pnpm@10.30.3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Build debug-only E2E application
+        run: pnpm --filter @bx-ssh/desktop build:e2e
+
+      - name: Run Tauri E2E tests on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum pnpm --filter @bx-ssh/desktop test:e2e
+
+      - name: Run Tauri E2E tests
+        if: runner.os != 'Linux'
+        run: pnpm --filter @bx-ssh/desktop test:e2e
+
+      - name: Upload Tauri E2E reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bx-ssh-e2e-${{ runner.os }}-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            artifacts/test-reports/e2e/*
