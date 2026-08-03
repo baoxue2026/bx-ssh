@@ -7,12 +7,15 @@ use tauri_plugin_window_state::StateFlags;
 use tauri_specta::{collect_commands, Builder};
 
 mod command_error;
+mod desktop_shell;
 mod lifecycle;
 mod platform;
 mod sftp;
 mod terminal;
 mod update;
 
+#[cfg(any(debug_assertions, test))]
+use desktop_shell::AppMenuAction;
 use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
 use platform::set_webview_memory_usage;
 use sftp::{
@@ -58,6 +61,7 @@ fn command_builder() -> Builder<tauri::Wry> {
         .typ::<terminal::StartShellResponse>()
         .typ::<terminal::TerminalEvent>()
         .typ::<update::UpdateEvent>()
+        .typ::<AppMenuAction>()
         .typ::<ExitImpact>()
 }
 
@@ -108,7 +112,15 @@ pub fn run() {
                 .with_state_flags(window_state_flags())
                 .build(),
         )
-        .plugin(tauri_plugin_updater::Builder::new().build());
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .menu(desktop_shell::application_menu)
+        .on_menu_event(desktop_shell::handle_menu_event)
+        .on_tray_icon_event(desktop_shell::handle_tray_event)
+        .setup(|app| {
+            desktop_shell::setup_tray(app.handle())?;
+            Ok(())
+        });
     #[cfg(all(feature = "e2e", debug_assertions))]
     let builder = builder
         .plugin(tauri_plugin_wdio::init())

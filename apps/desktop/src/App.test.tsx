@@ -11,28 +11,35 @@ import { App } from "./App";
 
 const mocks = vi.hoisted(() => ({
   channels: [] as Array<{ onmessage(message: unknown): void }>,
-  eventListeners: [] as Array<
-    (event: {
-      payload: { activeSessions: number; activeTransfers: number };
-    }) => void
-  >,
+  eventListeners: new Map<
+    string,
+    Array<(event: { payload: unknown }) => void>
+  >(),
   invoke: vi.fn(),
+  window: {
+    close: vi.fn(() => Promise.resolve()),
+    isMaximized: vi.fn(() => Promise.resolve(false)),
+    minimize: vi.fn(() => Promise.resolve()),
+    onResized: vi.fn(() => Promise.resolve(vi.fn())),
+    toggleMaximize: vi.fn(() => Promise.resolve()),
+  },
   terminalReset: vi.fn(),
   terminalWrite: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(
-    (
-      _event: string,
-      listener: (event: {
-        payload: { activeSessions: number; activeTransfers: number };
-      }) => void,
-    ) => {
-      mocks.eventListeners.push(listener);
+    (event: string, listener: (event: { payload: unknown }) => void) => {
+      const listeners = mocks.eventListeners.get(event) ?? [];
+      listeners.push(listener);
+      mocks.eventListeners.set(event, listeners);
       return Promise.resolve(vi.fn());
     },
   ),
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => mocks.window,
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -69,8 +76,14 @@ vi.mock("./components/TerminalPane", async () => {
 describe("App", () => {
   beforeEach(() => {
     mocks.channels.length = 0;
-    mocks.eventListeners.length = 0;
+    mocks.eventListeners.clear();
     mocks.invoke.mockReset();
+    mocks.window.close.mockClear();
+    mocks.window.isMaximized.mockClear();
+    mocks.window.isMaximized.mockResolvedValue(false);
+    mocks.window.minimize.mockClear();
+    mocks.window.onResized.mockClear();
+    mocks.window.toggleMaximize.mockClear();
     mocks.terminalReset.mockReset();
     mocks.terminalWrite.mockReset();
     mocks.invoke.mockImplementation((command: string) => {
@@ -102,6 +115,10 @@ describe("App", () => {
     expect(
       screen.getByRole("application", { name: "SSH 终端" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "应用菜单" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "文件" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "工作区" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "帮助" })).toBeVisible();
 
     await waitFor(() => {
       expect(mocks.invoke).toHaveBeenCalledWith("app_info");
@@ -133,6 +150,60 @@ describe("App", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("check_for_update");
   });
 
+  it("controls the native window from the custom title bar", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "最小化窗口" }));
+    fireEvent.click(screen.getByRole("button", { name: "最大化窗口" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭窗口" }));
+
+    expect(mocks.window.minimize).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(mocks.window.toggleMaximize).toHaveBeenCalledOnce();
+      expect(mocks.window.close).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("handles visible and native application menu actions", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "check_for_update") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve();
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "工作区" }));
+    fireEvent.click(
+      await screen.findByText("SFTP", {
+        selector: ".app-menu-item-label > span",
+      }),
+    );
+    expect(
+      screen.getByText("SFTP v3", { selector: ".sidebar-heading span" }),
+    ).toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(mocks.eventListeners.get("app-menu-action")).toHaveLength(1),
+    );
+    const menuListener = mocks.eventListeners.get("app-menu-action")![0];
+    act(() => menuListener({ payload: "show-terminal" }));
+    expect(
+      screen.getByText("SSH / PTY", { selector: ".sidebar-heading span" }),
+    ).toBeInTheDocument();
+
+    act(() => menuListener({ payload: "check-for-updates" }));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("check_for_update");
+    });
+    expect(
+      await screen.findByText("当前版本 v0.1.0 已是最新版本。"),
+    ).toBeInTheDocument();
+  });
+
   it("requires an explicit host fingerprint probe", async () => {
     render(<App />);
 
@@ -150,9 +221,12 @@ describe("App", () => {
   it("requires confirmation before exiting with active work", async () => {
     render(<App />);
 
-    await waitFor(() => expect(mocks.eventListeners).toHaveLength(1));
+    await waitFor(() =>
+      expect(mocks.eventListeners.get("app-exit-requested")).toHaveLength(1),
+    );
+    const exitListener = mocks.eventListeners.get("app-exit-requested")![0];
     act(() =>
-      mocks.eventListeners[0]({
+      exitListener({
         payload: { activeSessions: 2, activeTransfers: 1 },
       }),
     );
@@ -176,7 +250,7 @@ describe("App", () => {
     );
 
     act(() =>
-      mocks.eventListeners[0]({
+      exitListener({
         payload: { activeSessions: 1, activeTransfers: 0 },
       }),
     );
