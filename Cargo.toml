@@ -16,7 +16,7 @@ repository = "https://github.com/baoxue2026/bx-ssh"
 rust-version = "1.91"
 
 [workspace.dependencies]
-aes-gcm = { version = "0.10.3", features = ["zeroize"] }
+aes-gcm = { version = "0.11.0", features = ["zeroize"] }
 argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
 base64 = "0.22.1"
 bx-contracts = { path = "crates/contracts" }
