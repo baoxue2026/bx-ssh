@@ -1,0 +1,23 @@
+"$schema" = "../gen/schemas/desktop-schema.json"
+
+[[permission]]
+identifier = "allow-main-commands"
+description = "Allows the local main window to call the reviewed BX SSH command surface."
+commands.allow = [
+  "app_info",
+  "probe_ssh_host",
+  "start_password_shell",
+  "write_terminal",
+  "resize_terminal",
+  "acknowledge_terminal_output",
+  "close_terminal_session",
+  "start_password_sftp",
+  "list_sftp_directory",
+  "upload_sftp_file",
+  "download_sftp_file",
+  "hash_remote_sftp_file",
+  "close_sftp_session",
+  "set_webview_memory_usage",
+  "check_for_update",
+  "install_update",
+]

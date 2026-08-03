@@ -31,7 +31,8 @@
     "cargo:test": "cargo test --workspace --all-targets",
     "security:exceptions": "node scripts/check-security-exceptions.mjs",
     "security:licenses": "node scripts/check-npm-licenses.mjs --production && node scripts/check-npm-licenses.mjs",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test && pnpm ipc:check"
+    "security:tauri": "node scripts/check-tauri-security.mjs",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm security:tauri && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test && pnpm ipc:check"
   },
   "devDependencies": {
     "prettier": "3.9.6"

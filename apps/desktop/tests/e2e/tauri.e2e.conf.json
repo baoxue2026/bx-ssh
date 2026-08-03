@@ -6,9 +6,10 @@
         {
           "identifier": "e2e",
           "description": "Debug-only WebdriverIO capability",
+          "local": true,
           "windows": ["main"],
           "permissions": [
-            "core:default",
+            "allow-main-commands",
             "wdio:default",
             "wdio-webdriver:default"
           ]

@@ -82,6 +82,9 @@ jobs:
       - name: Check security exception expiry
         run: node scripts/check-security-exceptions.mjs
 
+      - name: Check Tauri capabilities and CSP
+        run: node scripts/check-tauri-security.mjs
+
       - name: Audit npm dependencies
         run: pnpm audit --registry=https://registry.npmjs.org --audit-level high
 
