@@ -22,7 +22,7 @@ base64 = "0.22.1"
 bx-contracts = { path = "crates/contracts" }
 bx-persistence = { path = "crates/persistence" }
 bx-ssh-core = { path = "crates/ssh-core" }
-getrandom = { version = "0.3.4", features = ["std"] }
+getrandom = { version = "0.4.3", features = ["std"] }
 keyring = "4.1.6"
 minisign-verify = "0.2.4"
 rusqlite = { version = "=0.39.0", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }
