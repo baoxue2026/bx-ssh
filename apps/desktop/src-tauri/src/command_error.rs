@@ -22,6 +22,13 @@ impl CommandError {
             message: format!("{kind} session is already closed"),
         }
     }
+
+    pub(crate) fn update(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.to_owned(),
+            message: message.into(),
+        }
+    }
 }
 
 impl From<SshError> for CommandError {

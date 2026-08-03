@@ -89,6 +89,30 @@ describe("App", () => {
     });
   });
 
+  it("checks for a signed application update", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "check_for_update") {
+        return Promise.resolve({
+          currentVersion: "0.1.0",
+          version: "0.1.1",
+          notes: "Signed prototype update",
+          publishedAt: null,
+        });
+      }
+      return Promise.resolve();
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
+
+    expect(await screen.findByText("发现新版本 v0.1.1")).toBeInTheDocument();
+    expect(screen.getByText("Signed prototype update")).toBeInTheDocument();
+    expect(mocks.invoke).toHaveBeenCalledWith("check_for_update");
+  });
+
   it("requires an explicit host fingerprint probe", async () => {
     render(<App />);
 

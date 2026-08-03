@@ -24,12 +24,15 @@ jobs:
           - platform: linux
             os: ubuntu-24.04
             bundles: appimage,deb,rpm
+            arch: x86_64
           - platform: macos
             os: macos-14
-            bundles: dmg
+            bundles: app,dmg
+            arch: x86_64
           - platform: windows
             os: windows-2025
             bundles: msi,nsis
+            arch: x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
@@ -69,14 +72,51 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
-      - name: Build unsigned prototype bundles
-        run: pnpm --filter @bx-ssh/desktop tauri build --ci --no-sign --bundles "${{ matrix.bundles }}"
+      - name: Prepare updater signing directory
+        run: >-
+          node -e "require('node:fs').mkdirSync(process.argv[1], { recursive: true })"
+          "${{ github.workspace }}/artifacts/updater"
+
+      - name: Generate temporary updater signing keys
+        run: |
+          pnpm --filter @bx-ssh/desktop tauri signer generate --ci --password "g0-ci-ephemeral" --write-keys "${{ github.workspace }}/artifacts/updater/signing.key"
+          pnpm --filter @bx-ssh/desktop tauri signer generate --ci --password "g0-ci-wrong-key" --write-keys "${{ github.workspace }}/artifacts/updater/wrong.key"
+
+      - name: Prepare updater build configuration
+        run: >-
+          node scripts/prepare-updater-test.mjs
+          --public-key "${{ github.workspace }}/artifacts/updater/signing.key.pub"
+          --output "${{ github.workspace }}/artifacts/updater/tauri.test.conf.json"
+          --version "0.1.1"
+
+      - name: Build prototype bundles and signed updater artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ github.workspace }}/artifacts/updater/signing.key
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: g0-ci-ephemeral
+        run: >-
+          pnpm --filter @bx-ssh/desktop tauri build
+          --ci
+          --ignore-version-mismatches
+          --bundles "${{ matrix.bundles }}"
+          --config "${{ github.workspace }}/artifacts/updater/tauri.test.conf.json"
 
       - name: Verify dependency lockfiles are unchanged
         run: git diff --exit-code -- Cargo.lock pnpm-lock.yaml
 
       - name: Generate and validate bundle-size report
         run: node scripts/report-bundle-sizes.mjs --platform "${{ matrix.platform }}"
+
+      - name: Validate updater signatures and rejection cases
+        run: >-
+          cargo run --locked -p bx-update-validator --
+          --bundle-dir "${{ github.workspace }}/target/release/bundle"
+          --public-key "${{ github.workspace }}/artifacts/updater/signing.key.pub"
+          --wrong-public-key "${{ github.workspace }}/artifacts/updater/wrong.key.pub"
+          --output-dir "${{ github.workspace }}/artifacts/updater/reports"
+          --platform "${{ matrix.platform }}"
+          --arch "${{ matrix.arch }}"
+          --version "0.1.1"
+          --base-url "https://github.com/baoxue2026/bx-ssh/releases/download/v0.1.1/"
 
       - name: Upload prototype bundles and size report
         if: always()
@@ -92,4 +132,8 @@ jobs:
             target/release/bundle/**/*.exe
             target/release/bundle/**/*.msi
             target/release/bundle/**/*.rpm
+            target/release/bundle/**/*.sig
+            target/release/bundle/**/*.tar.gz
+            target/release/bundle/**/*.zip
             artifacts/bundle-size/*
+            artifacts/updater/reports/*

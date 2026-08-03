@@ -28,6 +28,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": false,
     "targets": "all",
     "category": "DeveloperTool",
     "copyright": "Copyright 2026 BX SSH contributors",
@@ -43,6 +44,17 @@
     "windows": {
       "webviewInstallMode": {
         "type": "skip"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVFREQ3NDg4RENGODIyOEUKUldTT0l2amNpSFRkWHNuS0YvbGZQREJ2bk0xUktUa1o0bjh0a1JPb1M0SWViZjM3ZWgrakpwNjEK",
+      "endpoints": [
+        "https://github.com/baoxue2026/bx-ssh/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }
