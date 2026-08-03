@@ -20,19 +20,27 @@ const emitError = (title, message) => {
   }
 };
 
+const formatCommandError = (error) => {
+  const stderr = error?.stderr?.toString().trim();
+  const detail = stderr
+    ? `${error?.message ?? error}\n${stderr}`
+    : (error?.message ?? error);
+  return String(detail).slice(0, 4000);
+};
+
 let report;
 try {
   report = JSON.parse(
     execSync(command, {
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "inherit"],
+      stdio: ["ignore", "pipe", "pipe"],
     }),
   );
 } catch (error) {
   emitError(
     "npm license inventory error",
-    `Unable to read the pnpm license inventory: ${error?.message ?? error}`,
+    `Unable to read the pnpm license inventory: ${formatCommandError(error)}`,
   );
   process.exit(1);
 }
