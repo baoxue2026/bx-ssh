@@ -13,6 +13,7 @@
 **/playwright-report/
 **/src-tauri/gen/schemas/
 **/*.tsbuildinfo
+/artifacts/
 
 # Tauri icon generator output not used by the desktop bundles
 /apps/desktop/src-tauri/icons/android/

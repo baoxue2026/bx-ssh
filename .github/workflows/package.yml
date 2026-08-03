@@ -1,0 +1,92 @@
+name: Package prototypes
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-24.04
+            bundles: appimage,deb,rpm
+          - platform: macos
+            os: macos-14
+            bundles: dmg
+          - platform: windows
+            os: windows-2025
+            bundles: msi,nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev
+          libayatana-appindicator3-dev
+          librsvg2-dev
+          libfuse2
+          patchelf
+          rpm
+
+      - name: Install Windows SQLCipher build dependency
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
+            choco install strawberryperl --no-progress --yes
+          }
+          "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+
+      - name: Install pnpm
+        run: npm install --global pnpm@10.30.3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Build unsigned prototype bundles
+        run: pnpm --filter @bx-ssh/desktop tauri build --ci --no-sign --bundles "${{ matrix.bundles }}" -- -- --locked
+
+      - name: Generate and validate bundle-size report
+        run: pnpm bundle:report -- --platform ${{ matrix.platform }}
+
+      - name: Upload prototype bundles and size report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bx-ssh-${{ matrix.platform }}-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            target/release/bundle/**/*.AppImage
+            target/release/bundle/**/*.deb
+            target/release/bundle/**/*.dmg
+            target/release/bundle/**/*.exe
+            target/release/bundle/**/*.msi
+            target/release/bundle/**/*.rpm
+            artifacts/bundle-size/*

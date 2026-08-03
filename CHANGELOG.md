@@ -18,3 +18,4 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 - SSH keepalives preserve idle interactive sessions without treating operation timeouts as connection lifetime limits.
 - Independent SFTP sessions with directory browsing, atomic streaming uploads and downloads, SHA-256 integrity verification, stable command errors, and a responsive desktop validation view.
 - SQLCipher database encryption with random system-stored data keys, transactional migrations, Argon2id password fallback, and independently encrypted imported private keys.
+- Unsigned Windows, macOS, and Linux prototype packaging with installation-bundle size reports and enforced desktop size budgets.
