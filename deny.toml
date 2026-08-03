@@ -1,0 +1,64 @@
+[graph]
+# Check every platform that is part of the packaging matrix.  This keeps a
+# Linux-only or macOS-only dependency from escaping review on Windows CI.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+# These are tracked, time-boxed exceptions.  The rationale and re-review date
+# live in security/risk-acceptance.md; do not add an unreviewed exception here.
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "russh 0.62.5 requires rsa 0.10.0-rc.18 for phase-one RSA compatibility; no fixed upstream release. Prefer Ed25519 and review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is a GTK3 build-time transitive dependency constrained by Tauri/WebKit; review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0411", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0412", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0413", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0414", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0415", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0416", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0417", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0418", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0419", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2024-0420", reason = "GTK3 platform binding used by Tauri Linux builds; not in the Windows production bundle. Review before 2026-09-03." },
+    { id = "RUSTSEC-2025-0075", reason = "UNIC/urlpattern is a Tauri WebView parser dependency; review Tauri upgrade path before 2026-09-03." },
+    { id = "RUSTSEC-2025-0080", reason = "UNIC/urlpattern is a Tauri WebView parser dependency; review Tauri upgrade path before 2026-09-03." },
+    { id = "RUSTSEC-2025-0081", reason = "UNIC/urlpattern is a Tauri WebView parser dependency; review Tauri upgrade path before 2026-09-03." },
+    { id = "RUSTSEC-2025-0098", reason = "UNIC/urlpattern is a Tauri WebView parser dependency; review Tauri upgrade path before 2026-09-03." },
+    { id = "RUSTSEC-2025-0100", reason = "UNIC/urlpattern is a Tauri WebView parser dependency; review Tauri upgrade path before 2026-09-03." },
+]
+
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+ignore = false
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

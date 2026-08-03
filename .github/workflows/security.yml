@@ -1,0 +1,149 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 1 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        with:
+          fail-on-severity: high
+          deny-licenses: >-
+            AGPL-1.0-only,
+            AGPL-1.0-or-later,
+            SSPL-1.0
+
+  dependency-security:
+    name: Dependency and license security
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.2
+
+      - name: Install pnpm
+        run: npm install --global pnpm@10.30.3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install pinned security tools
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: Install Gitleaks 8.30.1
+        shell: bash
+        env:
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          bin_dir="$RUNNER_TEMP/gitleaks-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+          echo "$GITLEAKS_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$bin_dir"
+          tar --extract --gzip --file "$archive" --directory "$bin_dir" gitleaks
+          chmod 0755 "$bin_dir/gitleaks"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Check Rust advisories, licenses, and sources
+        run: cargo deny check advisories licenses sources
+
+      - name: Check security exception expiry
+        run: node scripts/check-security-exceptions.mjs
+
+      - name: Audit npm dependencies
+        run: pnpm audit --registry=https://registry.npmjs.org --audit-level high
+
+      - name: Check production npm licenses
+        run: node scripts/check-npm-licenses.mjs --production
+
+      - name: Check development npm licenses
+        run: node scripts/check-npm-licenses.mjs
+
+      - name: Scan complete Git history for secrets
+        run: gitleaks git . --redact --exit-code 1
+
+  sbom:
+    name: CycloneDX SBOM
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Prepare SBOM output directory
+        run: mkdir -p artifacts/sbom
+
+      - name: Install Syft 1.50.0
+        shell: bash
+        env:
+          SYFT_SHA256: bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/syft.tar.gz"
+          bin_dir="$RUNNER_TEMP/syft-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$archive" \
+            "https://github.com/anchore/syft/releases/download/v1.50.0/syft_1.50.0_linux_amd64.tar.gz"
+          echo "$SYFT_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$bin_dir"
+          tar --extract --gzip --file "$archive" --directory "$bin_dir" syft
+          chmod 0755 "$bin_dir/syft"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Generate CycloneDX JSON SBOM
+        env:
+          SYFT_CHECK_FOR_APP_UPDATE: "false"
+        run: syft dir:. --output cyclonedx-json=artifacts/sbom/bx-ssh.cdx.json
+
+      - name: Validate SBOM contents
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'artifacts/sbom/bx-ssh.cdx.json';
+          const sbom = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const purls = (sbom.components ?? []).map((component) => component.purl ?? '');
+          if (sbom.bomFormat !== 'CycloneDX') throw new Error('SBOM format is not CycloneDX');
+          if (!purls.some((purl) => purl.startsWith('pkg:cargo/'))) throw new Error('SBOM has no Cargo components');
+          if (!purls.some((purl) => purl.startsWith('pkg:npm/'))) throw new Error('SBOM has no npm components');
+          console.log(`Validated ${purls.length} SBOM components.`);
+          NODE
+
+      - name: Upload CycloneDX JSON SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bx-ssh-sbom-${{ github.sha }}
+          path: artifacts/sbom/bx-ssh.cdx.json
+          if-no-files-found: error
+          retention-days: 14
