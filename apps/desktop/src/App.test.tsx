@@ -11,9 +11,28 @@ import { App } from "./App";
 
 const mocks = vi.hoisted(() => ({
   channels: [] as Array<{ onmessage(message: unknown): void }>,
+  eventListeners: [] as Array<
+    (event: {
+      payload: { activeSessions: number; activeTransfers: number };
+    }) => void
+  >,
   invoke: vi.fn(),
   terminalReset: vi.fn(),
   terminalWrite: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(
+    (
+      _event: string,
+      listener: (event: {
+        payload: { activeSessions: number; activeTransfers: number };
+      }) => void,
+    ) => {
+      mocks.eventListeners.push(listener);
+      return Promise.resolve(vi.fn());
+    },
+  ),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -50,6 +69,7 @@ vi.mock("./components/TerminalPane", async () => {
 describe("App", () => {
   beforeEach(() => {
     mocks.channels.length = 0;
+    mocks.eventListeners.length = 0;
     mocks.invoke.mockReset();
     mocks.terminalReset.mockReset();
     mocks.terminalWrite.mockReset();
@@ -124,6 +144,46 @@ describe("App", () => {
       });
       expect(screen.getByText("ssh-ed25519")).toBeInTheDocument();
       expect(screen.getByText("信任此主机指纹")).toBeInTheDocument();
+    });
+  });
+
+  it("requires confirmation before exiting with active work", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(mocks.eventListeners).toHaveLength(1));
+    act(() =>
+      mocks.eventListeners[0]({
+        payload: { activeSessions: 2, activeTransfers: 1 },
+      }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "退出 BX SSH？" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "当前有 2 个活动会话、1 个进行中的文件传输。退出将终止传输并断开所有连接。",
+      ),
+    ).toBeInTheDocument();
+
+    const cancel = screen.getByRole("button", { name: /取\s*消/ });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    fireEvent.click(cancel);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "退出 BX SSH？" }),
+      ).not.toBeInTheDocument(),
+    );
+
+    act(() =>
+      mocks.eventListeners[0]({
+        payload: { activeSessions: 1, activeTransfers: 0 },
+      }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "退出并断开" }));
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("confirm_app_exit");
     });
   });
 

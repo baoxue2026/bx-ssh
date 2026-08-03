@@ -29,6 +29,15 @@
 - **Impact:** Maintenance advisories in transitive WebView URL-pattern parsing dependencies. BX SSH does not call these crates directly.
 - **Mitigation/review:** Do not treat URL-pattern parsing as an authorization decision. Prioritize removing the path in a Tauri update and review by 2026-09-03.
 
+## RA-004: Unmaintained paste build-time macro
+
+- **Identifier:** `RUSTSEC-2024-0436`, `paste 1.0.15`, through `specta 2.0.0-rc.22 -> paste`.
+- **Impact:** The crate is unmaintained, but the advisory does not describe a vulnerability. It is used while compiling Specta macros and is not part of the BX SSH runtime command or data path.
+- **Reason:** The pinned Specta/Tauri Specta versions require this crate, and there is no fixed compatible Specta release. Removing Specta would remove the reviewed Rust-to-TypeScript IPC generation established for phase one.
+- **Mitigation:** Keep exact Specta compatibility versions and `Cargo.lock`; verify registry checksums and sources in CI; regenerate bindings and reject any diff on every contract change; do not use `paste` directly in application code.
+- **Owner/review:** Project maintainer, 2026-09-03 or a compatible upstream release, whichever comes first.
+- **Closure:** Upgrade Specta to a compatible release without `paste`, regenerate IPC bindings, pass all Rust/frontend/E2E gates, and remove the matching `deny.toml` exception.
+
 ## Release conditions
 
-Apart from the three registered groups above, Rust advisories, high-severity npm audit, production licenses, full-history secret scan, and SBOM generation must pass. A real leaked key, unsigned update, host-fingerprint bypass, or high-severity production advisory immediately changes the decision to **No-Go**.
+Apart from the four registered groups above, Rust advisories, high-severity npm audit, production licenses, full-history secret scan, and SBOM generation must pass. A real leaked key, unsigned update, host-fingerprint bypass, or high-severity production advisory immediately changes the decision to **No-Go**.

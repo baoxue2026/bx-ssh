@@ -10,6 +10,10 @@
           "windows": ["main"],
           "permissions": [
             "allow-main-commands",
+            "core:event:allow-listen",
+            "core:event:allow-unlisten",
+            "core:window:allow-is-minimized",
+            "core:window:allow-minimize",
             "wdio:default",
             "wdio-webdriver:default"
           ]
