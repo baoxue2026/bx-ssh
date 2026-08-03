@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Modal, Progress, Tooltip } from "antd";
 import { Download, RefreshCw, ShieldCheck } from "lucide-react";
 import { ipc } from "../ipc/client";
@@ -15,22 +15,27 @@ type UpdateStatus =
 
 interface UpdateControlProps {
   currentVersion: string;
+  requestId?: number;
 }
 
-export function UpdateControl({ currentVersion }: UpdateControlProps) {
+export function UpdateControl({
+  currentVersion,
+  requestId = 0,
+}: UpdateControlProps) {
   const [status, setStatus] = useState<UpdateStatus>("idle");
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [open, setOpen] = useState(false);
   const [downloadedBytes, setDownloadedBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const handledRequestId = useRef(0);
 
   const progress = useMemo(() => {
     if (!totalBytes || totalBytes <= 0) return 0;
     return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100));
   }, [downloadedBytes, totalBytes]);
 
-  const checkForUpdate = async () => {
+  const checkForUpdate = useCallback(async () => {
     setStatus("checking");
     setErrorMessage(null);
     try {
@@ -43,7 +48,13 @@ export function UpdateControl({ currentVersion }: UpdateControlProps) {
       setStatus("error");
       setOpen(true);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (requestId <= handledRequestId.current) return;
+    handledRequestId.current = requestId;
+    void checkForUpdate();
+  }, [checkForUpdate, requestId]);
 
   const installUpdate = async () => {
     if (!update) return;

@@ -37,14 +37,83 @@ describe("BX SSH desktop shell", () => {
     await expect(host).toHaveValue("ssh.example.test");
   });
 
+  it("handles the fixed workspace shortcuts", async () => {
+    await browser.keys(["Control", "1"]);
+    await expect($(".sidebar-heading span")).toHaveText("SSH / PTY");
+
+    await browser.keys(["Control", "2"]);
+    await expect($(".sidebar-heading span")).toHaveText("SFTP v3");
+  });
+
+  it("maximizes and restores from the custom title bar", async () => {
+    const maximize = await $('button[aria-label="最大化窗口"]');
+    await maximize.click();
+    await browser.waitUntil(
+      () =>
+        browser.tauri.execute(({ core }) =>
+          core
+            .invoke("plugin:window|is_maximized", { label: "main" })
+            .then((value) => value as boolean),
+        ),
+      { timeoutMsg: "the BX SSH window did not maximize" },
+    );
+
+    const restore = await $('button[aria-label="还原窗口"]');
+    await restore.click();
+    await browser.waitUntil(
+      async () =>
+        !(await browser.tauri.execute(({ core }) =>
+          core
+            .invoke("plugin:window|is_maximized", { label: "main" })
+            .then((value) => value as boolean),
+        )),
+      { timeoutMsg: "the BX SSH window did not restore" },
+    );
+  });
+
+  it("keeps title-bar controls inside the viewport at Windows scale", async () => {
+    const geometry = (await browser.execute(() => {
+      const topbar = document.querySelector(".topbar")!.getBoundingClientRect();
+      const controls = Array.from(
+        document.querySelectorAll<HTMLElement>(".window-control"),
+      ).map((control) => {
+        const rect = control.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: rect.width };
+      });
+      return {
+        devicePixelRatio: window.devicePixelRatio,
+        innerWidth: window.innerWidth,
+        topbarHeight: topbar.height,
+        controls,
+      };
+    })) as {
+      devicePixelRatio: number;
+      innerWidth: number;
+      topbarHeight: number;
+      controls: Array<{ left: number; right: number; width: number }>;
+    };
+
+    expect(geometry.devicePixelRatio).toBeGreaterThanOrEqual(1);
+    expect(geometry.topbarHeight).toBe(42);
+    expect(geometry.controls).toHaveLength(3);
+    for (const control of geometry.controls) {
+      expect(control.width).toBe(46);
+      expect(control.left).toBeGreaterThanOrEqual(0);
+      expect(control.right).toBeLessThanOrEqual(geometry.innerWidth);
+    }
+  });
+
   it("restores the existing window when a second instance starts", async () => {
-    const minimized = await browser.tauri.execute(async ({ core }) => {
-      await core.invoke("plugin:window|minimize", { label: "main" });
-      return (await core.invoke("plugin:window|is_minimized", {
-        label: "main",
-      })) as boolean;
-    });
-    expect(minimized).toBe(true);
+    await $('button[aria-label="最小化窗口"]').click();
+    await browser.waitUntil(
+      () =>
+        browser.tauri.execute(({ core }) =>
+          core
+            .invoke("plugin:window|is_minimized", { label: "main" })
+            .then((value) => value as boolean),
+        ),
+      { timeoutMsg: "the custom title bar did not minimize the window" },
+    );
 
     await launchSecondaryInstance();
 

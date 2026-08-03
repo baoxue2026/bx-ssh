@@ -35,13 +35,22 @@ const productionPermissions = new Set([
   "allow-main-commands",
   "core:event:allow-listen",
   "core:event:allow-unlisten",
+  "core:window:allow-close",
+  "core:window:allow-is-maximized",
+  "core:window:allow-minimize",
+  "core:window:allow-start-dragging",
+  "core:window:allow-toggle-maximize",
 ]);
 const e2ePermissions = new Set([
   "allow-main-commands",
   "core:event:allow-listen",
   "core:event:allow-unlisten",
+  "core:window:allow-close",
+  "core:window:allow-is-maximized",
   "core:window:allow-is-minimized",
   "core:window:allow-minimize",
+  "core:window:allow-start-dragging",
+  "core:window:allow-toggle-maximize",
   "wdio:default",
   "wdio-webdriver:default",
 ]);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Alert,
   Button,
@@ -25,10 +26,11 @@ import {
   type TerminalViewport,
 } from "./components/TerminalPane";
 import { SftpPane, type SftpTransferResult } from "./components/SftpPane";
-import { UpdateControl } from "./components/UpdateControl";
+import { WindowTitleBar } from "./components/WindowTitleBar";
 import { IpcError, ipc } from "./ipc/client";
 import type {
   AppInfo,
+  AppMenuAction,
   ExitImpact,
   HostKeyInfo,
   RemoteDirectoryListing,
@@ -61,6 +63,7 @@ const fallbackViewport: TerminalViewport = {
 
 const MEMORY_USAGE_RECOVERY_DELAY_MS = 60_000;
 const EXIT_REQUESTED_EVENT = "app-exit-requested";
+const APP_MENU_ACTION_EVENT = "app-menu-action";
 
 export function App() {
   const [appInfo, setAppInfo] = useState(fallbackInfo);
@@ -84,6 +87,7 @@ export function App() {
   const [exitImpact, setExitImpact] = useState<ExitImpact | null>(null);
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
+  const [updateRequestId, setUpdateRequestId] = useState(0);
   const terminalRef = useRef<TerminalHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
   const sftpSessionIdRef = useRef<string | null>(null);
@@ -92,6 +96,8 @@ export function App() {
   const memoryUsageTimerRef = useRef<number | null>(null);
   const connectionAttemptRef = useRef(0);
   const exitCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const connectionStateRef = useRef<ConnectionState>("idle");
+  const hostKeyRef = useRef<HostKeyInfo | null>(null);
 
   const enableLowMemoryUsage = useCallback(async () => {
     if (memoryUsageTimerRef.current !== null) {
@@ -111,6 +117,20 @@ export function App() {
     }, MEMORY_USAGE_RECOVERY_DELAY_MS);
   }, []);
 
+  const selectWorkspaceMode = useCallback((mode: WorkspaceMode) => {
+    if (
+      ["probing", "connecting", "connected", "closing"].includes(
+        connectionStateRef.current,
+      )
+    ) {
+      return;
+    }
+
+    setWorkspaceMode(mode);
+    setErrorMessage(null);
+    setConnectionState(hostKeyRef.current ? "ready" : "idle");
+  }, []);
+
   useEffect(() => {
     let active = true;
 
@@ -127,6 +147,61 @@ export function App() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let removeListener: (() => void) | undefined;
+
+    void listen<AppMenuAction>(APP_MENU_ACTION_EVENT, (event) => {
+      if (event.payload === "check-for-updates") {
+        setUpdateRequestId((current) => current + 1);
+        return;
+      }
+
+      selectWorkspaceMode(
+        event.payload === "show-terminal" ? "terminal" : "sftp",
+      );
+    })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten();
+        } else {
+          removeListener = unlisten;
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      removeListener?.();
+    };
+  }, [selectWorkspaceMode]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey) return;
+
+      if (!event.shiftKey && (event.key === "1" || event.key === "2")) {
+        event.preventDefault();
+        selectWorkspaceMode(event.key === "1" ? "terminal" : "sftp");
+        return;
+      }
+
+      if (!event.shiftKey) return;
+      if (event.key.toLowerCase() === "u") {
+        event.preventDefault();
+        setUpdateRequestId((current) => current + 1);
+      } else if (event.key.toLowerCase() === "q") {
+        event.preventDefault();
+        void getCurrentWindow()
+          .close()
+          .catch(() => undefined);
+      }
+    };
+
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [selectWorkspaceMode]);
 
   useEffect(() => {
     let disposed = false;
@@ -159,6 +234,14 @@ export function App() {
   useEffect(() => {
     sftpSessionIdRef.current = sftpSessionId;
   }, [sftpSessionId]);
+
+  useEffect(() => {
+    connectionStateRef.current = connectionState;
+  }, [connectionState]);
+
+  useEffect(() => {
+    hostKeyRef.current = hostKey;
+  }, [hostKey]);
 
   useEffect(
     () => () => {
@@ -548,20 +631,17 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            <SquareTerminal size={17} strokeWidth={2.1} />
-          </span>
-          <span>{appInfo.name}</span>
-        </div>
-        <div className="topbar-session">
-          <span className={`connection-dot state-${connectionState}`} />
-          <span>{connectionLabel(connectionState)}</span>
-          <span className="version">v{appInfo.version}</span>
-          <UpdateControl currentVersion={appInfo.version} />
-        </div>
-      </header>
+      <WindowTitleBar
+        appName={appInfo.name}
+        connectionLabel={connectionLabel(connectionState)}
+        connectionState={connectionState}
+        onCheckForUpdates={() => setUpdateRequestId((current) => current + 1)}
+        onWorkspaceModeChange={selectWorkspaceMode}
+        updateRequestId={updateRequestId}
+        version={appInfo.version}
+        workspaceMode={workspaceMode}
+        workspaceModeLocked={connected || busy}
+      />
 
       <div className="workspace">
         <aside className="sidebar" aria-label="SSH 连接验证">

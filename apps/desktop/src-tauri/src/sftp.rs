@@ -6,7 +6,8 @@ use bx_contracts::{HostKeyInfo, RemoteDirectoryListing, TransferSummary};
 use bx_ssh_core::{authenticate_password, ClientSession, SftpClient, SshEndpoint};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -109,6 +110,7 @@ pub(crate) async fn list_sftp_directory(
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn upload_sftp_file(
+    app: AppHandle,
     manager: State<'_, SftpSessionManager>,
     session_id: String,
     local_path: String,
@@ -117,15 +119,19 @@ pub(crate) async fn upload_sftp_file(
     let session = manager.get(&session_id).await?;
     let _transfer_guard = manager.activity.track_transfer();
     let session = session.lock().await;
-    Ok(session
+    let summary = session
         .sftp
         .upload_file(PathBuf::from(local_path), &remote_path)
-        .await?)
+        .await?;
+    drop(session);
+    notify_transfer_completed(&app, "上传完成", &remote_path);
+    Ok(summary)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn download_sftp_file(
+    app: AppHandle,
     manager: State<'_, SftpSessionManager>,
     session_id: String,
     remote_path: String,
@@ -134,10 +140,25 @@ pub(crate) async fn download_sftp_file(
     let session = manager.get(&session_id).await?;
     let _transfer_guard = manager.activity.track_transfer();
     let session = session.lock().await;
-    Ok(session
+    let summary = session
         .sftp
         .download_file(&remote_path, PathBuf::from(local_path))
-        .await?)
+        .await?;
+    drop(session);
+    notify_transfer_completed(&app, "下载完成", &remote_path);
+    Ok(summary)
+}
+
+fn notify_transfer_completed(app: &AppHandle, title: &str, path: &str) {
+    let window_is_focused = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    if window_is_focused {
+        return;
+    }
+
+    let _ = app.notification().builder().title(title).body(path).show();
 }
 
 #[tauri::command]
