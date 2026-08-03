@@ -9,13 +9,14 @@ use bx_ssh_core::{
     SshShell, TerminalSize,
 };
 use serde::{Deserialize, Serialize};
-use tauri::ipc::{Channel, InvokeResponseBody};
+use specta::Type;
+use tauri::ipc::{Channel, InvokeResponseBody, IpcResponse};
 use tauri::State;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use crate::command_error::CommandError;
+use crate::command_error::{CommandError, CommandErrorCode};
 
 const COMMAND_QUEUE_CAPACITY: usize = 128;
 const OUTPUT_BATCH_MAX_BYTES: usize = 64 * 1024;
@@ -41,14 +42,14 @@ struct TerminalOutputFlow {
     next_sequence: u64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProbeHostRequest {
     host: String,
     port: u16,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StartShellRequest {
     host: String,
@@ -62,14 +63,14 @@ pub(crate) struct StartShellRequest {
     pixel_height: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StartShellResponse {
     session_id: String,
     host_key: HostKeyInfo,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Type)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum TerminalEvent {
     Exited {
@@ -77,12 +78,21 @@ pub(crate) enum TerminalEvent {
         signal: Option<String>,
     },
     Error {
-        code: String,
+        code: CommandErrorCode,
         message: String,
     },
 }
 
+pub(crate) struct TerminalOutput(Vec<u8>);
+
+impl IpcResponse for TerminalOutput {
+    fn body(self) -> tauri::Result<InvokeResponseBody> {
+        Ok(InvokeResponseBody::Raw(self.0))
+    }
+}
+
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn probe_ssh_host(request: ProbeHostRequest) -> Result<HostKeyInfo, CommandError> {
     let endpoint = SshEndpoint::new(request.host, request.port)?;
     Ok(probe_host_key(&endpoint).await?)
@@ -93,7 +103,7 @@ pub(crate) async fn start_password_shell(
     manager: State<'_, TerminalSessionManager>,
     request: StartShellRequest,
     on_event: Channel<TerminalEvent>,
-    on_output: Channel<InvokeResponseBody>,
+    on_output: Channel<TerminalOutput>,
 ) -> Result<StartShellResponse, CommandError> {
     let endpoint = SshEndpoint::new(request.host, request.port)?;
     let size = TerminalSize::with_pixels(
@@ -142,6 +152,7 @@ pub(crate) async fn start_password_shell(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn write_terminal(
     manager: State<'_, TerminalSessionManager>,
     session_id: String,
@@ -153,6 +164,7 @@ pub(crate) async fn write_terminal(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn resize_terminal(
     manager: State<'_, TerminalSessionManager>,
     session_id: String,
@@ -168,6 +180,7 @@ pub(crate) async fn resize_terminal(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn acknowledge_terminal_output(
     manager: State<'_, TerminalSessionManager>,
     session_id: String,
@@ -179,6 +192,7 @@ pub(crate) async fn acknowledge_terminal_output(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn close_terminal_session(
     manager: State<'_, TerminalSessionManager>,
     session_id: String,
@@ -218,7 +232,7 @@ async fn run_session(
     mut shell: SshShell,
     mut commands: mpsc::Receiver<SessionCommand>,
     on_event: Channel<TerminalEvent>,
-    on_output: Channel<InvokeResponseBody>,
+    on_output: Channel<TerminalOutput>,
 ) {
     let mut exit_code = None;
     let mut exit_signal = None;
@@ -324,7 +338,7 @@ impl TerminalOutputFlow {
             .map(|started| started + OUTPUT_BATCH_MAX_DELAY)
     }
 
-    fn flush(&mut self, channel: &Channel<InvokeResponseBody>) -> tauri::Result<()> {
+    fn flush(&mut self, channel: &Channel<TerminalOutput>) -> tauri::Result<()> {
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -333,7 +347,7 @@ impl TerminalOutputFlow {
             &mut self.pending,
             Vec::with_capacity(OUTPUT_BATCH_MAX_BYTES),
         );
-        channel.send(InvokeResponseBody::Raw(data))?;
+        channel.send(TerminalOutput(data))?;
         self.pending_since = None;
         self.in_flight.push_back(self.next_sequence);
         self.next_sequence += 1;
@@ -378,6 +392,7 @@ mod tests {
         SessionCommand, TerminalOutputFlow, TerminalSessionManager, OUTPUT_BATCH_MAX_BYTES,
         OUTPUT_MAX_IN_FLIGHT_BATCHES,
     };
+    use crate::command_error::CommandErrorCode;
     use tauri::ipc::{Channel, InvokeResponseBody};
     use tokio::sync::mpsc;
 
@@ -389,7 +404,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert_eq!(error.code, "session_not_found");
+        assert_eq!(error.code, CommandErrorCode::SessionNotFound);
     }
 
     #[test]

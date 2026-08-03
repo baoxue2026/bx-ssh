@@ -92,6 +92,11 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --all-targets
 
+      - name: Check generated IPC bindings
+        run: |
+          cargo test -p bx-ssh-desktop exports_typescript_bindings -- --ignored --nocapture
+          git diff --exit-code -- apps/desktop/src/ipc/bindings.ts
+
   openssh:
     name: OpenSSH (${{ matrix.name }})
     strategy:
