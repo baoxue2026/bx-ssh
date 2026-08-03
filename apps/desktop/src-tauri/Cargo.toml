@@ -10,6 +10,10 @@ rust-version.workspace = true
 name = "bx_ssh_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+
 [build-dependencies]
 tauri-build.workspace = true
 
@@ -20,6 +24,8 @@ serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
 tauri-plugin-updater.workspace = true
+tauri-plugin-wdio = { workspace = true, optional = true }
+tauri-plugin-wdio-webdriver = { workspace = true, optional = true }
 tokio.workspace = true
 uuid.workspace = true
 
