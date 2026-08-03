@@ -42,7 +42,7 @@ tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "rt-multi-t
 uuid = { version = "1.18.1", features = ["v4"] }
 url = "2.5.7"
 webview2-com = "0.38.2"
-windows = "0.61.3"
+windows = "0.62.2"
 
 [profile.release]
 codegen-units = 1
