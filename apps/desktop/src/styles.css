@@ -85,6 +85,59 @@ select {
   color: #8f9aa8;
 }
 
+.update-trigger.ant-btn {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  color: #c8d0da;
+}
+
+.update-trigger.ant-btn:hover,
+.update-trigger.ant-btn:focus-visible {
+  color: #ffffff;
+  background: #343b44;
+}
+
+.update-message {
+  margin: 4px 0 0;
+  color: #475569;
+}
+
+.update-details,
+.update-progress {
+  display: grid;
+  gap: 14px;
+}
+
+.update-details p {
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  color: #475569;
+  white-space: pre-wrap;
+}
+
+.update-version-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.update-progress > span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.update-verified {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #237a49;
+}
+
 .connection-dot {
   width: 7px;
   height: 7px;

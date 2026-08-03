@@ -29,6 +29,7 @@ import {
   type SftpTransferResult,
   type TransferSummary,
 } from "./components/SftpPane";
+import { UpdateControl } from "./components/UpdateControl";
 
 interface AppInfo {
   name: string;
@@ -561,6 +562,7 @@ export function App() {
           <span className={`connection-dot state-${connectionState}`} />
           <span>{connectionLabel(connectionState)}</span>
           <span className="version">v{appInfo.version}</span>
+          <UpdateControl currentVersion={appInfo.version} />
         </div>
       </header>
 

@@ -4,6 +4,7 @@ mod command_error;
 mod platform;
 mod sftp;
 mod terminal;
+mod update;
 
 use platform::set_webview_memory_usage;
 use sftp::{
@@ -14,6 +15,7 @@ use terminal::{
     acknowledge_terminal_output, close_terminal_session, probe_ssh_host, resize_terminal,
     start_password_shell, write_terminal, TerminalSessionManager,
 };
+use update::{check_for_update, install_update};
 
 #[tauri::command]
 fn app_info() -> AppInfo {
@@ -23,6 +25,7 @@ fn app_info() -> AppInfo {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(TerminalSessionManager::default())
         .manage(SftpSessionManager::default())
         .invoke_handler(tauri::generate_handler![
@@ -39,7 +42,9 @@ pub fn run() {
             download_sftp_file,
             hash_remote_sftp_file,
             close_sftp_session,
-            set_webview_memory_usage
+            set_webview_memory_usage,
+            check_for_update,
+            install_update
         ])
         .run(tauri::generate_context!())
         .expect("failed to run BX SSH");
