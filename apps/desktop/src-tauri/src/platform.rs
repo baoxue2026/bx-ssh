@@ -1,8 +1,12 @@
 use tauri::Webview;
 
+use crate::command_error::{CommandError, CommandErrorCode};
+
 #[tauri::command]
-pub(crate) fn set_webview_memory_usage(webview: Webview, low: bool) -> Result<(), String> {
+#[specta::specta]
+pub(crate) fn set_webview_memory_usage(webview: Webview, low: bool) -> Result<(), CommandError> {
     set_platform_memory_usage(webview, low)
+        .map_err(|message| CommandError::new(CommandErrorCode::WebviewMemoryUsageFailed, message))
 }
 
 #[cfg(windows)]

@@ -7,6 +7,8 @@
     "dev:web": "vite",
     "build:web": "tsc -b && vite build",
     "build:e2e": "cross-env VITE_E2E=true tauri build --debug --no-bundle --features e2e --config tests/e2e/tauri.e2e.conf.json",
+    "ipc:generate": "cargo test --manifest-path src-tauri/Cargo.toml exports_typescript_bindings -- --ignored --nocapture",
+    "ipc:check": "pnpm ipc:generate && git diff --exit-code -- src/ipc/bindings.ts",
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "eslint . --max-warnings 0",

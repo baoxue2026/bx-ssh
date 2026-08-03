@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   Alert,
   Button,
@@ -23,43 +22,15 @@ import {
   type TerminalHandle,
   type TerminalViewport,
 } from "./components/TerminalPane";
-import {
-  SftpPane,
-  type RemoteDirectoryListing,
-  type SftpTransferResult,
-  type TransferSummary,
-} from "./components/SftpPane";
+import { SftpPane, type SftpTransferResult } from "./components/SftpPane";
 import { UpdateControl } from "./components/UpdateControl";
-
-interface AppInfo {
-  name: string;
-  version: string;
-}
-
-interface HostKeyInfo {
-  algorithm: string;
-  fingerprintSha256: string;
-}
-
-interface StartShellResponse {
-  sessionId: string;
-  hostKey: HostKeyInfo;
-}
-
-interface StartSftpResponse {
-  sessionId: string;
-  hostKey: HostKeyInfo;
-  directory: RemoteDirectoryListing;
-}
-
-type TerminalEvent =
-  | { type: "exited"; code: number | null; signal: string | null }
-  | { type: "error"; code: string; message: string };
-
-interface CommandError {
-  code?: string;
-  message?: string;
-}
+import { IpcError, ipc } from "./ipc/client";
+import type {
+  AppInfo,
+  HostKeyInfo,
+  RemoteDirectoryListing,
+  TerminalEvent,
+} from "./ipc/bindings";
 
 type ConnectionState =
   | "idle"
@@ -135,7 +106,8 @@ export function App() {
   useEffect(() => {
     let active = true;
 
-    void invoke<AppInfo>("app_info")
+    void ipc
+      .appInfo()
       .then((info) => {
         if (active) {
           setAppInfo(info);
@@ -167,15 +139,11 @@ export function App() {
       }
       const activeSessionId = sessionIdRef.current;
       if (activeSessionId) {
-        void invoke("close_terminal_session", {
-          sessionId: activeSessionId,
-        });
+        void ipc.closeTerminalSession(activeSessionId);
       }
       const activeSftpSessionId = sftpSessionIdRef.current;
       if (activeSftpSessionId) {
-        void invoke("close_sftp_session", {
-          sessionId: activeSftpSessionId,
-        });
+        void ipc.closeSftpSession(activeSftpSessionId);
       }
     },
     [],
@@ -195,9 +163,7 @@ export function App() {
     setTrusted(false);
 
     try {
-      const result = await invoke<HostKeyInfo>("probe_ssh_host", {
-        request: { host, port },
-      });
+      const result = await ipc.probeSshHost({ host, port });
       setHostKey(result);
       setConnectionState("ready");
     } catch (error) {
@@ -234,10 +200,7 @@ export function App() {
       queuedSequence = sequenceToAcknowledge;
       acknowledgementQueue = acknowledgementQueue
         .then(() =>
-          invoke<void>("acknowledge_terminal_output", {
-            sessionId: activeSessionId,
-            sequence: sequenceToAcknowledge,
-          }),
+          ipc.acknowledgeTerminalOutput(activeSessionId, sequenceToAcknowledge),
         )
         .catch((error: unknown) => {
           if (
@@ -251,8 +214,7 @@ export function App() {
         });
     };
 
-    const eventChannel = new Channel<TerminalEvent>();
-    eventChannel.onmessage = (event) => {
+    const handleTerminalEvent = (event: TerminalEvent) => {
       if (connectionAttemptRef.current !== attempt) {
         return;
       }
@@ -269,8 +231,7 @@ export function App() {
       setSessionId(null);
       setConnectionState("disconnected");
     };
-    const outputChannel = new Channel<ArrayBuffer>();
-    outputChannel.onmessage = (data) => {
+    const handleTerminalOutput = (data: ArrayBuffer) => {
       const sequence = ++receivedSequence;
       const acknowledge = () => queueAcknowledgement(sequence);
 
@@ -291,36 +252,35 @@ export function App() {
 
     try {
       await enableLowMemoryUsage();
-      const response = await invoke<StartShellResponse>(
-        "start_password_shell",
+      const response = await ipc.startPasswordShell(
         {
-          request: {
-            host,
-            port,
-            username,
-            password,
-            expectedFingerprint: hostKey.fingerprintSha256,
-            ...viewport,
-          },
-          onEvent: eventChannel,
-          onOutput: outputChannel,
+          host,
+          port,
+          username,
+          password,
+          expectedFingerprint: hostKey.fingerprintSha256,
+          ...viewport,
+        },
+        {
+          onEvent: handleTerminalEvent,
+          onOutput: handleTerminalOutput,
         },
       );
       acknowledgementSessionId = response.sessionId;
       queueAcknowledgement(processedSequence);
 
       if (connectionAttemptRef.current !== attempt) {
-        void invoke("close_terminal_session", {
-          sessionId: response.sessionId,
-        }).catch(() => undefined);
+        void ipc
+          .closeTerminalSession(response.sessionId)
+          .catch(() => undefined);
         return;
       }
 
       setPassword("");
       if (ended) {
-        void invoke("close_terminal_session", {
-          sessionId: response.sessionId,
-        }).catch(() => undefined);
+        void ipc
+          .closeTerminalSession(response.sessionId)
+          .catch(() => undefined);
         return;
       }
 
@@ -353,20 +313,16 @@ export function App() {
 
     try {
       await enableLowMemoryUsage();
-      const response = await invoke<StartSftpResponse>("start_password_sftp", {
-        request: {
-          host,
-          port,
-          username,
-          password,
-          expectedFingerprint: hostKey.fingerprintSha256,
-          initialPath: ".",
-        },
+      const response = await ipc.startPasswordSftp({
+        host,
+        port,
+        username,
+        password,
+        expectedFingerprint: hostKey.fingerprintSha256,
+        initialPath: ".",
       });
       if (connectionAttemptRef.current !== attempt) {
-        void invoke("close_sftp_session", {
-          sessionId: response.sessionId,
-        }).catch(() => undefined);
+        void ipc.closeSftpSession(response.sessionId).catch(() => undefined);
         return;
       }
 
@@ -405,9 +361,9 @@ export function App() {
     setConnectionState("closing");
     try {
       if (workspaceMode === "terminal") {
-        await invoke("close_terminal_session", { sessionId: activeSessionId });
+        await ipc.closeTerminalSession(activeSessionId);
       } else {
-        await invoke("close_sftp_session", { sessionId: activeSessionId });
+        await ipc.closeSftpSession(activeSessionId);
         sftpSessionIdRef.current = null;
         setSftpSessionId(null);
         setSftpDirectory(null);
@@ -437,10 +393,7 @@ export function App() {
     setSftpBusy(true);
     setErrorMessage(null);
     try {
-      const directory = await invoke<RemoteDirectoryListing>(
-        "list_sftp_directory",
-        { sessionId: activeSessionId, path },
-      );
+      const directory = await ipc.listSftpDirectory(activeSessionId, path);
       setSftpDirectory(directory);
     } catch (error) {
       setErrorMessage(errorText(error));
@@ -463,15 +416,15 @@ export function App() {
     setErrorMessage(null);
     setSftpTransferResult(null);
     try {
-      const summary = await invoke<TransferSummary>("upload_sftp_file", {
-        sessionId: activeSessionId,
+      const summary = await ipc.uploadSftpFile(
+        activeSessionId,
         localPath,
         remotePath,
-      });
+      );
       setSftpTransferResult({ direction: "upload", summary });
-      const directory = await invoke<RemoteDirectoryListing>(
-        "list_sftp_directory",
-        { sessionId: activeSessionId, path: sftpDirectory?.path ?? "." },
+      const directory = await ipc.listSftpDirectory(
+        activeSessionId,
+        sftpDirectory?.path ?? ".",
       );
       setSftpDirectory(directory);
     } catch (error) {
@@ -491,11 +444,11 @@ export function App() {
     setErrorMessage(null);
     setSftpTransferResult(null);
     try {
-      const summary = await invoke<TransferSummary>("download_sftp_file", {
-        sessionId: activeSessionId,
+      const summary = await ipc.downloadSftpFile(
+        activeSessionId,
         remotePath,
         localPath,
-      });
+      );
       setSftpTransferResult({ direction: "download", summary });
     } catch (error) {
       setErrorMessage(errorText(error));
@@ -511,12 +464,7 @@ export function App() {
     }
 
     inputQueueRef.current = inputQueueRef.current
-      .then(() =>
-        invoke<void>("write_terminal", {
-          sessionId: activeSessionId,
-          data,
-        }),
-      )
+      .then(() => ipc.writeTerminal(activeSessionId, data))
       .catch((error: unknown) => {
         setErrorMessage(errorText(error));
         setConnectionState("failed");
@@ -534,10 +482,7 @@ export function App() {
         return;
       }
 
-      void invoke("resize_terminal", {
-        sessionId: activeSessionId,
-        ...viewport,
-      }).catch((error: unknown) => {
+      void ipc.resizeTerminal(activeSessionId, viewport).catch((error) => {
         setErrorMessage(errorText(error));
         setConnectionState("failed");
       });
@@ -800,24 +745,19 @@ function errorText(error: unknown): string {
   if (typeof error === "string") {
     return error;
   }
-  if (error && typeof error === "object") {
-    const commandError = error as CommandError;
-    if (typeof commandError.message === "string") {
-      return commandError.message;
-    }
+  if (error instanceof Error) {
+    return error.message;
   }
   return "SSH 操作失败";
 }
 
 function isClosedSessionError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  const code = (error as CommandError).code;
-  return code === "session_not_found" || code === "session_closed";
+  return (
+    error instanceof IpcError &&
+    (error.code === "session_not_found" || error.code === "session_closed")
+  );
 }
 
 async function setWebviewMemoryUsage(low: boolean): Promise<void> {
-  await invoke("set_webview_memory_usage", { low }).catch(() => undefined);
+  await ipc.setWebviewMemoryUsage(low).catch(() => undefined);
 }

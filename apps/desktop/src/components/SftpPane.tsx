@@ -10,29 +10,7 @@ import {
   RefreshCw,
   Upload,
 } from "lucide-react";
-
-export type RemoteFileKind = "directory" | "file" | "symlink" | "other";
-
-export interface RemoteFileEntry {
-  name: string;
-  path: string;
-  kind: RemoteFileKind;
-  size: number;
-  modifiedAt: number | null;
-  permissions: number | null;
-}
-
-export interface RemoteDirectoryListing {
-  path: string;
-  entries: RemoteFileEntry[];
-}
-
-export interface TransferSummary {
-  bytes: number;
-  elapsedMs: number;
-  bytesPerSecond: number;
-  sha256: string;
-}
+import type { RemoteDirectoryListing, TransferSummary } from "../ipc/bindings";
 
 export interface SftpTransferResult {
   direction: "upload" | "download";

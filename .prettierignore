@@ -2,6 +2,7 @@
 **/target/
 **/coverage/
 **/node_modules/
+apps/desktop/src/ipc/bindings.ts
 docs/
 BX SSH Desktop Client Prototype.zip
 Cargo.lock

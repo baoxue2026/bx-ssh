@@ -1,19 +1,8 @@
 import { useMemo, useState } from "react";
-import { Channel, invoke } from "@tauri-apps/api/core";
 import { Alert, Button, Modal, Progress, Tooltip } from "antd";
 import { Download, RefreshCw, ShieldCheck } from "lucide-react";
-
-interface UpdateInfo {
-  currentVersion: string;
-  version: string;
-  notes: string | null;
-  publishedAt: string | null;
-}
-
-type UpdateEvent =
-  | { type: "started"; contentLength: number | null }
-  | { type: "progress"; chunkLength: number }
-  | { type: "verified" };
+import { ipc } from "../ipc/client";
+import type { UpdateInfo } from "../ipc/bindings";
 
 type UpdateStatus =
   | "idle"
@@ -45,7 +34,7 @@ export function UpdateControl({ currentVersion }: UpdateControlProps) {
     setStatus("checking");
     setErrorMessage(null);
     try {
-      const available = await invoke<UpdateInfo | null>("check_for_update");
+      const available = await ipc.checkForUpdate();
       setUpdate(available ?? null);
       setStatus(available ? "available" : "current");
       setOpen(true);
@@ -64,21 +53,15 @@ export function UpdateControl({ currentVersion }: UpdateControlProps) {
     setTotalBytes(null);
     setErrorMessage(null);
 
-    const eventChannel = new Channel<UpdateEvent>();
-    eventChannel.onmessage = (event) => {
-      if (event.type === "started") {
-        setTotalBytes(event.contentLength);
-      } else if (event.type === "progress") {
-        setDownloadedBytes((current) => current + event.chunkLength);
-      } else {
-        setStatus("verified");
-      }
-    };
-
     try {
-      await invoke("install_update", {
-        expectedVersion: update.version,
-        onEvent: eventChannel,
+      await ipc.installUpdate(update.version, (event) => {
+        if (event.type === "started") {
+          setTotalBytes(event.contentLength);
+        } else if (event.type === "progress") {
+          setDownloadedBytes((current) => current + event.chunkLength);
+        } else {
+          setStatus("verified");
+        }
       });
     } catch (error) {
       setErrorMessage(errorText(error));
@@ -202,9 +185,6 @@ function formatBytes(bytes: number): string {
 
 function errorText(error: unknown): string {
   if (typeof error === "string") return error;
-  if (error && typeof error === "object") {
-    const value = error as { message?: unknown };
-    if (typeof value.message === "string") return value.message;
-  }
+  if (error instanceof Error) return error.message;
   return "更新服务暂时不可用";
 }

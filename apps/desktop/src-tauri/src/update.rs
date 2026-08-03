@@ -1,14 +1,15 @@
 use std::time::Duration;
 
 use serde::Serialize;
+use specta::Type;
 use tauri::{ipc::Channel, AppHandle};
 use tauri_plugin_updater::{Error as UpdaterError, UpdaterExt};
 
-use crate::command_error::CommandError;
+use crate::command_error::{CommandError, CommandErrorCode};
 
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateInfo {
     current_version: String,
@@ -17,15 +18,24 @@ pub(crate) struct UpdateInfo {
     published_at: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Type)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum UpdateEvent {
-    Started { content_length: Option<u64> },
-    Progress { chunk_length: usize },
+    Started {
+        #[serde(rename = "contentLength")]
+        #[specta(rename = "contentLength")]
+        content_length: Option<u64>,
+    },
+    Progress {
+        #[serde(rename = "chunkLength")]
+        #[specta(rename = "chunkLength")]
+        chunk_length: usize,
+    },
     Verified,
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn check_for_update(app: AppHandle) -> Result<Option<UpdateInfo>, CommandError> {
     let update = app
         .updater_builder()
@@ -58,11 +68,16 @@ pub(crate) async fn install_update(
         .check()
         .await
         .map_err(map_updater_error)?
-        .ok_or_else(|| CommandError::update("update_not_available", "No update is available"))?;
+        .ok_or_else(|| {
+            CommandError::update(
+                CommandErrorCode::UpdateNotAvailable,
+                "No update is available",
+            )
+        })?;
 
     if update.version != expected_version {
         return Err(CommandError::update(
-            "update_changed",
+            CommandErrorCode::UpdateChanged,
             "The available update changed; check again before installing",
         ));
     }
@@ -92,17 +107,19 @@ pub(crate) async fn install_update(
 fn map_updater_error(error: UpdaterError) -> CommandError {
     let code = match &error {
         UpdaterError::Minisign(_) | UpdaterError::Base64(_) | UpdaterError::SignatureUtf8(_) => {
-            "update_signature_invalid"
+            CommandErrorCode::UpdateSignatureInvalid
         }
-        UpdaterError::InsecureTransportProtocol => "update_insecure_endpoint",
+        UpdaterError::InsecureTransportProtocol => CommandErrorCode::UpdateInsecureEndpoint,
         UpdaterError::Reqwest(_) | UpdaterError::Network(_) | UpdaterError::ReleaseNotFound => {
-            "update_unavailable"
+            CommandErrorCode::UpdateUnavailable
         }
-        _ => "update_failed",
+        _ => CommandErrorCode::UpdateFailed,
     };
     let message = match code {
-        "update_signature_invalid" => "Update signature verification failed".to_owned(),
-        "update_insecure_endpoint" => "The update endpoint must use HTTPS".to_owned(),
+        CommandErrorCode::UpdateSignatureInvalid => {
+            "Update signature verification failed".to_owned()
+        }
+        CommandErrorCode::UpdateInsecureEndpoint => "The update endpoint must use HTTPS".to_owned(),
         _ => error.to_string(),
     };
     CommandError::update(code, message)
@@ -110,13 +127,27 @@ fn map_updater_error(error: UpdaterError) -> CommandError {
 
 #[cfg(test)]
 mod tests {
-    use super::{map_updater_error, UpdaterError};
+    use super::{map_updater_error, UpdateEvent, UpdaterError};
+    use crate::command_error::CommandErrorCode;
 
     #[test]
     fn maps_insecure_update_endpoints_to_a_stable_error() {
         let error = map_updater_error(UpdaterError::InsecureTransportProtocol);
 
-        assert_eq!(error.code, "update_insecure_endpoint");
+        assert_eq!(error.code, CommandErrorCode::UpdateInsecureEndpoint);
         assert_eq!(error.message, "The update endpoint must use HTTPS");
+    }
+
+    #[test]
+    fn serializes_update_progress_with_camel_case_fields() {
+        let started = serde_json::to_value(UpdateEvent::Started {
+            content_length: Some(1024),
+        })
+        .expect("update event must serialize");
+        let progress = serde_json::to_value(UpdateEvent::Progress { chunk_length: 512 })
+            .expect("update event must serialize");
+
+        assert_eq!(started["contentLength"], 1024);
+        assert_eq!(progress["chunkLength"], 512);
     }
 }

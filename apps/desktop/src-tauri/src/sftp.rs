@@ -5,6 +5,7 @@ use std::sync::Arc;
 use bx_contracts::{HostKeyInfo, RemoteDirectoryListing, TransferSummary};
 use bx_ssh_core::{authenticate_password, ClientSession, SftpClient, SshEndpoint};
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use tauri::State;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -21,7 +22,7 @@ struct ManagedSftpSession {
     sftp: SftpClient,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StartSftpRequest {
     host: String,
@@ -32,7 +33,7 @@ pub(crate) struct StartSftpRequest {
     initial_path: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StartSftpResponse {
     session_id: String,
@@ -41,6 +42,7 @@ pub(crate) struct StartSftpResponse {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn start_password_sftp(
     manager: State<'_, SftpSessionManager>,
     request: StartSftpRequest,
@@ -88,6 +90,7 @@ pub(crate) async fn start_password_sftp(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn list_sftp_directory(
     manager: State<'_, SftpSessionManager>,
     session_id: String,
@@ -99,6 +102,7 @@ pub(crate) async fn list_sftp_directory(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn upload_sftp_file(
     manager: State<'_, SftpSessionManager>,
     session_id: String,
@@ -114,6 +118,7 @@ pub(crate) async fn upload_sftp_file(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn download_sftp_file(
     manager: State<'_, SftpSessionManager>,
     session_id: String,
@@ -129,6 +134,7 @@ pub(crate) async fn download_sftp_file(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn hash_remote_sftp_file(
     manager: State<'_, SftpSessionManager>,
     session_id: String,
@@ -140,6 +146,7 @@ pub(crate) async fn hash_remote_sftp_file(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn close_sftp_session(
     manager: State<'_, SftpSessionManager>,
     session_id: String,
@@ -175,6 +182,7 @@ impl SftpSessionManager {
 #[cfg(test)]
 mod tests {
     use super::SftpSessionManager;
+    use crate::command_error::CommandErrorCode;
 
     #[tokio::test]
     async fn rejects_unknown_sftp_session_handles() {
@@ -183,6 +191,6 @@ mod tests {
             panic!("missing SFTP session unexpectedly resolved");
         };
 
-        assert_eq!(error.code, "session_not_found");
+        assert_eq!(error.code, CommandErrorCode::SessionNotFound);
     }
 }

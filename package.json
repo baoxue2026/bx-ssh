@@ -18,6 +18,8 @@
     "build": "pnpm --filter @bx-ssh/desktop tauri build",
     "build:web": "pnpm --filter @bx-ssh/desktop build:web",
     "bundle:report": "node scripts/report-bundle-sizes.mjs",
+    "ipc:generate": "pnpm --filter @bx-ssh/desktop ipc:generate",
+    "ipc:check": "pnpm --filter @bx-ssh/desktop ipc:check",
     "format": "prettier --write . --ignore-path .gitignore --ignore-path .prettierignore",
     "format:check": "prettier --check . --ignore-path .gitignore --ignore-path .prettierignore",
     "lint": "pnpm --filter @bx-ssh/desktop lint",
@@ -29,7 +31,7 @@
     "cargo:test": "cargo test --workspace --all-targets",
     "security:exceptions": "node scripts/check-security-exceptions.mjs",
     "security:licenses": "node scripts/check-npm-licenses.mjs --production && node scripts/check-npm-licenses.mjs",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test"
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test && pnpm ipc:check"
   },
   "devDependencies": {
     "prettier": "3.9.6"
