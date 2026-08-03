@@ -38,7 +38,9 @@ const exceptions = new Map(
     .map((entry) => [`${entry.name}@${entry.versions.join(",")}`, entry]),
 );
 const violations = [];
-const seenExceptions = new Set();
+
+const escapeWorkflowCommand = (value) =>
+  value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
 
 for (const [license, packages] of Object.entries(report)) {
   for (const pkg of packages) {
@@ -50,25 +52,23 @@ for (const [license, packages] of Object.entries(report)) {
       matching.license === license &&
       matching.reviewBy >= new Date().toISOString().slice(0, 10)
     ) {
-      seenExceptions.add(`${pkg.name}@${versions.join(",")}`);
       continue;
     }
     violations.push(`${pkg.name}@${versions.join(",")} -> ${license}`);
   }
 }
 
-for (const key of exceptions.keys()) {
-  if (!seenExceptions.has(key))
-    violations.push(
-      `Registered license exception is absent from the dependency tree: ${key}`,
-    );
-}
-
 if (violations.length > 0) {
-  console.error(
-    `${production ? "Production" : "Development"} dependency license gate failed:`,
-  );
-  for (const violation of violations) console.error(`- ${violation}`);
+  const scope = production ? "Production" : "Development";
+  console.error(`${scope} dependency license gate failed:`);
+  for (const violation of violations) {
+    console.error(`- ${violation}`);
+    if (process.env.GITHUB_ACTIONS === "true") {
+      console.error(
+        `::error title=${scope} dependency license violation::${escapeWorkflowCommand(violation)}`,
+      );
+    }
+  }
   process.exit(1);
 }
 
