@@ -76,7 +76,7 @@ jobs:
         run: git diff --exit-code -- Cargo.lock pnpm-lock.yaml
 
       - name: Generate and validate bundle-size report
-        run: pnpm bundle:report -- --platform ${{ matrix.platform }}
+        run: node scripts/report-bundle-sizes.mjs --platform "${{ matrix.platform }}"
 
       - name: Upload prototype bundles and size report
         if: always()

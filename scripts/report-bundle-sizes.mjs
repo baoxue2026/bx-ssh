@@ -98,6 +98,17 @@ function formatMiB(bytes) {
   return (bytes / 1024 / 1024).toFixed(2);
 }
 
+function emitGitHubError(message) {
+  if (process.env.GITHUB_ACTIONS !== "true") return;
+  const escapedMessage = message
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
+  console.error(
+    `::error title=Bundle-size validation failed::${escapedMessage}`,
+  );
+}
+
 function markdownReport(report) {
   const limit = report.limitBytes
     ? `${formatMiB(report.limitBytes)} MiB per installer`
@@ -202,10 +213,21 @@ async function main() {
   }
   console.log(`Reports written to ${outputDirectory}`);
 
-  if (!report.passed) process.exitCode = 1;
+  if (!report.passed) {
+    const failures = bundles
+      .filter((bundle) => !bundle.withinLimit)
+      .map((bundle) => `${bundle.type} is ${bundle.sizeMiB} MiB`)
+      .join(", ");
+    emitGitHubError(
+      `Bundle size limit exceeded (${formatMiB(rule.limitBytes)} MiB): ${failures}`,
+    );
+    process.exitCode = 1;
+  }
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(message);
+  emitGitHubError(message);
   process.exitCode = 1;
 });
