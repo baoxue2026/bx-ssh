@@ -11,15 +11,18 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::command_error::CommandError;
+use crate::lifecycle::{ActivityGuard, AppActivity};
 
 #[derive(Clone, Default)]
 pub(crate) struct SftpSessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<ManagedSftpSession>>>>>,
+    activity: AppActivity,
 }
 
 struct ManagedSftpSession {
     ssh: Option<ClientSession>,
     sftp: SftpClient,
+    _activity_guard: ActivityGuard,
 }
 
 #[derive(Deserialize, Type)]
@@ -73,12 +76,14 @@ pub(crate) async fn start_password_sftp(
         }
     };
     let session_id = Uuid::new_v4().to_string();
+    let activity_guard = manager.activity.track_session();
 
     manager.sessions.lock().await.insert(
         session_id.clone(),
         Arc::new(Mutex::new(ManagedSftpSession {
             ssh: Some(ssh),
             sftp,
+            _activity_guard: activity_guard,
         })),
     );
 
@@ -110,6 +115,7 @@ pub(crate) async fn upload_sftp_file(
     remote_path: String,
 ) -> Result<TransferSummary, CommandError> {
     let session = manager.get(&session_id).await?;
+    let _transfer_guard = manager.activity.track_transfer();
     let session = session.lock().await;
     Ok(session
         .sftp
@@ -126,6 +132,7 @@ pub(crate) async fn download_sftp_file(
     local_path: String,
 ) -> Result<TransferSummary, CommandError> {
     let session = manager.get(&session_id).await?;
+    let _transfer_guard = manager.activity.track_transfer();
     let session = session.lock().await;
     Ok(session
         .sftp
@@ -169,6 +176,34 @@ pub(crate) async fn close_sftp_session(
 }
 
 impl SftpSessionManager {
+    pub(crate) fn with_activity(activity: AppActivity) -> Self {
+        Self {
+            sessions: Arc::default(),
+            activity,
+        }
+    }
+
+    pub(crate) async fn close_all(&self) {
+        let sessions = self
+            .sessions
+            .lock()
+            .await
+            .drain()
+            .map(|(_, session)| session)
+            .collect::<Vec<_>>();
+
+        for session in sessions {
+            let Ok(session) = Arc::try_unwrap(session) else {
+                continue;
+            };
+            let mut session = session.into_inner();
+            let _ = session.sftp.close().await;
+            if let Some(ssh) = session.ssh.take() {
+                let _ = ssh.disconnect().await;
+            }
+        }
+    }
+
     async fn get(&self, session_id: &str) -> Result<Arc<Mutex<ManagedSftpSession>>, CommandError> {
         self.sessions
             .lock()

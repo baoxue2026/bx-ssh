@@ -25,7 +25,9 @@ serde_json.workspace = true
 specta.workspace = true
 specta-typescript.workspace = true
 tauri.workspace = true
+tauri-plugin-single-instance.workspace = true
 tauri-plugin-updater.workspace = true
+tauri-plugin-window-state.workspace = true
 tauri-plugin-wdio = { workspace = true, optional = true }
 tauri-plugin-wdio-webdriver = { workspace = true, optional = true }
 tauri-specta.workspace = true

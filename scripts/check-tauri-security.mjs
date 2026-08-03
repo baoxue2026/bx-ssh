@@ -29,10 +29,19 @@ const reviewedApplicationCommands = [
   "set_webview_memory_usage",
   "check_for_update",
   "install_update",
+  "confirm_app_exit",
 ];
-const productionPermissions = new Set(["allow-main-commands"]);
+const productionPermissions = new Set([
+  "allow-main-commands",
+  "core:event:allow-listen",
+  "core:event:allow-unlisten",
+]);
 const e2ePermissions = new Set([
   "allow-main-commands",
+  "core:event:allow-listen",
+  "core:event:allow-unlisten",
+  "core:window:allow-is-minimized",
+  "core:window:allow-minimize",
   "wdio:default",
   "wdio-webdriver:default",
 ]);

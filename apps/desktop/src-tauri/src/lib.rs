@@ -1,13 +1,19 @@
 use bx_contracts::AppInfo;
+#[cfg(any(debug_assertions, test))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
+use tauri::{Emitter, Manager};
+use tauri_plugin_window_state::StateFlags;
+#[cfg(any(debug_assertions, test))]
 use tauri_specta::{collect_commands, Builder};
 
 mod command_error;
+mod lifecycle;
 mod platform;
 mod sftp;
 mod terminal;
 mod update;
 
+use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
 use platform::set_webview_memory_usage;
 use sftp::{
     close_sftp_session, download_sftp_file, hash_remote_sftp_file, list_sftp_directory,
@@ -15,10 +21,9 @@ use sftp::{
 };
 use terminal::{
     acknowledge_terminal_output, close_terminal_session, probe_ssh_host, resize_terminal,
-    start_password_shell, write_terminal, StartShellRequest, StartShellResponse, TerminalEvent,
-    TerminalSessionManager,
+    start_password_shell, write_terminal, TerminalSessionManager,
 };
-use update::{check_for_update, install_update, UpdateEvent};
+use update::{check_for_update, install_update};
 
 #[cfg(all(feature = "e2e", not(debug_assertions)))]
 compile_error!("the e2e feature must never be enabled in release builds");
@@ -29,6 +34,7 @@ fn app_info() -> AppInfo {
     AppInfo::new("BX SSH", env!("CARGO_PKG_VERSION"))
 }
 
+#[cfg(any(debug_assertions, test))]
 fn command_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .commands(collect_commands![
@@ -45,14 +51,30 @@ fn command_builder() -> Builder<tauri::Wry> {
             sftp::hash_remote_sftp_file,
             sftp::close_sftp_session,
             platform::set_webview_memory_usage,
-            update::check_for_update
+            update::check_for_update,
+            lifecycle::confirm_app_exit
         ])
-        .typ::<StartShellRequest>()
-        .typ::<StartShellResponse>()
-        .typ::<TerminalEvent>()
-        .typ::<UpdateEvent>()
+        .typ::<terminal::StartShellRequest>()
+        .typ::<terminal::StartShellResponse>()
+        .typ::<terminal::TerminalEvent>()
+        .typ::<update::UpdateEvent>()
+        .typ::<ExitImpact>()
 }
 
+fn window_state_flags() -> StateFlags {
+    StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED
+}
+
+fn pending_exit_impact<R: tauri::Runtime, M: Manager<R>>(manager: &M) -> Option<ExitImpact> {
+    if manager.state::<ExitCoordinator>().is_approved() {
+        return None;
+    }
+
+    let impact = manager.state::<AppActivity>().snapshot();
+    impact.requires_confirmation().then_some(impact)
+}
+
+#[cfg(any(debug_assertions, test))]
 fn export_typescript_bindings() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/ipc/bindings.ts");
     command_builder()
@@ -70,15 +92,45 @@ pub fn run() {
     #[cfg(debug_assertions)]
     export_typescript_bindings();
 
-    let builder = tauri::Builder::default().plugin(tauri_plugin_updater::Builder::new().build());
+    let activity = AppActivity::default();
+    let terminal_manager = TerminalSessionManager::with_activity(activity.clone());
+    let sftp_manager = SftpSessionManager::with_activity(activity.clone());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .build(),
+        )
+        .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(all(feature = "e2e", debug_assertions))]
     let builder = builder
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
-        .manage(TerminalSessionManager::default())
-        .manage(SftpSessionManager::default())
+        .manage(activity)
+        .manage(ExitCoordinator::default())
+        .manage(terminal_manager)
+        .manage(sftp_manager)
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if let Some(impact) = pending_exit_impact(window) {
+                    api.prevent_close();
+                    let _ = window.emit(EXIT_REQUESTED_EVENT, impact);
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             probe_ssh_host,
@@ -95,15 +147,25 @@ pub fn run() {
             close_sftp_session,
             set_webview_memory_usage,
             check_for_update,
-            install_update
+            install_update,
+            confirm_app_exit
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run BX SSH");
+        .build(tauri::generate_context!())
+        .expect("failed to build BX SSH")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if let Some(impact) = pending_exit_impact(app) {
+                    api.prevent_exit();
+                    let _ = app.emit_to("main", EXIT_REQUESTED_EVENT, impact);
+                }
+            }
+        });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{app_info, export_typescript_bindings};
+    use super::{app_info, export_typescript_bindings, window_state_flags};
+    use tauri_plugin_window_state::StateFlags;
 
     #[test]
     fn reports_workspace_version() {
@@ -111,6 +173,17 @@ mod tests {
 
         assert_eq!(info.name, "BX SSH");
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn persists_only_reviewed_window_state() {
+        let flags = window_state_flags();
+
+        assert!(flags.contains(StateFlags::SIZE));
+        assert!(flags.contains(StateFlags::POSITION));
+        assert!(flags.contains(StateFlags::MAXIMIZED));
+        assert!(!flags
+            .intersects(StateFlags::VISIBLE | StateFlags::DECORATIONS | StateFlags::FULLSCREEN));
     }
 
     #[test]

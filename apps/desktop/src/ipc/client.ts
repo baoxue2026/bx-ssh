@@ -121,6 +121,7 @@ export const ipc = {
   setWebviewMemoryUsage: (low: boolean) =>
     unwrapVoid(() => commands.setWebviewMemoryUsage(low)),
   checkForUpdate: () => unwrap(() => commands.checkForUpdate()),
+  confirmAppExit: () => unwrapVoid(() => commands.confirmAppExit()),
   startPasswordShell: (
     request: StartShellRequest,
     channels: TerminalChannels,

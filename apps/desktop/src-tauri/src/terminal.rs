@@ -12,11 +12,12 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::ipc::{Channel, InvokeResponseBody, IpcResponse};
 use tauri::State;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::command_error::{CommandError, CommandErrorCode};
+use crate::lifecycle::AppActivity;
 
 const COMMAND_QUEUE_CAPACITY: usize = 128;
 const OUTPUT_BATCH_MAX_BYTES: usize = 64 * 1024;
@@ -26,13 +27,14 @@ const OUTPUT_MAX_IN_FLIGHT_BATCHES: usize = 8;
 #[derive(Clone, Default)]
 pub(crate) struct TerminalSessionManager {
     sessions: Arc<Mutex<HashMap<String, mpsc::Sender<SessionCommand>>>>,
+    activity: AppActivity,
 }
 
 enum SessionCommand {
     Write(Vec<u8>),
     Resize(TerminalSize),
     AcknowledgeOutput(u64),
-    Close,
+    Close(Option<oneshot::Sender<()>>),
 }
 
 struct TerminalOutputFlow {
@@ -123,6 +125,7 @@ pub(crate) async fn start_password_shell(
     let shell = session.open_shell(size).await?;
     let session_id = Uuid::new_v4().to_string();
     let (command_tx, command_rx) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let activity_guard = manager.activity.track_session();
 
     manager
         .sessions
@@ -133,6 +136,7 @@ pub(crate) async fn start_password_shell(
     let task_manager = manager.inner().clone();
     let task_session_id = session_id.clone();
     tauri::async_runtime::spawn(async move {
+        let _activity_guard = activity_guard;
         run_session(
             task_manager,
             task_session_id,
@@ -204,12 +208,44 @@ pub(crate) async fn close_terminal_session(
         .remove(&session_id)
         .ok_or_else(|| CommandError::session_not_found("terminal"))?;
     sender
-        .send(SessionCommand::Close)
+        .send(SessionCommand::Close(None))
         .await
         .map_err(|_| CommandError::session_closed("terminal"))
 }
 
 impl TerminalSessionManager {
+    pub(crate) fn with_activity(activity: AppActivity) -> Self {
+        Self {
+            sessions: Arc::default(),
+            activity,
+        }
+    }
+
+    pub(crate) async fn close_all(&self) {
+        let senders = self
+            .sessions
+            .lock()
+            .await
+            .drain()
+            .map(|(_, sender)| sender)
+            .collect::<Vec<_>>();
+
+        let mut completions = Vec::with_capacity(senders.len());
+        for sender in senders {
+            let (complete, completed) = oneshot::channel();
+            if sender
+                .try_send(SessionCommand::Close(Some(complete)))
+                .is_ok()
+            {
+                completions.push(completed);
+            }
+        }
+
+        for completed in completions {
+            let _ = completed.await;
+        }
+    }
+
     async fn send(&self, session_id: &str, command: SessionCommand) -> Result<(), CommandError> {
         let sender = self
             .sessions
@@ -236,6 +272,7 @@ async fn run_session(
 ) {
     let mut exit_code = None;
     let mut exit_signal = None;
+    let mut close_completion = None;
     let mut output = TerminalOutputFlow::new();
 
     loop {
@@ -258,7 +295,14 @@ async fn run_session(
                     Some(SessionCommand::AcknowledgeOutput(sequence)) => {
                         output.acknowledge(sequence);
                     }
-                    Some(SessionCommand::Close) | None => {
+                    Some(SessionCommand::Close(completion)) => {
+                        close_completion = completion;
+                        if let Err(error) = shell.close().await {
+                            send_error(&on_event, error);
+                        }
+                        break;
+                    }
+                    None => {
                         if let Err(error) = shell.close().await {
                             send_error(&on_event, error);
                         }
@@ -303,6 +347,9 @@ async fn run_session(
     manager.sessions.lock().await.remove(&session_id);
     drop(shell);
     let _ = session.disconnect().await;
+    if let Some(complete) = close_completion {
+        let _ = complete.send(());
+    }
 }
 
 impl TerminalOutputFlow {
@@ -474,5 +521,27 @@ mod tests {
             second_rx.recv().await,
             Some(SessionCommand::AcknowledgeOutput(7))
         ));
+    }
+
+    #[tokio::test]
+    async fn waits_for_session_cleanup_when_closing_all_sessions() {
+        let manager = TerminalSessionManager::default();
+        let (sender, mut commands) = mpsc::channel(1);
+        manager
+            .sessions
+            .lock()
+            .await
+            .insert("active".to_owned(), sender);
+        let worker = tokio::spawn(async move {
+            let Some(SessionCommand::Close(Some(complete))) = commands.recv().await else {
+                panic!("close command did not include a completion signal");
+            };
+            complete.send(()).unwrap();
+        });
+
+        manager.close_all().await;
+        worker.await.unwrap();
+
+        assert!(manager.sessions.lock().await.is_empty());
     }
 }

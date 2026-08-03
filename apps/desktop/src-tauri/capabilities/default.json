@@ -4,5 +4,9 @@
   "description": "Only BX SSH application commands for the local main window",
   "local": true,
   "windows": ["main"],
-  "permissions": ["allow-main-commands"]
+  "permissions": [
+    "allow-main-commands",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
 }

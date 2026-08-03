@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   Alert,
   Button,
   Checkbox,
   Input,
   InputNumber,
+  Modal,
   Segmented,
   Tooltip,
 } from "antd";
@@ -27,6 +29,7 @@ import { UpdateControl } from "./components/UpdateControl";
 import { IpcError, ipc } from "./ipc/client";
 import type {
   AppInfo,
+  ExitImpact,
   HostKeyInfo,
   RemoteDirectoryListing,
   TerminalEvent,
@@ -57,6 +60,7 @@ const fallbackViewport: TerminalViewport = {
 };
 
 const MEMORY_USAGE_RECOVERY_DELAY_MS = 60_000;
+const EXIT_REQUESTED_EVENT = "app-exit-requested";
 
 export function App() {
   const [appInfo, setAppInfo] = useState(fallbackInfo);
@@ -77,6 +81,9 @@ export function App() {
   const [sftpBusy, setSftpBusy] = useState(false);
   const [sftpTransferResult, setSftpTransferResult] =
     useState<SftpTransferResult | null>(null);
+  const [exitImpact, setExitImpact] = useState<ExitImpact | null>(null);
+  const [exitPending, setExitPending] = useState(false);
+  const [exitError, setExitError] = useState<string | null>(null);
   const terminalRef = useRef<TerminalHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
   const sftpSessionIdRef = useRef<string | null>(null);
@@ -84,6 +91,7 @@ export function App() {
   const resizeTimerRef = useRef<number | null>(null);
   const memoryUsageTimerRef = useRef<number | null>(null);
   const connectionAttemptRef = useRef(0);
+  const exitCancelButtonRef = useRef<HTMLButtonElement>(null);
 
   const enableLowMemoryUsage = useCallback(async () => {
     if (memoryUsageTimerRef.current !== null) {
@@ -117,6 +125,30 @@ export function App() {
 
     return () => {
       active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let removeListener: (() => void) | undefined;
+
+    void listen<ExitImpact>(EXIT_REQUESTED_EVENT, (event) => {
+      setExitImpact(event.payload);
+      setExitPending(false);
+      setExitError(null);
+    })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten();
+        } else {
+          removeListener = unlisten;
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      removeListener?.();
     };
   }, []);
 
@@ -489,6 +521,26 @@ export function App() {
     }, 80);
   }, []);
 
+  const confirmAppExit = async () => {
+    setExitPending(true);
+    setExitError(null);
+    try {
+      await ipc.confirmAppExit();
+      setExitImpact(null);
+    } catch (error) {
+      setExitPending(false);
+      setExitError(errorText(error));
+    }
+  };
+
+  const cancelAppExit = () => {
+    if (exitPending) {
+      return;
+    }
+    setExitImpact(null);
+    setExitError(null);
+  };
+
   const busy = ["probing", "connecting", "closing"].includes(connectionState);
   const connected = connectionState === "connected";
   const activeSessionId =
@@ -722,8 +774,63 @@ export function App() {
         <span className="status-divider" />
         <span>UTF-8</span>
       </footer>
+
+      <Modal
+        open={exitImpact !== null}
+        title="退出 BX SSH？"
+        closable={false}
+        keyboard={!exitPending}
+        maskClosable={false}
+        afterOpenChange={(open) => {
+          if (open) {
+            exitCancelButtonRef.current?.focus();
+          }
+        }}
+        footer={
+          <>
+            <Button
+              ref={exitCancelButtonRef}
+              disabled={exitPending}
+              onClick={cancelAppExit}
+            >
+              取消
+            </Button>
+            <Button
+              type="primary"
+              danger
+              loading={exitPending}
+              onClick={() => void confirmAppExit()}
+            >
+              退出并断开
+            </Button>
+          </>
+        }
+        onCancel={cancelAppExit}
+      >
+        {exitImpact && <p>{exitImpactMessage(exitImpact)}</p>}
+        {exitError && (
+          <Alert
+            type="error"
+            showIcon
+            message="退出失败"
+            description={exitError}
+          />
+        )}
+      </Modal>
     </div>
   );
+}
+
+function exitImpactMessage(impact: ExitImpact): string {
+  const activity = [];
+  if (impact.activeSessions > 0) {
+    activity.push(`${impact.activeSessions} 个活动会话`);
+  }
+  if (impact.activeTransfers > 0) {
+    activity.push(`${impact.activeTransfers} 个进行中的文件传输`);
+  }
+
+  return `当前有 ${activity.join("、")}。退出将终止传输并断开所有连接。`;
 }
 
 function connectionLabel(state: ConnectionState): string {
