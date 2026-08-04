@@ -5,9 +5,10 @@ mod connection;
 
 pub use connection::{
     AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionGroup,
-    ConnectionListItem, ConnectionSettings, ConnectionSettingsLayers, ConnectionSettingsOverride,
-    ConnectionSettingsScope, ConnectionSettingsSnapshot, ConnectionValidationError,
-    DEFAULT_CONNECTION_PORT, DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS,
+    ConnectionGroupValidationError, ConnectionListItem, ConnectionSettings,
+    ConnectionSettingsLayers, ConnectionSettingsOverride, ConnectionSettingsScope,
+    ConnectionSettingsSnapshot, ConnectionValidationError, DEFAULT_CONNECTION_PORT,
+    DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]

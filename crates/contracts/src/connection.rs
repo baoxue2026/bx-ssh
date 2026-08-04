@@ -213,6 +213,32 @@ pub struct ConnectionGroup {
     pub revision: u64,
 }
 
+impl ConnectionGroup {
+    pub fn validate(&self) -> Result<(), ConnectionGroupValidationError> {
+        if self.id.trim().is_empty() {
+            return Err(ConnectionGroupValidationError::MissingId);
+        }
+        if self.name.trim().is_empty() {
+            return Err(ConnectionGroupValidationError::MissingName);
+        }
+        if self
+            .color
+            .as_deref()
+            .is_some_and(|color| !is_hex_color(color))
+        {
+            return Err(ConnectionGroupValidationError::InvalidColor);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionGroupValidationError {
+    MissingId,
+    MissingName,
+    InvalidColor,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionListItem {
@@ -344,6 +370,31 @@ mod tests {
         assert_eq!(
             connection.validate(),
             Err(ConnectionValidationError::MissingName)
+        );
+    }
+
+    #[test]
+    fn validates_connection_group_identity_name_and_color() {
+        let mut group = ConnectionGroup {
+            id: "group-1".to_owned(),
+            name: "Production".to_owned(),
+            color: Some("#0A84FF".to_owned()),
+            sort_order: 0,
+            is_collapsed: false,
+            revision: 1,
+        };
+        assert!(group.validate().is_ok());
+
+        group.color = Some("blue".to_owned());
+        assert_eq!(
+            group.validate(),
+            Err(ConnectionGroupValidationError::InvalidColor)
+        );
+        group.color = None;
+        group.name = "  ".to_owned();
+        assert_eq!(
+            group.validate(),
+            Err(ConnectionGroupValidationError::MissingName)
         );
     }
 

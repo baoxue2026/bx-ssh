@@ -4,6 +4,7 @@ import {
   type CommandError,
   type CommandErrorCode,
   type ConnectionConfig,
+  type ConnectionGroup,
   type ConnectionSettingsOverride,
   type ProbeHostRequest,
   type Result,
@@ -92,6 +93,18 @@ export const ipc = {
     settings: ConnectionSettingsOverride,
   ) => unwrapVoid(() => commands.saveConnection(config, settings)),
   deleteConnection: (id: string) => unwrap(() => commands.deleteConnection(id)),
+  saveConnectionGroup: (group: ConnectionGroup) =>
+    unwrapVoid(() => commands.saveConnectionGroup(group)),
+  deleteConnectionGroup: (id: string) =>
+    unwrap(() => commands.deleteConnectionGroup(id)),
+  setConnectionGroupCollapsed: (id: string, isCollapsed: boolean) =>
+    unwrap(() => commands.setConnectionGroupCollapsed(id, isCollapsed)),
+  reorderConnectionGroups: (ids: string[]) =>
+    unwrapVoid(() => commands.reorderConnectionGroups(ids)),
+  setConnectionFavorite: (id: string, isFavorite: boolean) =>
+    unwrap(() => commands.setConnectionFavorite(id, isFavorite)),
+  reorderConnections: (groupId: string | null, ids: string[]) =>
+    unwrapVoid(() => commands.reorderConnections(groupId, ids)),
   probeSshHost: (request: ProbeHostRequest) =>
     unwrap(() => commands.probeSshHost(request)),
   writeTerminal: (sessionId: string, data: string) =>

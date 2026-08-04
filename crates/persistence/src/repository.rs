@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt;
 
 use bx_contracts::{
@@ -82,9 +83,9 @@ impl ConnectionRepository {
     }
 
     pub fn save_group(&mut self, group: &ConnectionGroup, now_ms: u64) -> Result<()> {
-        if group.id.trim().is_empty() || group.name.trim().is_empty() {
-            return Err(PersistenceError::InvalidConnectionConfiguration);
-        }
+        group
+            .validate()
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
         let now = timestamp_to_i64(now_ms)?;
         self.database
             .connection()
@@ -112,6 +113,86 @@ impl ConnectionRepository {
         Ok(())
     }
 
+    pub fn delete_group(&mut self, id: &str, now_ms: u64) -> Result<bool> {
+        validate_id(id)?;
+        let now = timestamp_to_i64(now_ms)?;
+        let transaction = self
+            .database
+            .transaction()
+            .map_err(|source| database_operation("start a group deletion transaction", source))?;
+        transaction
+            .execute(
+                "UPDATE connections
+                 SET group_id = NULL,
+                     updated_at = ?2,
+                     revision = revision + 1
+                 WHERE group_id = ?1",
+                params![id, now],
+            )
+            .map_err(|source| database_operation("ungroup connections", source))?;
+        let changed = transaction
+            .execute("DELETE FROM connection_groups WHERE id = ?1", [id])
+            .map_err(|source| database_operation("delete a connection group", source))?;
+        transaction
+            .commit()
+            .map_err(|source| database_operation("commit a group deletion transaction", source))?;
+        Ok(changed > 0)
+    }
+
+    pub fn set_group_collapsed(
+        &mut self,
+        id: &str,
+        is_collapsed: bool,
+        now_ms: u64,
+    ) -> Result<bool> {
+        validate_id(id)?;
+        let now = timestamp_to_i64(now_ms)?;
+        let changed = self
+            .database
+            .connection()
+            .execute(
+                "UPDATE connection_groups
+                 SET is_collapsed = ?2,
+                     updated_at = ?3,
+                     revision = revision + 1
+                 WHERE id = ?1",
+                params![id, is_collapsed, now],
+            )
+            .map_err(|source| database_operation("update group collapse state", source))?;
+        Ok(changed > 0)
+    }
+
+    pub fn reorder_groups(&mut self, ids: &[String], now_ms: u64) -> Result<()> {
+        validate_order_ids(ids)?;
+        let now = timestamp_to_i64(now_ms)?;
+        let transaction = self
+            .database
+            .transaction()
+            .map_err(|source| database_operation("start a group ordering transaction", source))?;
+        let stored_ids = query_ids(
+            &transaction,
+            "SELECT id FROM connection_groups ORDER BY id",
+            [],
+            "query connection groups for ordering",
+        )?;
+        validate_complete_order(&stored_ids, ids)?;
+        for (sort_order, id) in ids.iter().enumerate() {
+            transaction
+                .execute(
+                    "UPDATE connection_groups
+                     SET sort_order = ?2,
+                         updated_at = ?3,
+                         revision = revision + 1
+                     WHERE id = ?1",
+                    params![id, usize_to_i64(sort_order)?, now],
+                )
+                .map_err(|source| database_operation("reorder connection groups", source))?;
+        }
+        transaction
+            .commit()
+            .map_err(|source| database_operation("commit a group ordering transaction", source))
+    }
+
     pub fn save_connection(
         &mut self,
         config: &ConnectionConfig,
@@ -130,8 +211,12 @@ impl ConnectionRepository {
             .execute(
                 "INSERT INTO connections
                  (id, group_id, key_reference_id, name, host, port, username, notes, color,
-                  auth_method, credential_ref, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)
+                  auth_method, credential_ref, sort_order, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                    COALESCE((
+                        SELECT MAX(sort_order) + 1 FROM connections
+                        WHERE deleted_at IS NULL AND group_id IS ?2
+                    ), 0), ?12, ?12)
                  ON CONFLICT(id) DO UPDATE SET
                     group_id = excluded.group_id,
                     key_reference_id = excluded.key_reference_id,
@@ -143,6 +228,12 @@ impl ConnectionRepository {
                     color = excluded.color,
                     auth_method = excluded.auth_method,
                     credential_ref = excluded.credential_ref,
+                    sort_order = CASE
+                        WHEN connections.group_id IS excluded.group_id
+                             AND connections.deleted_at IS NULL
+                        THEN connections.sort_order
+                        ELSE excluded.sort_order
+                    END,
                     updated_at = excluded.updated_at,
                     deleted_at = NULL,
                     revision = connections.revision + 1",
@@ -205,9 +296,7 @@ impl ConnectionRepository {
     }
 
     pub fn delete_connection(&mut self, id: &str, now_ms: u64) -> Result<bool> {
-        if id.trim().is_empty() {
-            return Err(PersistenceError::InvalidConnectionConfiguration);
-        }
+        validate_id(id)?;
         let now = timestamp_to_i64(now_ms)?;
         let changed = self
             .database
@@ -222,6 +311,69 @@ impl ConnectionRepository {
             )
             .map_err(|source| database_operation("delete a connection", source))?;
         Ok(changed > 0)
+    }
+
+    pub fn set_connection_favorite(
+        &mut self,
+        id: &str,
+        is_favorite: bool,
+        now_ms: u64,
+    ) -> Result<bool> {
+        validate_id(id)?;
+        let now = timestamp_to_i64(now_ms)?;
+        let changed = self
+            .database
+            .connection()
+            .execute(
+                "UPDATE connections
+                 SET is_favorite = ?2,
+                     updated_at = ?3,
+                     revision = revision + 1
+                 WHERE id = ?1 AND deleted_at IS NULL",
+                params![id, is_favorite, now],
+            )
+            .map_err(|source| database_operation("update connection favorite state", source))?;
+        Ok(changed > 0)
+    }
+
+    pub fn reorder_connections(
+        &mut self,
+        group_id: Option<&str>,
+        ids: &[String],
+        now_ms: u64,
+    ) -> Result<()> {
+        if group_id.is_some_and(|id| id.trim().is_empty()) {
+            return Err(PersistenceError::InvalidConnectionConfiguration);
+        }
+        validate_order_ids(ids)?;
+        let now = timestamp_to_i64(now_ms)?;
+        let transaction = self.database.transaction().map_err(|source| {
+            database_operation("start a connection ordering transaction", source)
+        })?;
+        let stored_ids = query_ids(
+            &transaction,
+            "SELECT id FROM connections
+             WHERE deleted_at IS NULL AND group_id IS ?1
+             ORDER BY id",
+            [group_id],
+            "query connections for ordering",
+        )?;
+        validate_complete_order(&stored_ids, ids)?;
+        for (sort_order, id) in ids.iter().enumerate() {
+            transaction
+                .execute(
+                    "UPDATE connections
+                     SET sort_order = ?2,
+                         updated_at = ?3,
+                         revision = revision + 1
+                     WHERE id = ?1 AND deleted_at IS NULL AND group_id IS ?4",
+                    params![id, usize_to_i64(sort_order)?, now, group_id],
+                )
+                .map_err(|source| database_operation("reorder connections", source))?;
+        }
+        transaction.commit().map_err(|source| {
+            database_operation("commit a connection ordering transaction", source)
+        })
     }
 
     pub fn record_successful_connection(&mut self, id: &str, now_ms: u64) -> Result<()> {
@@ -568,6 +720,59 @@ fn timestamp_to_i64(value: u64) -> Result<i64> {
     i64::try_from(value).map_err(|_| PersistenceError::InvalidTimestamp)
 }
 
+fn usize_to_i64(value: usize) -> Result<i64> {
+    i64::try_from(value).map_err(|_| PersistenceError::InvalidConnectionConfiguration)
+}
+
+fn validate_id(id: &str) -> Result<()> {
+    if id.trim().is_empty() {
+        Err(PersistenceError::InvalidConnectionConfiguration)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_order_ids(ids: &[String]) -> Result<()> {
+    let mut unique_ids = HashSet::with_capacity(ids.len());
+    if ids
+        .iter()
+        .any(|id| id.trim().is_empty() || !unique_ids.insert(id.as_str()))
+    {
+        return Err(PersistenceError::InvalidConnectionConfiguration);
+    }
+    Ok(())
+}
+
+fn validate_complete_order(stored_ids: &[String], ids: &[String]) -> Result<()> {
+    if stored_ids.len() != ids.len() {
+        return Err(PersistenceError::InvalidConnectionConfiguration);
+    }
+    let requested_ids: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    if stored_ids
+        .iter()
+        .any(|id| !requested_ids.contains(id.as_str()))
+    {
+        return Err(PersistenceError::InvalidConnectionConfiguration);
+    }
+    Ok(())
+}
+
+fn query_ids<P: rusqlite::Params>(
+    transaction: &Transaction<'_>,
+    sql: &str,
+    params: P,
+    operation: &'static str,
+) -> Result<Vec<String>> {
+    let mut statement = transaction
+        .prepare(sql)
+        .map_err(|source| database_operation(operation, source))?;
+    let rows = statement
+        .query_map(params, |row| row.get(0))
+        .map_err(|source| database_operation(operation, source))?;
+    rows.map(|row| row.map_err(|source| database_operation(operation, source)))
+        .collect()
+}
+
 fn stored_u64(value: i64, entity: &'static str) -> Result<u64> {
     u64::try_from(value).map_err(|_| PersistenceError::InvalidStoredRecord { entity })
 }
@@ -645,6 +850,104 @@ mod tests {
         let serialized = serde_json::to_value(&details).unwrap();
         assert!(!contains_json_key(&serialized, "password"));
         assert!(!contains_json_key(&serialized, "passphrase"));
+    }
+
+    #[test]
+    fn persists_group_collapse_color_and_order() {
+        let mut repository = test_repository();
+        let first = test_group("group-first", "First", "#1677FF", 1);
+        let second = test_group("group-second", "Second", "#52C41A", 0);
+        repository.save_group(&first, 1000).unwrap();
+        repository.save_group(&second, 1001).unwrap();
+
+        assert!(repository
+            .set_group_collapsed("group-first", true, 1002)
+            .unwrap());
+        repository
+            .reorder_groups(&["group-first".to_owned(), "group-second".to_owned()], 1003)
+            .unwrap();
+
+        let catalog = repository.list_catalog().unwrap();
+        assert_eq!(
+            catalog
+                .groups
+                .iter()
+                .map(|group| group.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["group-first", "group-second"]
+        );
+        assert_eq!(catalog.groups[0].color.as_deref(), Some("#1677FF"));
+        assert!(catalog.groups[0].is_collapsed);
+        assert_eq!(catalog.groups[0].sort_order, 0);
+    }
+
+    #[test]
+    fn favorites_connections_and_orders_each_group_transactionally() {
+        let mut repository = test_repository();
+        repository
+            .save_group(&test_group("group-1", "Production", "#1677FF", 0), 1000)
+            .unwrap();
+        for (id, name) in [("connection-1", "One"), ("connection-2", "Two")] {
+            let mut config = ConnectionConfig::new(id, name, "example.com", "alice");
+            config.group_id = Some("group-1".to_owned());
+            repository
+                .save_connection(&config, ConnectionSettingsOverride::default(), 1001)
+                .unwrap();
+        }
+
+        repository
+            .reorder_connections(
+                Some("group-1"),
+                &["connection-2".to_owned(), "connection-1".to_owned()],
+                1002,
+            )
+            .unwrap();
+        assert!(repository
+            .set_connection_favorite("connection-1", true, 1003)
+            .unwrap());
+
+        let catalog = repository.list_catalog().unwrap();
+        assert_eq!(catalog.connections[0].config.id, "connection-1");
+        assert!(catalog.connections[0].is_favorite);
+        assert_eq!(
+            catalog
+                .connections
+                .iter()
+                .find(|item| item.config.id == "connection-2")
+                .unwrap()
+                .sort_order,
+            0
+        );
+
+        let before = catalog.connections;
+        assert!(repository
+            .reorder_connections(
+                Some("group-1"),
+                &["connection-1".to_owned(), "connection-1".to_owned()],
+                1004,
+            )
+            .is_err());
+        assert_eq!(repository.list_catalog().unwrap().connections, before);
+    }
+
+    #[test]
+    fn deleting_a_group_preserves_connections_as_ungrouped() {
+        let mut repository = test_repository();
+        repository
+            .save_group(&test_group("group-1", "Production", "#1677FF", 0), 1000)
+            .unwrap();
+        let mut config =
+            ConnectionConfig::new("connection-1", "Production", "example.com", "alice");
+        config.group_id = Some("group-1".to_owned());
+        repository
+            .save_connection(&config, ConnectionSettingsOverride::default(), 1001)
+            .unwrap();
+
+        assert!(repository.delete_group("group-1", 1002).unwrap());
+        let catalog = repository.list_catalog().unwrap();
+        assert!(catalog.groups.is_empty());
+        assert_eq!(catalog.connections.len(), 1);
+        assert_eq!(catalog.connections[0].config.group_id, None);
     }
 
     #[test]
@@ -831,6 +1134,17 @@ mod tests {
         TestRepository {
             repository: ConnectionRepository::new(database).unwrap(),
             _directory: directory,
+        }
+    }
+
+    fn test_group(id: &str, name: &str, color: &str, sort_order: u32) -> ConnectionGroup {
+        ConnectionGroup {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            color: Some(color.to_owned()),
+            sort_order,
+            is_collapsed: false,
+            revision: 1,
         }
     }
 

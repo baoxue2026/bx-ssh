@@ -1,19 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { TFunction } from "i18next";
 import { Button, Checkbox, Input, InputNumber, Segmented, Tooltip } from "antd";
 import {
   Circle,
+  ChevronDown,
+  ChevronRight,
   Copy,
   FilePenLine,
   Fingerprint,
+  FolderPlus,
   FolderOpen,
+  MoveDown,
+  MoveUp,
   Plus,
   PlugZap,
   RefreshCw,
   ScanSearch,
   SquareTerminal,
+  Star,
   Trash2,
   Unplug,
 } from "lucide-react";
@@ -23,6 +29,7 @@ import {
   type ConnectionEditorIntent,
   type ConnectionEditorValue,
 } from "./components/ConnectionEditorDialog";
+import { ConnectionGroupDialog } from "./components/ConnectionGroupDialog";
 import {
   TerminalPane,
   type TerminalHandle,
@@ -42,6 +49,7 @@ import type {
   AppMenuAction,
   ConnectionCatalog,
   ConnectionDetails,
+  ConnectionGroup,
   ConnectionListItem,
   ExitImpact,
   HostKeyInfo,
@@ -61,6 +69,11 @@ type ConnectionState =
   | "failed";
 
 type WorkspaceMode = "terminal" | "sftp";
+
+interface ConnectionTreeGroup {
+  group: ConnectionGroup | null;
+  connections: ConnectionListItem[];
+}
 
 const fallbackInfo: AppInfo = {
   name: "BX SSH",
@@ -117,6 +130,21 @@ export function App() {
   const [connectionActionId, setConnectionActionId] = useState<string | null>(
     null,
   );
+  const [catalogMutationKey, setCatalogMutationKey] = useState<string | null>(
+    null,
+  );
+  const [connectionGroupDialogOpen, setConnectionGroupDialogOpen] =
+    useState(false);
+  const [connectionGroupInitialValue, setConnectionGroupInitialValue] =
+    useState<ConnectionGroup>();
+  const [connectionGroupPending, setConnectionGroupPending] = useState(false);
+  const [connectionGroupError, setConnectionGroupError] = useState<
+    string | null
+  >(null);
+  const [deleteGroupTarget, setDeleteGroupTarget] =
+    useState<ConnectionGroup | null>(null);
+  const [deleteGroupPending, setDeleteGroupPending] = useState(false);
+  const [deleteGroupError, setDeleteGroupError] = useState<string | null>(null);
   const [loadedConnectionId, setLoadedConnectionId] = useState<string | null>(
     null,
   );
@@ -162,6 +190,11 @@ export function App() {
       setConnectionCatalogLoading(false);
     }
   }, [localizedErrorText]);
+
+  const connectionTree = useMemo(
+    () => buildConnectionTree(connectionCatalog),
+    [connectionCatalog],
+  );
 
   const enableLowMemoryUsage = useCallback(async () => {
     if (memoryUsageTimerRef.current !== null) {
@@ -386,6 +419,133 @@ export function App() {
     setConnectionEditorError(null);
     setConnectionEditorNotice(undefined);
     setConnectionEditorOpen(true);
+  };
+
+  const openNewConnectionGroup = () => {
+    setConnectionGroupInitialValue(undefined);
+    setConnectionGroupError(null);
+    setConnectionGroupDialogOpen(true);
+  };
+
+  const openConnectionGroupEditor = (group: ConnectionGroup) => {
+    setConnectionGroupInitialValue(group);
+    setConnectionGroupError(null);
+    setConnectionGroupDialogOpen(true);
+  };
+
+  const saveConnectionGroup = async (group: ConnectionGroup) => {
+    setConnectionGroupPending(true);
+    setConnectionGroupError(null);
+    try {
+      const isNew = !connectionCatalog.groups.some(
+        (existing) => existing.id === group.id,
+      );
+      await ipc.saveConnectionGroup({
+        ...group,
+        sortOrder: isNew ? connectionCatalog.groups.length : group.sortOrder,
+      });
+      await loadConnectionCatalog();
+      setConnectionCatalogNotice(
+        t("connectionGroup.saved", { name: group.name }),
+      );
+      setConnectionGroupDialogOpen(false);
+    } catch (error) {
+      setConnectionGroupError(localizedErrorText(error));
+    } finally {
+      setConnectionGroupPending(false);
+    }
+  };
+
+  const toggleConnectionGroup = async (group: ConnectionGroup) => {
+    const key = `group-collapse:${group.id}`;
+    setCatalogMutationKey(key);
+    setConnectionCatalogError(null);
+    try {
+      await ipc.setConnectionGroupCollapsed(group.id, !group.isCollapsed);
+      await loadConnectionCatalog();
+    } catch (error) {
+      setConnectionCatalogError(localizedErrorText(error));
+    } finally {
+      setCatalogMutationKey(null);
+    }
+  };
+
+  const toggleFavoriteConnection = async (item: ConnectionListItem) => {
+    const key = `favorite:${item.config.id}`;
+    setCatalogMutationKey(key);
+    setConnectionCatalogError(null);
+    try {
+      await ipc.setConnectionFavorite(item.config.id, !item.isFavorite);
+      await loadConnectionCatalog();
+    } catch (error) {
+      setConnectionCatalogError(localizedErrorText(error));
+    } finally {
+      setCatalogMutationKey(null);
+    }
+  };
+
+  const moveConnectionGroup = async (groupId: string, direction: -1 | 1) => {
+    const ids = connectionTree.flatMap(({ group }) =>
+      group ? [group.id] : [],
+    );
+    if (!moveId(ids, groupId, direction)) return;
+    setCatalogMutationKey(`group-order:${groupId}`);
+    setConnectionCatalogError(null);
+    try {
+      await ipc.reorderConnectionGroups(ids);
+      await loadConnectionCatalog();
+    } catch (error) {
+      setConnectionCatalogError(localizedErrorText(error));
+    } finally {
+      setCatalogMutationKey(null);
+    }
+  };
+
+  const moveConnection = async (
+    item: ConnectionListItem,
+    siblings: ConnectionListItem[],
+    direction: -1 | 1,
+  ) => {
+    const favoriteSiblings = siblings.filter(
+      (sibling) => sibling.isFavorite === item.isFavorite,
+    );
+    const ids = favoriteSiblings.map((sibling) => sibling.config.id);
+    if (!moveId(ids, item.config.id, direction)) return;
+    const reordered = siblings.map((sibling) => sibling.config.id);
+    const movingIndexes = reordered
+      .map((id, index) => (ids.includes(id) ? index : -1))
+      .filter((index) => index >= 0);
+    movingIndexes.forEach((index, offset) => {
+      reordered[index] = ids[offset];
+    });
+    setCatalogMutationKey(`connection-order:${item.config.id}`);
+    setConnectionCatalogError(null);
+    try {
+      await ipc.reorderConnections(item.config.groupId, reordered);
+      await loadConnectionCatalog();
+    } catch (error) {
+      setConnectionCatalogError(localizedErrorText(error));
+    } finally {
+      setCatalogMutationKey(null);
+    }
+  };
+
+  const confirmDeleteConnectionGroup = async () => {
+    if (!deleteGroupTarget) return;
+    setDeleteGroupPending(true);
+    setDeleteGroupError(null);
+    try {
+      await ipc.deleteConnectionGroup(deleteGroupTarget.id);
+      await loadConnectionCatalog();
+      setConnectionCatalogNotice(
+        t("connectionGroup.deleted", { name: deleteGroupTarget.name }),
+      );
+      setDeleteGroupTarget(null);
+    } catch (error) {
+      setDeleteGroupError(localizedErrorText(error));
+    } finally {
+      setDeleteGroupPending(false);
+    }
   };
 
   const openSavedConnectionEditor = async (
@@ -857,6 +1017,11 @@ export function App() {
               {t("connectionEditor.actions.newConnection")}
             </Button>
             <Button
+              aria-label={t("connectionGroup.new")}
+              icon={<FolderPlus size={15} />}
+              onClick={openNewConnectionGroup}
+            />
+            <Button
               aria-label={t("connectionCatalog.refresh")}
               icon={<RefreshCw size={15} />}
               loading={connectionCatalogLoading}
@@ -903,7 +1068,8 @@ export function App() {
                   </Button>
                 }
               />
-            ) : connectionCatalog.connections.length === 0 ? (
+            ) : connectionCatalog.connections.length === 0 &&
+              connectionCatalog.groups.length === 0 ? (
               <EmptyState
                 className="connection-catalog-empty"
                 title={t("connectionCatalog.empty")}
@@ -911,79 +1077,284 @@ export function App() {
               />
             ) : (
               <div className="connection-catalog-list">
-                {connectionCatalog.connections.map((item) => (
-                  <article
-                    className="connection-catalog-item"
-                    key={item.config.id}
-                  >
-                    <span
-                      className="connection-catalog-color"
-                      style={
-                        item.config.color
-                          ? { backgroundColor: item.config.color }
-                          : undefined
-                      }
-                      aria-hidden="true"
-                    />
-                    <div className="connection-catalog-summary">
-                      <strong title={item.config.name}>
-                        {item.config.name}
-                      </strong>
-                      <span
-                        title={`${item.config.username}@${item.config.host}:${item.config.port}`}
-                      >
-                        {item.config.username}@{item.config.host}:
-                        {item.config.port}
-                      </span>
-                    </div>
-                    <div className="connection-catalog-actions">
-                      <Tooltip title={t("connectionCatalog.edit")}>
-                        <Button
-                          aria-label={t("connectionCatalog.editNamed", {
-                            name: item.config.name,
-                          })}
-                          icon={<FilePenLine size={14} />}
-                          loading={connectionActionId === item.config.id}
-                          size="small"
-                          type="text"
-                          onClick={() =>
-                            void openSavedConnectionEditor(item, false)
+                {connectionTree.map(({ group, connections }, groupIndex) => {
+                  const collapsed = group?.isCollapsed ?? false;
+                  const groupName =
+                    group?.name ?? t("connectionGroup.ungrouped");
+                  return (
+                    <section
+                      className="connection-tree-group"
+                      key={group?.id ?? "ungrouped"}
+                      aria-label={groupName}
+                    >
+                      <div className="connection-tree-group-heading">
+                        {group ? (
+                          <Button
+                            aria-label={t(
+                              collapsed
+                                ? "connectionGroup.expandNamed"
+                                : "connectionGroup.collapseNamed",
+                              { name: group.name },
+                            )}
+                            icon={
+                              collapsed ? (
+                                <ChevronRight size={14} />
+                              ) : (
+                                <ChevronDown size={14} />
+                              )
+                            }
+                            loading={
+                              catalogMutationKey ===
+                              `group-collapse:${group.id}`
+                            }
+                            size="small"
+                            type="text"
+                            onClick={() => void toggleConnectionGroup(group)}
+                          />
+                        ) : (
+                          <span className="connection-tree-group-spacer" />
+                        )}
+                        <span
+                          className="connection-tree-group-color"
+                          style={
+                            group?.color
+                              ? { backgroundColor: group.color }
+                              : undefined
                           }
+                          aria-hidden="true"
                         />
-                      </Tooltip>
-                      <Tooltip title={t("connectionCatalog.copy")}>
-                        <Button
-                          aria-label={t("connectionCatalog.copyNamed", {
-                            name: item.config.name,
+                        <strong title={groupName}>{groupName}</strong>
+                        <span className="connection-tree-group-count">
+                          {connections.length}
+                        </span>
+                        {group && (
+                          <div className="connection-tree-group-actions">
+                            <Button
+                              aria-label={t("connectionGroup.moveUpNamed", {
+                                name: group.name,
+                              })}
+                              disabled={
+                                groupIndex === 0 || catalogMutationKey !== null
+                              }
+                              icon={<MoveUp size={13} />}
+                              size="small"
+                              type="text"
+                              onClick={() =>
+                                void moveConnectionGroup(group.id, -1)
+                              }
+                            />
+                            <Button
+                              aria-label={t("connectionGroup.moveDownNamed", {
+                                name: group.name,
+                              })}
+                              disabled={
+                                groupIndex ===
+                                  connectionCatalog.groups.length - 1 ||
+                                catalogMutationKey !== null
+                              }
+                              icon={<MoveDown size={13} />}
+                              size="small"
+                              type="text"
+                              onClick={() =>
+                                void moveConnectionGroup(group.id, 1)
+                              }
+                            />
+                            <Button
+                              aria-label={t("connectionGroup.editNamed", {
+                                name: group.name,
+                              })}
+                              icon={<FilePenLine size={13} />}
+                              size="small"
+                              type="text"
+                              onClick={() => openConnectionGroupEditor(group)}
+                            />
+                            <Button
+                              aria-label={t("connectionGroup.deleteNamed", {
+                                name: group.name,
+                              })}
+                              danger
+                              icon={<Trash2 size={13} />}
+                              size="small"
+                              type="text"
+                              onClick={() => {
+                                setDeleteGroupError(null);
+                                setDeleteGroupTarget(group);
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      {!collapsed && (
+                        <div className="connection-tree-items">
+                          {connections.map((item, itemIndex) => {
+                            const peers = connections.filter(
+                              (peer) => peer.isFavorite === item.isFavorite,
+                            );
+                            const peerIndex = peers.findIndex(
+                              (peer) => peer.config.id === item.config.id,
+                            );
+                            const effectiveColor =
+                              item.config.color ?? group?.color ?? undefined;
+                            return (
+                              <article
+                                className="connection-catalog-item"
+                                key={item.config.id}
+                                data-tree-index={itemIndex}
+                              >
+                                <span
+                                  className="connection-catalog-color"
+                                  style={
+                                    effectiveColor
+                                      ? { backgroundColor: effectiveColor }
+                                      : undefined
+                                  }
+                                  aria-hidden="true"
+                                />
+                                <div className="connection-catalog-summary">
+                                  <strong title={item.config.name}>
+                                    {item.config.name}
+                                  </strong>
+                                  <span
+                                    title={`${item.config.username}@${item.config.host}:${item.config.port}`}
+                                  >
+                                    {item.config.username}@{item.config.host}:
+                                    {item.config.port}
+                                  </span>
+                                </div>
+                                <div className="connection-catalog-actions">
+                                  <Button
+                                    aria-label={t(
+                                      item.isFavorite
+                                        ? "connectionCatalog.unfavoriteNamed"
+                                        : "connectionCatalog.favoriteNamed",
+                                      { name: item.config.name },
+                                    )}
+                                    className={
+                                      item.isFavorite
+                                        ? "is-favorite"
+                                        : undefined
+                                    }
+                                    icon={
+                                      <Star
+                                        size={14}
+                                        fill={
+                                          item.isFavorite
+                                            ? "currentColor"
+                                            : "none"
+                                        }
+                                      />
+                                    }
+                                    loading={
+                                      catalogMutationKey ===
+                                      `favorite:${item.config.id}`
+                                    }
+                                    size="small"
+                                    type="text"
+                                    onClick={() =>
+                                      void toggleFavoriteConnection(item)
+                                    }
+                                  />
+                                  <Button
+                                    aria-label={t(
+                                      "connectionCatalog.moveUpNamed",
+                                      {
+                                        name: item.config.name,
+                                      },
+                                    )}
+                                    disabled={
+                                      peerIndex === 0 ||
+                                      catalogMutationKey !== null
+                                    }
+                                    icon={<MoveUp size={13} />}
+                                    size="small"
+                                    type="text"
+                                    onClick={() =>
+                                      void moveConnection(item, connections, -1)
+                                    }
+                                  />
+                                  <Button
+                                    aria-label={t(
+                                      "connectionCatalog.moveDownNamed",
+                                      {
+                                        name: item.config.name,
+                                      },
+                                    )}
+                                    disabled={
+                                      peerIndex === peers.length - 1 ||
+                                      catalogMutationKey !== null
+                                    }
+                                    icon={<MoveDown size={13} />}
+                                    size="small"
+                                    type="text"
+                                    onClick={() =>
+                                      void moveConnection(item, connections, 1)
+                                    }
+                                  />
+                                  <Button
+                                    aria-label={t(
+                                      "connectionCatalog.editNamed",
+                                      {
+                                        name: item.config.name,
+                                      },
+                                    )}
+                                    icon={<FilePenLine size={14} />}
+                                    loading={
+                                      connectionActionId === item.config.id
+                                    }
+                                    size="small"
+                                    type="text"
+                                    onClick={() =>
+                                      void openSavedConnectionEditor(
+                                        item,
+                                        false,
+                                      )
+                                    }
+                                  />
+                                  <Button
+                                    aria-label={t(
+                                      "connectionCatalog.copyNamed",
+                                      {
+                                        name: item.config.name,
+                                      },
+                                    )}
+                                    disabled={
+                                      connectionActionId === item.config.id
+                                    }
+                                    icon={<Copy size={14} />}
+                                    size="small"
+                                    type="text"
+                                    onClick={() =>
+                                      void openSavedConnectionEditor(item, true)
+                                    }
+                                  />
+                                  <Button
+                                    aria-label={t(
+                                      "connectionCatalog.deleteNamed",
+                                      {
+                                        name: item.config.name,
+                                      },
+                                    )}
+                                    danger
+                                    disabled={
+                                      connectionActionId === item.config.id
+                                    }
+                                    icon={<Trash2 size={14} />}
+                                    size="small"
+                                    type="text"
+                                    onClick={() => {
+                                      setDeleteError(null);
+                                      setDeleteTarget(item);
+                                    }}
+                                  />
+                                </div>
+                              </article>
+                            );
                           })}
-                          disabled={connectionActionId === item.config.id}
-                          icon={<Copy size={14} />}
-                          size="small"
-                          type="text"
-                          onClick={() =>
-                            void openSavedConnectionEditor(item, true)
-                          }
-                        />
-                      </Tooltip>
-                      <Tooltip title={t("connectionCatalog.delete")}>
-                        <Button
-                          aria-label={t("connectionCatalog.deleteNamed", {
-                            name: item.config.name,
-                          })}
-                          danger
-                          disabled={connectionActionId === item.config.id}
-                          icon={<Trash2 size={14} />}
-                          size="small"
-                          type="text"
-                          onClick={() => {
-                            setDeleteError(null);
-                            setDeleteTarget(item);
-                          }}
-                        />
-                      </Tooltip>
-                    </div>
-                  </article>
-                ))}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -1306,6 +1677,82 @@ export function App() {
         )}
       </AppDialog>
 
+      <AppDialog
+        open={deleteGroupTarget !== null}
+        title={t("connectionGroup.deleteTitle")}
+        closable={!deleteGroupPending}
+        closeOnEscape={!deleteGroupPending}
+        maskClosable={false}
+        onClose={() => {
+          if (!deleteGroupPending) {
+            setDeleteGroupTarget(null);
+            setDeleteGroupError(null);
+          }
+        }}
+        description={
+          deleteGroupTarget
+            ? t("connectionGroup.deleteDescription", {
+                name: deleteGroupTarget.name,
+              })
+            : undefined
+        }
+        footer={
+          <>
+            <Button
+              disabled={deleteGroupPending}
+              onClick={() => {
+                setDeleteGroupTarget(null);
+                setDeleteGroupError(null);
+              }}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              danger
+              loading={deleteGroupPending}
+              type="primary"
+              onClick={() => void confirmDeleteConnectionGroup()}
+            >
+              {t("connectionGroup.confirmDelete")}
+            </Button>
+          </>
+        }
+      >
+        <FeedbackNotice
+          message={t("connectionGroup.deleteSafety")}
+          showIcon
+          type="warning"
+        />
+        {deleteGroupError && (
+          <FeedbackNotice
+            className="connection-delete-error"
+            message={t("connectionGroup.deleteFailed")}
+            description={deleteGroupError}
+            showIcon
+            type="error"
+          />
+        )}
+      </AppDialog>
+
+      <ConnectionGroupDialog
+        key={
+          connectionGroupDialogOpen
+            ? (connectionGroupInitialValue?.id ?? "new")
+            : "closed"
+        }
+        errorMessage={connectionGroupError ?? undefined}
+        initialValue={connectionGroupInitialValue}
+        open={connectionGroupDialogOpen}
+        pending={connectionGroupPending}
+        onClose={() => {
+          if (!connectionGroupPending) {
+            setConnectionGroupDialogOpen(false);
+            setConnectionGroupError(null);
+          }
+        }}
+        onSubmit={(group) => void saveConnectionGroup(group)}
+      />
+
       <ConnectionEditorDialog
         errorMessage={connectionEditorError ?? undefined}
         groupOptions={connectionCatalog.groups.map((group) => ({
@@ -1359,6 +1806,51 @@ function duplicateConnection(
 function createConnectionId(): string {
   const id = globalThis.crypto?.randomUUID?.();
   return `connection-${id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+}
+
+function buildConnectionTree(
+  catalog: ConnectionCatalog,
+): ConnectionTreeGroup[] {
+  const groups = [...catalog.groups].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder ||
+      left.name.localeCompare(right.name) ||
+      left.id.localeCompare(right.id),
+  );
+  const groupedConnections = new Map<string | null, ConnectionListItem[]>();
+  for (const item of catalog.connections) {
+    const groupId = groups.some((group) => group.id === item.config.groupId)
+      ? item.config.groupId
+      : null;
+    const items = groupedConnections.get(groupId) ?? [];
+    items.push(item);
+    groupedConnections.set(groupId, items);
+  }
+  const sortConnections = (items: ConnectionListItem[]) =>
+    [...items].sort(
+      (left, right) =>
+        Number(right.isFavorite) - Number(left.isFavorite) ||
+        left.sortOrder - right.sortOrder ||
+        left.config.name.localeCompare(right.config.name) ||
+        left.config.id.localeCompare(right.config.id),
+    );
+  const tree: ConnectionTreeGroup[] = groups.map((group) => ({
+    group,
+    connections: sortConnections(groupedConnections.get(group.id) ?? []),
+  }));
+  const ungrouped = sortConnections(groupedConnections.get(null) ?? []);
+  if (ungrouped.length > 0) {
+    tree.push({ group: null, connections: ungrouped });
+  }
+  return tree;
+}
+
+function moveId(ids: string[], id: string, direction: -1 | 1): boolean {
+  const index = ids.indexOf(id);
+  const targetIndex = index + direction;
+  if (index < 0 || targetIndex < 0 || targetIndex >= ids.length) return false;
+  [ids[index], ids[targetIndex]] = [ids[targetIndex], ids[index]];
+  return true;
 }
 
 function exitImpactMessage(
