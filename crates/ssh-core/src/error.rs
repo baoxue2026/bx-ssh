@@ -26,6 +26,8 @@ pub enum SshError {
     HandshakeTimeout,
     #[error("SSH handshake failed: {0}")]
     HandshakeFailed(#[source] russh::Error),
+    #[error("SSH handshake did not report the negotiated algorithms")]
+    NegotiatedAlgorithmsUnavailable,
     #[error("SSH connection was cancelled")]
     ConnectionCancelled,
     #[error("SSH authentication timed out")]
@@ -81,6 +83,7 @@ impl SshError {
             }
             Self::HandshakeTimeout
             | Self::HandshakeFailed(_)
+            | Self::NegotiatedAlgorithmsUnavailable
             | Self::HostKeyUnavailable
             | Self::HostKeyMismatch { .. } => Some(Handshaking),
             Self::InvalidUsername

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bx_ssh_core::{
-    authenticate_password, authenticate_private_key, probe_host_key, ShellEvent, SshEndpoint,
-    SshError, TerminalSize,
+    authenticate_password, authenticate_private_key, probe_host_key, product_algorithm_policy,
+    ShellEvent, SshEndpoint, SshError, TerminalSize,
 };
 
 const WRONG_FINGERPRINT: &str = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -55,6 +55,7 @@ async fn validates_host_key_authentication_and_interactive_shell() {
     .await
     .unwrap();
     assert_eq!(password_session.host_key(), &host_key);
+    assert!(product_algorithm_policy().allows(password_session.negotiated_algorithms()));
 
     let mut shell = password_session
         .open_shell(TerminalSize::new(80, 24).unwrap())
