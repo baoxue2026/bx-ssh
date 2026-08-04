@@ -103,6 +103,53 @@ describe("BX SSH desktop shell", () => {
     }
   });
 
+  it("switches language and theme while keeping startup preferences initialized", async () => {
+    const startupPreferences = (await browser.execute(() => ({
+      language: document.documentElement.lang,
+      theme: document.documentElement.dataset.theme,
+      themeMode: document.documentElement.dataset.themeMode,
+      remoteFontRequests: performance
+        .getEntriesByType("resource")
+        .map((entry) => entry.name)
+        .filter((name) => /fonts\.(?:googleapis|gstatic)\.com/i.test(name)),
+    }))) as {
+      language: string;
+      remoteFontRequests: string[];
+      theme?: string;
+      themeMode?: string;
+    };
+
+    expect(["light", "dark"]).toContain(startupPreferences.theme);
+    expect(["light", "dark", "system"]).toContain(startupPreferences.themeMode);
+    expect(["zh-CN", "en-US"]).toContain(startupPreferences.language);
+    expect(startupPreferences.remoteFontRequests).toEqual([]);
+
+    await selectAppearanceItem("外观", "English");
+    await expect($("h1=Connection Verification")).toBeDisplayed();
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(() => document.documentElement.lang)) ===
+        "en-US",
+    );
+
+    await selectAppearanceItem("Appearance", "Dark");
+    await expectRootPreferences("dark", "dark");
+
+    await selectAppearanceItem("Appearance", "Light");
+    await expectRootPreferences("light", "light");
+
+    await selectAppearanceItem("Appearance", "Use System Setting");
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(
+          () => document.documentElement.dataset.themeMode,
+        )) === "system",
+    );
+
+    await selectAppearanceItem("Appearance", "Simplified Chinese");
+    await expect($("h1=连接验证")).toBeDisplayed();
+  });
+
   it("restores the existing window when a second instance starts", async () => {
     await $('button[aria-label="最小化窗口"]').click();
     await browser.waitUntil(
@@ -132,6 +179,23 @@ describe("BX SSH desktop shell", () => {
     await expect($(".app-shell")).toBeDisplayed();
   });
 });
+
+async function selectAppearanceItem(menuLabel: string, itemLabel: string) {
+  await $(`button=${menuLabel}`).click();
+  const item = await $(`.ant-dropdown-menu-item=${itemLabel}`);
+  await item.waitForDisplayed();
+  await item.click();
+}
+
+async function expectRootPreferences(theme: string, themeMode: string) {
+  await browser.waitUntil(async () => {
+    const preferences = (await browser.execute(() => ({
+      theme: document.documentElement.dataset.theme,
+      themeMode: document.documentElement.dataset.themeMode,
+    }))) as { theme?: string; themeMode?: string };
+    return preferences.theme === theme && preferences.themeMode === themeMode;
+  });
+}
 
 async function launchSecondaryInstance(): Promise<void> {
   await new Promise<void>((resolve, reject) => {

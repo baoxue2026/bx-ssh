@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button, Input, Tooltip } from "antd";
+import { useTranslation } from "react-i18next";
 import {
   ArrowUp,
   CheckCircle2,
@@ -40,6 +41,7 @@ export function SftpPane({
   onRefresh,
   onUpload,
 }: SftpPaneProps) {
+  const { i18n, t } = useTranslation();
   const [pathDraft, setPathDraft] = useState<string | null>(null);
   const [localUploadPath, setLocalUploadPath] = useState("");
   const [remoteUploadPath, setRemoteUploadPath] = useState("");
@@ -54,27 +56,27 @@ export function SftpPane({
   };
 
   return (
-    <section className="sftp-pane" aria-label="SFTP 文件验证">
+    <section className="sftp-pane" aria-label={t("sftp.aria")}>
       <div className="sftp-toolbar">
         <div className="sftp-path-controls">
-          <Tooltip title="上级目录">
+          <Tooltip title={t("sftp.parentDirectory")}>
             <Button
-              aria-label="上级目录"
+              aria-label={t("sftp.parentDirectory")}
               icon={<ArrowUp size={15} />}
               disabled={!connected || busy}
               onClick={() => void navigate(parentPath)}
             />
           </Tooltip>
           <Input
-            aria-label="远端路径"
+            aria-label={t("sftp.path")}
             value={pathInput}
             disabled={!connected || busy}
             onChange={(event) => setPathDraft(event.target.value)}
             onPressEnter={() => void navigate(pathInput)}
           />
-          <Tooltip title="刷新目录">
+          <Tooltip title={t("sftp.refresh")}>
             <Button
-              aria-label="刷新目录"
+              aria-label={t("sftp.refresh")}
               icon={<RefreshCw size={15} />}
               loading={busy}
               disabled={!connected}
@@ -83,7 +85,7 @@ export function SftpPane({
           </Tooltip>
         </div>
         <span className="endpoint-label">
-          {connected ? endpoint : "未连接"}
+          {connected ? endpoint : t("sftp.notConnected")}
         </span>
       </div>
 
@@ -91,10 +93,10 @@ export function SftpPane({
         <table>
           <thead>
             <tr>
-              <th>名称</th>
-              <th>大小</th>
-              <th>修改时间</th>
-              <th>权限</th>
+              <th>{t("sftp.name")}</th>
+              <th>{t("sftp.size")}</th>
+              <th>{t("sftp.modified")}</th>
+              <th>{t("sftp.permissions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -135,7 +137,12 @@ export function SftpPane({
                 <td>
                   {entry.kind === "directory" ? "" : formatBytes(entry.size)}
                 </td>
-                <td>{formatModifiedTime(entry.modifiedAt)}</td>
+                <td>
+                  {formatModifiedTime(
+                    entry.modifiedAt,
+                    i18n.resolvedLanguage ?? "zh-CN",
+                  )}
+                </td>
                 <td>{formatPermissions(entry.permissions)}</td>
               </tr>
             ))}
@@ -145,13 +152,13 @@ export function SftpPane({
         {connected && directory?.entries.length === 0 && (
           <div className="sftp-empty">
             <FolderOpen size={34} strokeWidth={1.3} />
-            <span>目录为空</span>
+            <span>{t("sftp.empty")}</span>
           </div>
         )}
         {!connected && (
           <div className="sftp-empty">
             <FolderOpen size={34} strokeWidth={1.3} />
-            <span>未连接</span>
+            <span>{t("sftp.notConnected")}</span>
           </div>
         )}
       </div>
@@ -160,15 +167,15 @@ export function SftpPane({
         <div className="sftp-transfer-row">
           <Upload size={15} />
           <Input
-            aria-label="上传本地源文件"
-            placeholder="本地源文件路径"
+            aria-label={t("sftp.uploadLocalLabel")}
+            placeholder={t("sftp.uploadLocalPlaceholder")}
             value={localUploadPath}
             disabled={!connected || busy}
             onChange={(event) => setLocalUploadPath(event.target.value)}
           />
           <Input
-            aria-label="上传远端目标"
-            placeholder="远端目标路径"
+            aria-label={t("sftp.uploadRemoteLabel")}
+            placeholder={t("sftp.uploadRemotePlaceholder")}
             value={remoteUploadPath}
             disabled={!connected || busy}
             onChange={(event) => setRemoteUploadPath(event.target.value)}
@@ -179,22 +186,22 @@ export function SftpPane({
             disabled={!connected || !localUploadPath || !remoteUploadPath}
             onClick={() => void onUpload(localUploadPath, remoteUploadPath)}
           >
-            上传
+            {t("common.upload")}
           </Button>
         </div>
 
         <div className="sftp-transfer-row">
           <Download size={15} />
           <Input
-            aria-label="下载远端源文件"
-            placeholder="远端源文件路径"
+            aria-label={t("sftp.downloadRemoteLabel")}
+            placeholder={t("sftp.downloadRemotePlaceholder")}
             value={remoteDownloadPath}
             disabled={!connected || busy}
             onChange={(event) => setRemoteDownloadPath(event.target.value)}
           />
           <Input
-            aria-label="下载本地目标"
-            placeholder="本地目标路径"
+            aria-label={t("sftp.downloadLocalLabel")}
+            placeholder={t("sftp.downloadLocalPlaceholder")}
             value={localDownloadPath}
             disabled={!connected || busy}
             onChange={(event) => setLocalDownloadPath(event.target.value)}
@@ -207,7 +214,7 @@ export function SftpPane({
               void onDownload(remoteDownloadPath, localDownloadPath)
             }
           >
-            下载
+            {t("common.download")}
           </Button>
         </div>
 
@@ -215,7 +222,9 @@ export function SftpPane({
           <div className="sftp-transfer-result" role="status">
             <CheckCircle2 size={15} />
             <span>
-              {transferResult.direction === "upload" ? "上传" : "下载"}
+              {transferResult.direction === "upload"
+                ? t("common.upload")
+                : t("common.download")}
             </span>
             <strong>{formatBytes(transferResult.summary.bytes)}</strong>
             <span>{formatBytes(transferResult.summary.bytesPerSecond)}/s</span>
@@ -250,11 +259,11 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(value >= 10 ? 1 : 2)} ${unit}`;
 }
 
-function formatModifiedTime(seconds: number | null): string {
+function formatModifiedTime(seconds: number | null, language: string): string {
   if (seconds === null) {
     return "";
   }
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(language, {
     dateStyle: "short",
     timeStyle: "short",
   }).format(new Date(seconds * 1000));

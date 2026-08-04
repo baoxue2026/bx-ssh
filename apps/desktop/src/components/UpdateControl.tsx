@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Modal, Progress, Tooltip } from "antd";
+import type { TFunction } from "i18next";
 import { Download, RefreshCw, ShieldCheck } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ipc } from "../ipc/client";
 import type { UpdateInfo } from "../ipc/bindings";
 
@@ -22,6 +24,7 @@ export function UpdateControl({
   currentVersion,
   requestId = 0,
 }: UpdateControlProps) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<UpdateStatus>("idle");
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [open, setOpen] = useState(false);
@@ -44,11 +47,11 @@ export function UpdateControl({
       setStatus(available ? "available" : "current");
       setOpen(true);
     } catch (error) {
-      setErrorMessage(errorText(error));
+      setErrorMessage(errorText(error, t("update.serviceUnavailable")));
       setStatus("error");
       setOpen(true);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (requestId <= handledRequestId.current) return;
@@ -75,7 +78,7 @@ export function UpdateControl({
         }
       });
     } catch (error) {
-      setErrorMessage(errorText(error));
+      setErrorMessage(errorText(error, t("update.serviceUnavailable")));
       setStatus("error");
     }
   };
@@ -87,12 +90,12 @@ export function UpdateControl({
 
   return (
     <>
-      <Tooltip title="检查更新">
+      <Tooltip title={t("update.checking")}>
         <Button
           className="update-trigger"
           type="text"
           size="small"
-          aria-label="检查更新"
+          aria-label={t("update.checking")}
           icon={<RefreshCw size={14} />}
           loading={status === "checking"}
           onClick={() => void checkForUpdate()}
@@ -100,7 +103,7 @@ export function UpdateControl({
       </Tooltip>
 
       <Modal
-        title={modalTitle(status, update)}
+        title={modalTitle(status, update, t)}
         open={open}
         width={440}
         closable={status !== "downloading" && status !== "verified"}
@@ -110,7 +113,7 @@ export function UpdateControl({
           status === "available"
             ? [
                 <Button key="cancel" onClick={close}>
-                  稍后
+                  {t("update.later")}
                 </Button>,
                 <Button
                   key="install"
@@ -118,29 +121,33 @@ export function UpdateControl({
                   icon={<Download size={15} />}
                   onClick={() => void installUpdate()}
                 >
-                  下载并安装
+                  {t("update.downloadAndInstall")}
                 </Button>,
               ]
             : status === "downloading" || status === "verified"
               ? null
               : [
                   <Button key="close" type="primary" onClick={close}>
-                    确定
+                    {t("common.confirm")}
                   </Button>,
                 ]
         }
       >
         {status === "current" && (
           <p className="update-message">
-            当前版本 v{currentVersion} 已是最新版本。
+            {t("update.current", { version: currentVersion })}
           </p>
         )}
 
         {status === "available" && update && (
           <div className="update-details">
             <div className="update-version-row">
-              <span>当前版本 v{update.currentVersion}</span>
-              <span>新版本 v{update.version}</span>
+              <span>
+                {t("update.currentVersion", {
+                  version: update.currentVersion,
+                })}
+              </span>
+              <span>{t("update.newVersion", { version: update.version })}</span>
             </div>
             {update.notes && <p>{update.notes}</p>}
           </div>
@@ -157,14 +164,14 @@ export function UpdateControl({
                   : formatBytes(downloadedBytes)
               }
             />
-            <span>正在下载并校验更新包</span>
+            <span>{t("update.downloading")}</span>
           </div>
         )}
 
         {status === "verified" && (
           <div className="update-verified">
             <ShieldCheck size={20} />
-            <span>签名验证通过，正在安装并重新启动。</span>
+            <span>{t("update.verified")}</span>
           </div>
         )}
 
@@ -172,7 +179,7 @@ export function UpdateControl({
           <Alert
             type="error"
             showIcon
-            message="更新失败"
+            message={t("update.error")}
             description={errorMessage}
           />
         )}
@@ -181,12 +188,18 @@ export function UpdateControl({
   );
 }
 
-function modalTitle(status: UpdateStatus, update: UpdateInfo | null): string {
-  if (status === "available" && update) return `发现新版本 v${update.version}`;
-  if (status === "downloading") return "下载更新";
-  if (status === "verified") return "安装更新";
-  if (status === "error") return "无法完成更新";
-  return "版本更新";
+function modalTitle(
+  status: UpdateStatus,
+  update: UpdateInfo | null,
+  t: TFunction,
+): string {
+  if (status === "available" && update) {
+    return t("update.availableTitle", { version: update.version });
+  }
+  if (status === "downloading") return t("update.downloadTitle");
+  if (status === "verified") return t("update.installTitle");
+  if (status === "error") return t("update.errorTitle");
+  return t("update.versionTitle");
 }
 
 function formatBytes(bytes: number): string {
@@ -194,8 +207,8 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-function errorText(error: unknown): string {
+function errorText(error: unknown, fallback: string): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
-  return "更新服务暂时不可用";
+  return fallback;
 }

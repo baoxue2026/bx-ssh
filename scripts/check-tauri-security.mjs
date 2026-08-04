@@ -10,6 +10,11 @@ const defaultCapability = readJson(
 );
 const e2eConfig = readJson("apps/desktop/tests/e2e/tauri.e2e.conf.json");
 const mainPermission = readText("apps/desktop/src-tauri/permissions/main.toml");
+const desktopHtml = readText("apps/desktop/index.html");
+const desktopStyles = readText("apps/desktop/src/styles.css");
+const preferenceInitializer = readText(
+  "apps/desktop/public/ui-preferences-init.js",
+);
 const violations = [];
 
 const reviewedApplicationCommands = [
@@ -93,6 +98,12 @@ checkCsp(tauriConfig.app?.security?.devCsp, "development", {
   "frame-ancestors": ["'none'"],
   "object-src": ["'none'"],
 });
+checkUiPreferenceBootstrap(desktopHtml, preferenceInitializer);
+checkOfflineFonts([
+  ["apps/desktop/index.html", desktopHtml],
+  ["apps/desktop/src/styles.css", desktopStyles],
+  ["apps/desktop/public/ui-preferences-init.js", preferenceInitializer],
+]);
 
 if (tauriConfig.app?.security?.dangerousDisableAssetCspModification === true) {
   violations.push("Tauri asset CSP modification must remain enabled");
@@ -288,6 +299,53 @@ function checkCsp(value, label, expectedDirectives) {
       if (source === "'unsafe-inline'" && name !== "style-src") {
         violations.push(`${label} CSP allows inline content in ${name}`);
       }
+    }
+  }
+}
+
+function checkUiPreferenceBootstrap(html, initializer) {
+  const initializerTag = '<script src="/ui-preferences-init.js"></script>';
+  const applicationTag = '<script type="module" src="/src/main.tsx"></script>';
+  const initializerIndex = html.indexOf(initializerTag);
+  const applicationIndex = html.indexOf(applicationTag);
+
+  if (
+    initializerIndex < 0 ||
+    applicationIndex < 0 ||
+    initializerIndex > applicationIndex
+  ) {
+    violations.push(
+      "UI preference bootstrap must load synchronously before the React entry point",
+    );
+  }
+
+  for (const requiredValue of [
+    "bx-ssh.theme-mode",
+    "bx-ssh.language",
+    "prefers-color-scheme: dark",
+    "dataset.theme",
+    "dataset.themeMode",
+  ]) {
+    if (!initializer.includes(requiredValue)) {
+      violations.push(
+        `UI preference bootstrap does not initialize ${requiredValue}`,
+      );
+    }
+  }
+}
+
+function checkOfflineFonts(files) {
+  const remoteFontPatterns = [
+    /fonts\.googleapis\.com/i,
+    /fonts\.gstatic\.com/i,
+    /@import\s+(?:url\()?\s*["']?https?:\/\//i,
+    /url\(\s*["']?https?:\/\//i,
+    /<link\b[^>]*\brel=["']stylesheet["'][^>]*\bhref=["']https?:\/\//i,
+  ];
+
+  for (const [path, source] of files) {
+    if (remoteFontPatterns.some((pattern) => pattern.test(source))) {
+      violations.push(`${path} must not load remote font resources`);
     }
   }
 }
