@@ -201,16 +201,7 @@ pub(crate) async fn close_terminal_session(
     manager: State<'_, TerminalSessionManager>,
     session_id: String,
 ) -> Result<(), CommandError> {
-    let sender = manager
-        .sessions
-        .lock()
-        .await
-        .remove(&session_id)
-        .ok_or_else(|| CommandError::session_not_found("terminal"))?;
-    sender
-        .send(SessionCommand::Close(None))
-        .await
-        .map_err(|_| CommandError::session_closed("terminal"))
+    manager.close(&session_id).await
 }
 
 impl TerminalSessionManager {
@@ -244,6 +235,23 @@ impl TerminalSessionManager {
         for completed in completions {
             let _ = completed.await;
         }
+    }
+
+    async fn close(&self, session_id: &str) -> Result<(), CommandError> {
+        let sender = self
+            .sessions
+            .lock()
+            .await
+            .remove(session_id)
+            .ok_or_else(|| CommandError::session_not_found("terminal"))?;
+        let (complete, completed) = oneshot::channel();
+        sender
+            .send(SessionCommand::Close(Some(complete)))
+            .await
+            .map_err(|_| CommandError::session_closed("terminal"))?;
+        completed
+            .await
+            .map_err(|_| CommandError::session_closed("terminal"))
     }
 
     async fn send(&self, session_id: &str, command: SessionCommand) -> Result<(), CommandError> {
@@ -540,6 +548,29 @@ mod tests {
         });
 
         manager.close_all().await;
+        worker.await.unwrap();
+
+        assert!(manager.sessions.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn waits_for_session_cleanup_when_closing_one_session() {
+        let manager = TerminalSessionManager::default();
+        let (sender, mut commands) = mpsc::channel(1);
+        manager
+            .sessions
+            .lock()
+            .await
+            .insert("active".to_owned(), sender);
+        let worker = tokio::spawn(async move {
+            let Some(SessionCommand::Close(Some(complete))) = commands.recv().await else {
+                panic!("close command did not include a completion signal");
+            };
+            assert!(!complete.is_closed());
+            complete.send(()).unwrap();
+        });
+
+        manager.close("active").await.unwrap();
         worker.await.unwrap();
 
         assert!(manager.sessions.lock().await.is_empty());

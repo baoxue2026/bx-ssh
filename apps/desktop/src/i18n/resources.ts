@@ -77,6 +77,18 @@ export const resources = {
         closeNamed: "关闭会话 {{name}}",
         label: "SSH 会话",
       },
+      sessionClose: {
+        activeSessions_one: "{{count}} 个活动连接",
+        activeSessions_other: "{{count}} 个活动连接",
+        activeTransfers_one: "{{count}} 个进行中的文件传输",
+        activeTransfers_other: "{{count}} 个进行中的文件传输",
+        confirm: "断开并关闭",
+        currentSession: "当前会话",
+        error: "无法关闭会话",
+        message:
+          "会话“{{name}}”当前有 {{activity}}。关闭会话将断开连接，进行中的传输可能被中断。",
+        title: "关闭会话？",
+      },
       connectionEditor: {
         actions: {
           clearColor: "清除颜色",
@@ -152,6 +164,8 @@ export const resources = {
         },
       },
       connectionCatalog: {
+        activeSessionUnaffected:
+          "当前活动会话仍会继续运行，直到你单独关闭该会话。",
         confirmDelete: "删除本机配置",
         copy: "复制",
         copyName: "{{name}} 副本",
@@ -451,6 +465,18 @@ export const resources = {
         closeNamed: "Close session {{name}}",
         label: "SSH sessions",
       },
+      sessionClose: {
+        activeSessions_one: "{{count}} active connection",
+        activeSessions_other: "{{count}} active connections",
+        activeTransfers_one: "{{count}} file transfer in progress",
+        activeTransfers_other: "{{count}} file transfers in progress",
+        confirm: "Disconnect and Close",
+        currentSession: "Current session",
+        error: "Unable to Close Session",
+        message:
+          'Session "{{name}}" currently has {{activity}}. Closing it will disconnect the connection and may interrupt transfers in progress.',
+        title: "Close Session?",
+      },
       connectionEditor: {
         actions: {
           clearColor: "Clear color",
@@ -529,6 +555,8 @@ export const resources = {
         },
       },
       connectionCatalog: {
+        activeSessionUnaffected:
+          "The active session will keep running until you close it separately.",
         confirmDelete: "Delete Local Configuration",
         copy: "Copy",
         copyName: "{{name}} Copy",
