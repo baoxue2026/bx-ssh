@@ -376,24 +376,27 @@ impl ConnectionRepository {
         })
     }
 
-    pub fn record_successful_connection(&mut self, id: &str, now_ms: u64) -> Result<()> {
+    pub fn record_successful_connection(&mut self, id: &str, now_ms: u64) -> Result<bool> {
         if id.trim().is_empty() {
             return Err(PersistenceError::InvalidConnectionConfiguration);
         }
         let now = timestamp_to_i64(now_ms)?;
-        self.database
+        let changed = self
+            .database
             .connection()
             .execute(
                 "INSERT INTO recent_connections
                  (connection_id, last_connected_at, successful_connection_count)
-                 VALUES (?1, ?2, 1)
+                 SELECT id, ?2, 1
+                 FROM connections
+                 WHERE id = ?1 AND deleted_at IS NULL
                  ON CONFLICT(connection_id) DO UPDATE SET
                     last_connected_at = excluded.last_connected_at,
                     successful_connection_count = successful_connection_count + 1",
                 params![id, now],
             )
             .map_err(|source| database_operation("record a successful connection", source))?;
-        Ok(())
+        Ok(changed > 0)
     }
 
     fn list_groups(&self) -> Result<Vec<ConnectionGroup>> {
@@ -850,6 +853,34 @@ mod tests {
         let serialized = serde_json::to_value(&details).unwrap();
         assert!(!contains_json_key(&serialized, "password"));
         assert!(!contains_json_key(&serialized, "passphrase"));
+    }
+
+    #[test]
+    fn records_recent_connection_time_and_count_only_for_saved_connections() {
+        let mut repository = test_repository();
+        let config = ConnectionConfig::new("connection-1", "Production", "example.com", "alice");
+        repository
+            .save_connection(&config, ConnectionSettingsOverride::default(), 1000)
+            .unwrap();
+
+        assert!(repository
+            .record_successful_connection("connection-1", 2000)
+            .unwrap());
+        assert!(repository
+            .record_successful_connection("connection-1", 3000)
+            .unwrap());
+        assert!(!repository
+            .record_successful_connection("missing-connection", 4000)
+            .unwrap());
+
+        let item = repository.list_catalog().unwrap().connections.remove(0);
+        assert_eq!(item.last_connected_at, Some(3000));
+        assert_eq!(item.successful_connection_count, 2);
+
+        repository.delete_connection("connection-1", 5000).unwrap();
+        assert!(!repository
+            .record_successful_connection("connection-1", 6000)
+            .unwrap());
     }
 
     #[test]

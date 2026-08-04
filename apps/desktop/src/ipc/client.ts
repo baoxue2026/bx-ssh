@@ -93,6 +93,8 @@ export const ipc = {
     settings: ConnectionSettingsOverride,
   ) => unwrapVoid(() => commands.saveConnection(config, settings)),
   deleteConnection: (id: string) => unwrap(() => commands.deleteConnection(id)),
+  recordSuccessfulConnection: (id: string) =>
+    unwrap(() => commands.recordSuccessfulConnection(id)),
   saveConnectionGroup: (group: ConnectionGroup) =>
     unwrapVoid(() => commands.saveConnectionGroup(group)),
   deleteConnectionGroup: (id: string) =>

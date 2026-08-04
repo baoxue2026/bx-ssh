@@ -152,6 +152,19 @@ describe("App", { timeout: 15_000 }, () => {
     );
   });
 
+  it("shows the first-start state separately from an empty connection list", async () => {
+    renderApp();
+
+    expect(
+      await screen.findByRole("region", { name: "开始使用 BX SSH" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("创建第一个 SSH 连接，连接配置只保存在本机。"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "导入配置" })).toBeDisabled();
+    expect(screen.getByText("暂无已保存连接")).toBeInTheDocument();
+  });
+
   it("saves a connection without starting a host probe", async () => {
     mocks.invoke.mockImplementation((command: string) => {
       if (command === "app_info") {
@@ -352,6 +365,106 @@ describe("App", { timeout: 15_000 }, () => {
     );
     expect(ungrouped).toHaveTextContent("遗失分组服务器");
     expect(screen.getAllByText("遗失分组服务器")).toHaveLength(1);
+  });
+
+  it("replaces the connection tree with searchable matched fields", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(organizedConnectionCatalog());
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: "搜索已保存连接" }),
+      { target: { value: "生产 prod" } },
+    );
+
+    expect(screen.getByText("搜索结果")).toBeInTheDocument();
+    expect(screen.getByText("2 项")).toBeInTheDocument();
+    expect(screen.getByText("普通服务器")).toBeInTheDocument();
+    expect(screen.getAllByText(/命中：/)[0]).toHaveTextContent("主机、分组");
+    expect(
+      screen.queryByRole("region", { name: "生产环境" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索已保存连接" }), {
+      target: { value: "does-not-exist" },
+    });
+    expect(screen.getByText("没有搜索结果")).toBeInTheDocument();
+    expect(
+      screen.getByText("没有连接匹配“does-not-exist”。"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "清除搜索" }));
+    expect(
+      screen.getByRole("region", { name: "生产环境" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the three most recent connections when there is no session", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(recentConnectionCatalog());
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    const emptyState = await screen.findByRole("region", {
+      name: "当前没有活动会话",
+    });
+    expect(within(emptyState).getByText("最近连接")).toBeInTheDocument();
+    expect(
+      within(emptyState).getAllByRole("button", { name: "快速连接" }),
+    ).toHaveLength(3);
+    expect(emptyState).toHaveTextContent("最近服务器 4");
+    expect(emptyState).not.toHaveTextContent("最近服务器 1");
+  });
+
+  it("quick-connect loads a recent connection and starts the real probe flow", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(recentConnectionCatalog());
+      }
+      if (command === "get_connection") {
+        return Promise.resolve(recentConnectionDetails(4));
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    const recentState = await screen.findByRole("region", {
+      name: "当前没有活动会话",
+    });
+    fireEvent.click(
+      within(recentState).getAllByRole("button", { name: "快速连接" })[0],
+    );
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("get_connection", {
+        id: "connection-recent-4",
+      });
+      expect(mocks.invoke).toHaveBeenCalledWith("probe_ssh_host", {
+        request: { host: "recent-4.example.com", port: 22 },
+      });
+    });
+    expect(screen.getByText("信任此主机指纹")).toBeInTheDocument();
   });
 
   it("persists favorite and group collapse actions through IPC", async () => {
@@ -844,6 +957,70 @@ describe("App", { timeout: 15_000 }, () => {
       }),
     });
   });
+
+  it("records a successful saved connection without failing the live session", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(savedConnectionCatalog());
+      }
+      if (command === "get_connection") {
+        return Promise.resolve(savedConnectionDetails());
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_shell") {
+        return Promise.resolve({
+          sessionId: "session-saved",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+        });
+      }
+      if (command === "record_successful_connection") {
+        return Promise.reject({
+          code: "database_query_failed",
+          message: "recent history unavailable",
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: "搜索已保存连接" }),
+      { target: { value: "生产" } },
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "打开 生产服务器" }),
+    );
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "record_successful_connection",
+        { id: "connection-production" },
+      );
+      expect(screen.getAllByText("已连接")).not.toHaveLength(0);
+    });
+    expect(
+      screen.queryByText("recent history unavailable"),
+    ).not.toBeInTheDocument();
+  });
 });
 
 function renderApp() {
@@ -986,5 +1163,32 @@ function organizedConnectionCatalog() {
         0,
       ),
     ],
+  };
+}
+
+function recentConnectionCatalog() {
+  return {
+    groups: [],
+    connections: [1, 2, 3, 4].map(
+      (index) => recentConnectionDetails(index).connection,
+    ),
+  };
+}
+
+function recentConnectionDetails(index: number) {
+  const details = savedConnectionDetails();
+  return {
+    ...details,
+    connection: {
+      ...details.connection,
+      config: {
+        ...details.connection.config,
+        id: `connection-recent-${index}`,
+        name: `最近服务器 ${index}`,
+        host: `recent-${index}.example.com`,
+      },
+      lastConnectedAt: 1_700_000_000_000 + index * 1_000,
+      successfulConnectionCount: index,
+    },
   };
 }

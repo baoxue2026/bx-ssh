@@ -174,6 +174,21 @@ pub(crate) async fn delete_connection(
     .await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn record_successful_connection(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    id: String,
+) -> Result<bool, CommandError> {
+    let data_directory = app_data_directory(&app)?;
+    let now_ms = current_timestamp_ms()?;
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        repository.record_successful_connection(&id, now_ms)
+    })
+    .await
+}
+
 fn app_data_directory(app: &AppHandle) -> Result<PathBuf, CommandError> {
     app.path().app_data_dir().map_err(|_| {
         CommandError::new(

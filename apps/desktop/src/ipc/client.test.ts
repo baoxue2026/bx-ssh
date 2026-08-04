@@ -100,6 +100,13 @@ describe("IPC client", () => {
       id: "connection-1",
     });
 
+    await expect(ipc.recordSuccessfulConnection("connection-1")).resolves.toBe(
+      true,
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("record_successful_connection", {
+      id: "connection-1",
+    });
+
     const group = {
       id: "group-production",
       name: "Production",

@@ -17,6 +17,7 @@ import {
   Plus,
   PlugZap,
   RefreshCw,
+  Search,
   ScanSearch,
   SquareTerminal,
   Star,
@@ -30,6 +31,7 @@ import {
   type ConnectionEditorValue,
 } from "./components/ConnectionEditorDialog";
 import { ConnectionGroupDialog } from "./components/ConnectionGroupDialog";
+import { ConnectionWorkspaceEmptyState } from "./components/ConnectionWorkspaceEmptyState";
 import {
   TerminalPane,
   type TerminalHandle,
@@ -73,6 +75,13 @@ type WorkspaceMode = "terminal" | "sftp";
 interface ConnectionTreeGroup {
   group: ConnectionGroup | null;
   connections: ConnectionListItem[];
+}
+
+type ConnectionSearchField = "name" | "host" | "username" | "group" | "notes";
+
+interface ConnectionSearchResult {
+  item: ConnectionListItem;
+  matchedFields: ConnectionSearchField[];
 }
 
 const fallbackInfo: AppInfo = {
@@ -127,6 +136,7 @@ export function App() {
   const [connectionCatalogNotice, setConnectionCatalogNotice] = useState<
     string | null
   >(null);
+  const [connectionSearch, setConnectionSearch] = useState("");
   const [connectionActionId, setConnectionActionId] = useState<string | null>(
     null,
   );
@@ -165,6 +175,7 @@ export function App() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const terminalRef = useRef<TerminalHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const loadedConnectionIdRef = useRef<string | null>(null);
   const sftpSessionIdRef = useRef<string | null>(null);
   const inputQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resizeTimerRef = useRef<number | null>(null);
@@ -194,6 +205,14 @@ export function App() {
   const connectionTree = useMemo(
     () => buildConnectionTree(connectionCatalog),
     [connectionCatalog],
+  );
+  const connectionSearchResults = useMemo(
+    () => searchConnections(connectionCatalog, connectionSearch),
+    [connectionCatalog, connectionSearch],
+  );
+  const recentConnections = useMemo(
+    () => getRecentConnections(connectionCatalog.connections, 3),
+    [connectionCatalog.connections],
   );
 
   const enableLowMemoryUsage = useCallback(async () => {
@@ -354,6 +373,10 @@ export function App() {
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
+
+  useEffect(() => {
+    loadedConnectionIdRef.current = loadedConnectionId;
+  }, [loadedConnectionId]);
 
   useEffect(() => {
     sftpSessionIdRef.current = sftpSessionId;
@@ -581,6 +604,45 @@ export function App() {
     }
   };
 
+  const loadSavedConnection = async (item: ConnectionListItem) => {
+    setConnectionActionId(item.config.id);
+    setConnectionCatalogError(null);
+    setConnectionCatalogNotice(null);
+    try {
+      const details = await ipc.getConnection(item.config.id);
+      if (!details) {
+        throw new Error(t("connectionCatalog.notFound"));
+      }
+      setHost(details.connection.config.host);
+      setPort(details.connection.config.port);
+      setUsername(details.connection.config.username);
+      setPassword("");
+      setLoadedConnectionId(details.connection.config.id);
+      loadedConnectionIdRef.current = details.connection.config.id;
+      resetHostTrust();
+      await probeHost(
+        details.connection.config.host,
+        details.connection.config.port,
+      );
+    } catch (error) {
+      setConnectionCatalogError(localizedErrorText(error));
+    } finally {
+      setConnectionActionId(null);
+    }
+  };
+
+  const recordLoadedConnectionSuccess = async () => {
+    const id = loadedConnectionIdRef.current;
+    if (!id) return;
+    try {
+      await ipc.recordSuccessfulConnection(id);
+      await loadConnectionCatalog();
+    } catch {
+      // A successful SSH/SFTP session must not be changed into a failed state
+      // when only the local recent-connection summary cannot be updated.
+    }
+  };
+
   const saveConnection = async (
     value: ConnectionEditorValue,
     intent: ConnectionEditorIntent,
@@ -603,6 +665,7 @@ export function App() {
         setUsername(value.config.username);
         setPassword("");
         setLoadedConnectionId(value.config.id);
+        loadedConnectionIdRef.current = value.config.id;
         resetHostTrust();
         await probeHost(value.config.host, value.config.port);
       }
@@ -750,6 +813,7 @@ export function App() {
       setSessionId(response.sessionId);
       setHostKey(response.hostKey);
       setConnectionState("connected");
+      void recordLoadedConnectionSuccess();
       terminalRef.current?.focus();
     } catch (error) {
       if (connectionAttemptRef.current !== attempt) {
@@ -794,6 +858,7 @@ export function App() {
       setSftpDirectory(response.directory);
       setHostKey(response.hostKey);
       setConnectionState("connected");
+      void recordLoadedConnectionSuccess();
     } catch (error) {
       if (connectionAttemptRef.current !== attempt) {
         return;
@@ -1040,14 +1105,34 @@ export function App() {
             />
           )}
 
+          <Input
+            allowClear
+            aria-label={t("connectionSearch.label")}
+            className="connection-search"
+            placeholder={t("connectionSearch.placeholder")}
+            prefix={<Search size={14} aria-hidden="true" />}
+            value={connectionSearch}
+            onChange={(event) => setConnectionSearch(event.target.value)}
+          />
+
           <section
             className="connection-catalog"
             aria-label={t("connectionCatalog.title")}
           >
             <div className="connection-catalog-heading">
-              <span>{t("connectionCatalog.title")}</span>
+              <span>
+                {connectionSearch.trim()
+                  ? t("connectionSearch.title")
+                  : t("connectionCatalog.title")}
+              </span>
               {!connectionCatalogLoading && !connectionCatalogError && (
-                <span>{connectionCatalog.connections.length}</span>
+                <span>
+                  {connectionSearch.trim()
+                    ? t("connectionSearch.resultCount", {
+                        count: connectionSearchResults.length,
+                      })
+                    : connectionCatalog.connections.length}
+                </span>
               )}
             </div>
 
@@ -1068,6 +1153,21 @@ export function App() {
                   </Button>
                 }
               />
+            ) : connectionSearch.trim() &&
+              connectionSearchResults.length === 0 ? (
+              <EmptyState
+                className="connection-catalog-empty"
+                icon={<Search size={24} strokeWidth={1.4} />}
+                title={t("connectionSearch.emptyTitle")}
+                description={t("connectionSearch.emptyDescription", {
+                  query: connectionSearch.trim(),
+                })}
+                action={
+                  <Button size="small" onClick={() => setConnectionSearch("")}>
+                    {t("connectionSearch.clear")}
+                  </Button>
+                }
+              />
             ) : connectionCatalog.connections.length === 0 &&
               connectionCatalog.groups.length === 0 ? (
               <EmptyState
@@ -1075,6 +1175,51 @@ export function App() {
                 title={t("connectionCatalog.empty")}
                 description={t("connectionCatalog.emptyDescription")}
               />
+            ) : connectionSearch.trim() ? (
+              <div className="connection-search-results">
+                {connectionSearchResults.map(({ item, matchedFields }) => (
+                  <article
+                    className="connection-search-item"
+                    key={item.config.id}
+                  >
+                    <span
+                      className="connection-catalog-color"
+                      style={
+                        item.config.color
+                          ? { backgroundColor: item.config.color }
+                          : undefined
+                      }
+                      aria-hidden="true"
+                    />
+                    <span className="connection-catalog-summary">
+                      <strong>{item.config.name}</strong>
+                      <span>
+                        {item.config.username}@{item.config.host}:
+                        {item.config.port}
+                      </span>
+                      <span className="connection-search-match">
+                        {t("connectionSearch.matchedFields", {
+                          fields: matchedFields
+                            .map((field) =>
+                              t(`connectionSearch.fields.${field}`),
+                            )
+                            .join(t("connectionSearch.fieldSeparator")),
+                        })}
+                      </span>
+                    </span>
+                    <Button
+                      aria-label={t("connectionSearch.openNamed", {
+                        name: item.config.name,
+                      })}
+                      size="small"
+                      loading={connectionActionId === item.config.id}
+                      onClick={() => void loadSavedConnection(item)}
+                    >
+                      {t("connectionSearch.open")}
+                    </Button>
+                  </article>
+                ))}
+              </div>
             ) : (
               <div className="connection-catalog-list">
                 {connectionTree.map(({ group, connections }, groupIndex) => {
@@ -1391,6 +1536,8 @@ export function App() {
                 disabled={connected || busy}
                 onChange={(event) => {
                   setHost(event.target.value);
+                  setLoadedConnectionId(null);
+                  loadedConnectionIdRef.current = null;
                   resetHostTrust();
                 }}
                 placeholder={t("connection.hostPlaceholder")}
@@ -1407,6 +1554,8 @@ export function App() {
                 disabled={connected || busy}
                 onChange={(value) => {
                   setPort(value ?? 22);
+                  setLoadedConnectionId(null);
+                  loadedConnectionIdRef.current = null;
                   resetHostTrust();
                 }}
               />
@@ -1448,7 +1597,11 @@ export function App() {
                 value={username}
                 autoComplete="username"
                 disabled={connected || busy}
-                onChange={(event) => setUsername(event.target.value)}
+                onChange={(event) => {
+                  setUsername(event.target.value);
+                  setLoadedConnectionId(null);
+                  loadedConnectionIdRef.current = null;
+                }}
               />
             </label>
 
@@ -1527,13 +1680,23 @@ export function App() {
                 onData={writeTerminal}
                 onResize={resizeTerminal}
               />
-              {!connected && (
-                <EmptyState
-                  className="terminal-empty"
-                  icon={<SquareTerminal size={36} strokeWidth={1.3} />}
-                  title={connectionLabel(connectionState, t)}
-                />
-              )}
+              {!connected &&
+                (connectionState === "idle" && !hostKey ? (
+                  <ConnectionWorkspaceEmptyState
+                    language={language}
+                    loadingConnectionId={connectionActionId}
+                    recentConnections={recentConnections}
+                    totalConnections={connectionCatalog.connections.length}
+                    onNewConnection={openNewConnectionEditor}
+                    onQuickConnect={(item) => void loadSavedConnection(item)}
+                  />
+                ) : (
+                  <EmptyState
+                    className="terminal-empty"
+                    icon={<SquareTerminal size={36} strokeWidth={1.3} />}
+                    title={connectionLabel(connectionState, t)}
+                  />
+                ))}
             </div>
           </main>
         ) : (
@@ -1549,6 +1712,16 @@ export function App() {
               onUpload={uploadSftp}
               onDownload={downloadSftp}
             />
+            {!connected && connectionState === "idle" && !hostKey && (
+              <ConnectionWorkspaceEmptyState
+                language={language}
+                loadingConnectionId={connectionActionId}
+                recentConnections={recentConnections}
+                totalConnections={connectionCatalog.connections.length}
+                onNewConnection={openNewConnectionEditor}
+                onQuickConnect={(item) => void loadSavedConnection(item)}
+              />
+            )}
           </main>
         )}
       </div>
@@ -1843,6 +2016,69 @@ function buildConnectionTree(
     tree.push({ group: null, connections: ungrouped });
   }
   return tree;
+}
+
+function searchConnections(
+  catalog: ConnectionCatalog,
+  query: string,
+): ConnectionSearchResult[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return [];
+  const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
+  const groupNames = new Map(
+    catalog.groups.map((group) => [group.id, group.name]),
+  );
+  const results: ConnectionSearchResult[] = [];
+  for (const item of catalog.connections) {
+    const fields: Array<[ConnectionSearchField, string | null | undefined]> = [
+      ["name", item.config.name],
+      ["host", item.config.host],
+      ["username", item.config.username],
+      [
+        "group",
+        item.config.groupId ? groupNames.get(item.config.groupId) : null,
+      ],
+      ["notes", item.config.notes],
+    ];
+    const normalizedFields = fields.map(([field, value]) => [
+      field,
+      value?.toLocaleLowerCase() ?? "",
+    ]) as Array<[ConnectionSearchField, string]>;
+    if (
+      !tokens.every((token) =>
+        normalizedFields.some(([, value]) => value.includes(token)),
+      )
+    ) {
+      continue;
+    }
+    const matchedFields = normalizedFields
+      .filter(([, value]) => tokens.some((token) => value.includes(token)))
+      .map(([field]) => field);
+    if (matchedFields.length > 0) {
+      results.push({ item, matchedFields });
+    }
+  }
+  return results.sort(
+    (left, right) =>
+      Number(right.item.isFavorite) - Number(left.item.isFavorite) ||
+      left.item.config.name.localeCompare(right.item.config.name) ||
+      left.item.config.id.localeCompare(right.item.config.id),
+  );
+}
+
+function getRecentConnections(
+  connections: ConnectionListItem[],
+  limit: number,
+): ConnectionListItem[] {
+  return connections
+    .filter((item) => item.lastConnectedAt !== null)
+    .sort(
+      (left, right) =>
+        (right.lastConnectedAt ?? 0) - (left.lastConnectedAt ?? 0) ||
+        right.successfulConnectionCount - left.successfulConnectionCount ||
+        left.config.name.localeCompare(right.config.name),
+    )
+    .slice(0, limit);
 }
 
 function moveId(ids: string[], id: string, direction: -1 | 1): boolean {
