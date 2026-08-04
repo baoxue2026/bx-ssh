@@ -1,3 +1,4 @@
+mod algorithms;
 mod connection_state;
 mod endpoint;
 mod error;
@@ -6,6 +7,7 @@ mod session;
 mod sftp;
 mod shell;
 
+pub use algorithms::{product_algorithm_policy, SshAlgorithmPolicy, SshNegotiatedAlgorithms};
 pub use connection_state::{SshConnectionStateMachine, SshStateTransitionError};
 pub use endpoint::SshEndpoint;
 pub use error::SshError;

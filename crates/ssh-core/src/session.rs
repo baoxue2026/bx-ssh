@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -8,7 +9,11 @@ use tokio::net::{lookup_host, TcpStream};
 use tokio::sync::{watch, Mutex};
 use tokio::time;
 
-use crate::{HostFingerprint, SftpClient, SshEndpoint, SshError, SshShell, TerminalSize};
+use crate::algorithms::preferred_algorithms;
+use crate::{
+    HostFingerprint, SftpClient, SshEndpoint, SshError, SshNegotiatedAlgorithms, SshShell,
+    TerminalSize,
+};
 
 #[derive(Clone)]
 pub struct ConnectionCancellation {
@@ -48,6 +53,7 @@ impl ConnectionCancellation {
 struct HostKeyVerifier {
     expected: Option<HostFingerprint>,
     observed: Arc<Mutex<Option<HostKeyInfo>>>,
+    negotiated: Arc<Mutex<Option<SshNegotiatedAlgorithms>>>,
 }
 
 impl client::Handler for HostKeyVerifier {
@@ -69,16 +75,31 @@ impl client::Handler for HostKeyVerifier {
         *self.observed.lock().await = Some(host_key);
         Ok(accepted)
     }
+
+    async fn kex_done(
+        &mut self,
+        _shared_secret: Option<&[u8]>,
+        names: &russh::Names,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        *self.negotiated.lock().await = Some(SshNegotiatedAlgorithms::from_names(names));
+        Ok(())
+    }
 }
 
 pub struct ClientSession {
     handle: client::Handle<HostKeyVerifier>,
     host_key: HostKeyInfo,
+    negotiated_algorithms: SshNegotiatedAlgorithms,
 }
 
 impl ClientSession {
     pub fn host_key(&self) -> &HostKeyInfo {
         &self.host_key
+    }
+
+    pub fn negotiated_algorithms(&self) -> &SshNegotiatedAlgorithms {
+        &self.negotiated_algorithms
     }
 
     pub async fn open_shell(&self, size: TerminalSize) -> Result<SshShell, SshError> {
@@ -113,7 +134,7 @@ impl ClientSession {
 
 pub async fn probe_host_key(endpoint: &SshEndpoint) -> Result<HostKeyInfo, SshError> {
     let cancellation = ConnectionCancellation::default();
-    let (handle, host_key) = connect(endpoint, None, &cancellation, &mut |_| {}).await?;
+    let (handle, host_key, _) = connect(endpoint, None, &cancellation, &mut |_| {}).await?;
     handle
         .disconnect(russh::Disconnect::ByApplication, "", "")
         .await?;
@@ -150,7 +171,7 @@ where
 {
     validate_username(username)?;
     let fingerprint = HostFingerprint::parse(expected_fingerprint)?;
-    let (mut handle, host_key) =
+    let (mut handle, host_key, negotiated_algorithms) =
         connect(endpoint, Some(fingerprint), cancellation, &mut on_stage).await?;
 
     on_stage(SshConnectionStage::Authenticating);
@@ -189,7 +210,11 @@ where
         return Err(SshError::AuthenticationRejected { method: "password" });
     }
 
-    Ok(ClientSession { handle, host_key })
+    Ok(ClientSession {
+        handle,
+        host_key,
+        negotiated_algorithms,
+    })
 }
 
 pub async fn authenticate_private_key(
@@ -203,7 +228,7 @@ pub async fn authenticate_private_key(
     let fingerprint = HostFingerprint::parse(expected_fingerprint)?;
     let private_key = keys::load_secret_key(private_key_path, passphrase)?;
     let cancellation = ConnectionCancellation::default();
-    let (mut handle, host_key) =
+    let (mut handle, host_key, negotiated_algorithms) =
         connect(endpoint, Some(fingerprint), &cancellation, &mut |_| {}).await?;
 
     let result = time::timeout(endpoint.operation_timeout(), async {
@@ -237,7 +262,11 @@ pub async fn authenticate_private_key(
         });
     }
 
-    Ok(ClientSession { handle, host_key })
+    Ok(ClientSession {
+        handle,
+        host_key,
+        negotiated_algorithms,
+    })
 }
 
 async fn connect(
@@ -245,7 +274,14 @@ async fn connect(
     expected: Option<HostFingerprint>,
     cancellation: &ConnectionCancellation,
     on_stage: &mut impl FnMut(SshConnectionStage),
-) -> Result<(client::Handle<HostKeyVerifier>, HostKeyInfo), SshError> {
+) -> Result<
+    (
+        client::Handle<HostKeyVerifier>,
+        HostKeyInfo,
+        SshNegotiatedAlgorithms,
+    ),
+    SshError,
+> {
     on_stage(SshConnectionStage::ResolvingDns);
     let lookup = tokio::select! {
         biased;
@@ -281,9 +317,11 @@ async fn connect(
 
     on_stage(SshConnectionStage::Handshaking);
     let observed = Arc::new(Mutex::new(None));
+    let negotiated = Arc::new(Mutex::new(None));
     let handler = HostKeyVerifier {
         expected: expected.clone(),
         observed: Arc::clone(&observed),
+        negotiated: Arc::clone(&negotiated),
     };
     let config = Arc::new(client_config(endpoint));
 
@@ -321,11 +359,21 @@ async fn connect(
         .await
         .clone()
         .ok_or(SshError::HostKeyUnavailable)?;
-    Ok((handle, host_key))
+    let negotiated_algorithms = negotiated
+        .lock()
+        .await
+        .clone()
+        .ok_or(SshError::NegotiatedAlgorithmsUnavailable)?;
+    Ok((handle, host_key, negotiated_algorithms))
 }
 
 fn client_config(endpoint: &SshEndpoint) -> client::Config {
     client::Config {
+        client_id: russh::SshId::Standard(Cow::Borrowed(concat!(
+            "SSH-2.0-BX_SSH_",
+            env!("CARGO_PKG_VERSION")
+        ))),
+        preferred: preferred_algorithms(),
         inactivity_timeout: None,
         keepalive_interval: Some(endpoint.operation_timeout()),
         keepalive_max: 3,
@@ -349,6 +397,22 @@ mod tests {
     use super::{client_config, ConnectionCancellation};
     use crate::SshEndpoint;
     use tokio::time;
+
+    #[test]
+    fn uses_the_product_ssh_identification() {
+        let endpoint = SshEndpoint::new("example.com", 22).unwrap();
+        let config = client_config(&endpoint);
+
+        match config.client_id {
+            russh::SshId::Standard(identifier) => {
+                assert_eq!(
+                    identifier,
+                    concat!("SSH-2.0-BX_SSH_", env!("CARGO_PKG_VERSION"))
+                );
+            }
+            russh::SshId::Raw(_) => panic!("product SSH identification must use standard framing"),
+        }
+    }
 
     #[tokio::test]
     async fn observes_cancellation_requested_before_waiting() {

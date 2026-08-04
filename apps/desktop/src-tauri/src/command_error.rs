@@ -115,6 +115,7 @@ impl From<SshError> for CommandError {
             SshError::TcpConnectFailed(_) => CommandErrorCode::TcpConnectFailed,
             SshError::HandshakeTimeout => CommandErrorCode::ConnectTimeout,
             SshError::HandshakeFailed(_) => CommandErrorCode::HandshakeFailed,
+            SshError::NegotiatedAlgorithmsUnavailable => CommandErrorCode::HandshakeFailed,
             SshError::ConnectionCancelled => CommandErrorCode::ConnectionCancelled,
             SshError::AuthenticationTimeout => CommandErrorCode::AuthenticationTimeout,
             SshError::AuthenticationFailed(_) => CommandErrorCode::TransportError,
