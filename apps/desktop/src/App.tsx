@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { TFunction } from "i18next";
@@ -12,13 +20,17 @@ import {
   Fingerprint,
   FolderPlus,
   FolderOpen,
+  History,
   MoveDown,
   MoveUp,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   PlugZap,
   RefreshCw,
   Search,
   ScanSearch,
+  Server,
   SquareTerminal,
   Star,
   Trash2,
@@ -71,6 +83,7 @@ type ConnectionState =
   | "failed";
 
 type WorkspaceMode = "terminal" | "sftp";
+type ConnectionListMode = "connections" | "recent";
 
 interface ConnectionTreeGroup {
   group: ConnectionGroup | null;
@@ -99,6 +112,11 @@ const fallbackViewport: TerminalViewport = {
 const MEMORY_USAGE_RECOVERY_DELAY_MS = 60_000;
 const EXIT_REQUESTED_EVENT = "app-exit-requested";
 const APP_MENU_ACTION_EVENT = "app-menu-action";
+const SIDEBAR_WIDTH_MIN = 200;
+const SIDEBAR_WIDTH_MAX = 420;
+const SIDEBAR_WIDTH_DEFAULT = 240;
+const SIDEBAR_WIDTH_STORAGE_KEY = "bx-ssh.sidebar-width";
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "bx-ssh.sidebar-collapsed";
 
 export function App() {
   const { t } = useTranslation();
@@ -115,6 +133,12 @@ export function App() {
     useState<ConnectionState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("terminal");
+  const [connectionListMode, setConnectionListMode] =
+    useState<ConnectionListMode>("connections");
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [sidebarCollapsed, setSidebarCollapsed] =
+    useState(readSidebarCollapsed);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
   const [sftpSessionId, setSftpSessionId] = useState<string | null>(null);
   const [sftpDirectory, setSftpDirectory] =
     useState<RemoteDirectoryListing | null>(null);
@@ -176,6 +200,10 @@ export function App() {
   const terminalRef = useRef<TerminalHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
   const loadedConnectionIdRef = useRef<string | null>(null);
+  const sidebarResizeRef = useRef<{
+    startX: number;
+    startWidth: number;
+  } | null>(null);
   const sftpSessionIdRef = useRef<string | null>(null);
   const inputQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resizeTimerRef = useRef<number | null>(null);
@@ -210,10 +238,83 @@ export function App() {
     () => searchConnections(connectionCatalog, connectionSearch),
     [connectionCatalog, connectionSearch],
   );
-  const recentConnections = useMemo(
-    () => getRecentConnections(connectionCatalog.connections, 3),
+  const allRecentConnections = useMemo(
+    () => getRecentConnections(connectionCatalog.connections),
     [connectionCatalog.connections],
   );
+  const recentConnections = useMemo(
+    () => allRecentConnections.slice(0, 3),
+    [allRecentConnections],
+  );
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SIDEBAR_WIDTH_STORAGE_KEY,
+        String(sidebarWidth),
+      );
+    } catch {
+      // The width remains active for the current process when storage is denied.
+    }
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SIDEBAR_COLLAPSED_STORAGE_KEY,
+        String(sidebarCollapsed),
+      );
+    } catch {
+      // The collapsed state remains active when storage is unavailable.
+    }
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!sidebarResizing) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = sidebarResizeRef.current;
+      if (!resize) return;
+      setSidebarWidth(
+        clampSidebarWidth(resize.startWidth + event.clientX - resize.startX),
+      );
+    };
+    const stopResizing = () => {
+      sidebarResizeRef.current = null;
+      setSidebarResizing(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResizing);
+    window.addEventListener("pointercancel", stopResizing);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("pointercancel", stopResizing);
+    };
+  }, [sidebarResizing]);
+
+  const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    sidebarResizeRef.current = {
+      startX: event.clientX,
+      startWidth: sidebarWidth,
+    };
+    setSidebarResizing(true);
+  };
+
+  const resizeSidebarByKeyboard = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) => {
+    let nextWidth: number | null = null;
+    if (event.key === "ArrowLeft") nextWidth = sidebarWidth - 16;
+    if (event.key === "ArrowRight") nextWidth = sidebarWidth + 16;
+    if (event.key === "Home") nextWidth = SIDEBAR_WIDTH_MIN;
+    if (event.key === "End") nextWidth = SIDEBAR_WIDTH_MAX;
+    if (nextWidth === null) return;
+    event.preventDefault();
+    setSidebarWidth(clampSidebarWidth(nextWidth));
+  };
 
   const enableLowMemoryUsage = useCallback(async () => {
     if (memoryUsageTimerRef.current !== null) {
@@ -1062,15 +1163,44 @@ export function App() {
         workspaceModeLocked={connected || busy}
       />
 
-      <div className="workspace">
-        <aside className="sidebar" aria-label={t("connection.sidebar")}>
+      <div
+        className={`workspace${sidebarResizing ? " is-resizing-sidebar" : ""}`}
+        style={{
+          gridTemplateColumns: `${sidebarCollapsed ? 32 : sidebarWidth}px minmax(0, 1fr)`,
+        }}
+      >
+        <aside
+          className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}
+          aria-label={t("connection.sidebar")}
+        >
+          <Tooltip title={t("connectionSidebar.expand")} placement="right">
+            <Button
+              className="sidebar-restore"
+              aria-label={t("connectionSidebar.expand")}
+              icon={<PanelLeftOpen size={15} />}
+              size="small"
+              type="text"
+              onClick={() => setSidebarCollapsed(false)}
+            />
+          </Tooltip>
           <div className="sidebar-heading">
             <h1>{t("connection.title")}</h1>
-            <span>
-              {workspaceMode === "terminal"
-                ? t("terminal.protocol")
-                : t("sftp.protocol")}
-            </span>
+            <div className="sidebar-heading-actions">
+              <span>
+                {workspaceMode === "terminal"
+                  ? t("terminal.protocol")
+                  : t("sftp.protocol")}
+              </span>
+              <Tooltip title={t("connectionSidebar.collapse")}>
+                <Button
+                  aria-label={t("connectionSidebar.collapse")}
+                  icon={<PanelLeftClose size={14} />}
+                  size="small"
+                  type="text"
+                  onClick={() => setSidebarCollapsed(true)}
+                />
+              </Tooltip>
+            </div>
           </div>
 
           <div className="connection-draft-actions">
@@ -1115,15 +1245,44 @@ export function App() {
             onChange={(event) => setConnectionSearch(event.target.value)}
           />
 
+          {!connectionSearch.trim() && (
+            <div role="group" aria-label={t("connectionListView.label")}>
+              <Segmented<ConnectionListMode>
+                className="connection-list-mode"
+                block
+                value={connectionListMode}
+                options={[
+                  {
+                    value: "connections",
+                    label: t("connectionListView.connections"),
+                    icon: <Server size={13} />,
+                  },
+                  {
+                    value: "recent",
+                    label: t("connectionListView.recent"),
+                    icon: <History size={13} />,
+                  },
+                ]}
+                onChange={setConnectionListMode}
+              />
+            </div>
+          )}
+
           <section
             className="connection-catalog"
-            aria-label={t("connectionCatalog.title")}
+            aria-label={
+              connectionListMode === "recent" && !connectionSearch.trim()
+                ? t("connectionListView.recent")
+                : t("connectionCatalog.title")
+            }
           >
             <div className="connection-catalog-heading">
               <span>
                 {connectionSearch.trim()
                   ? t("connectionSearch.title")
-                  : t("connectionCatalog.title")}
+                  : connectionListMode === "recent"
+                    ? t("connectionListView.recent")
+                    : t("connectionCatalog.title")}
               </span>
               {!connectionCatalogLoading && !connectionCatalogError && (
                 <span>
@@ -1131,7 +1290,9 @@ export function App() {
                     ? t("connectionSearch.resultCount", {
                         count: connectionSearchResults.length,
                       })
-                    : connectionCatalog.connections.length}
+                    : connectionListMode === "recent"
+                      ? allRecentConnections.length
+                      : connectionCatalog.connections.length}
                 </span>
               )}
             </div>
@@ -1168,6 +1329,80 @@ export function App() {
                   </Button>
                 }
               />
+            ) : connectionListMode === "recent" && !connectionSearch.trim() ? (
+              allRecentConnections.length > 0 ? (
+                <div className="connection-recent-list">
+                  {allRecentConnections.map((item) => (
+                    <article
+                      className="connection-recent-item"
+                      key={item.config.id}
+                      role="group"
+                      tabIndex={0}
+                      aria-label={t("connectionListView.openNamed", {
+                        name: item.config.name,
+                      })}
+                      onClick={() => void loadSavedConnection(item)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        void loadSavedConnection(item);
+                      }}
+                    >
+                      <span
+                        className="connection-catalog-color"
+                        style={
+                          item.config.color
+                            ? { backgroundColor: item.config.color }
+                            : undefined
+                        }
+                        aria-hidden="true"
+                      />
+                      <span className="connection-catalog-summary">
+                        <strong title={item.config.name}>
+                          {item.config.name}
+                        </strong>
+                        <span>
+                          {t("connectionWorkspace.recentMetadata", {
+                            count: item.successfulConnectionCount,
+                            time: formatConnectionTime(
+                              item.lastConnectedAt,
+                              language,
+                            ),
+                          })}
+                        </span>
+                      </span>
+                      <Button
+                        aria-label={t("connectionListView.openNamed", {
+                          name: item.config.name,
+                        })}
+                        icon={<PlugZap size={13} />}
+                        loading={connectionActionId === item.config.id}
+                        size="small"
+                        type="text"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void loadSavedConnection(item);
+                        }}
+                      />
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState
+                  className="connection-catalog-empty"
+                  icon={<History size={24} strokeWidth={1.4} />}
+                  title={t("connectionListView.emptyTitle")}
+                  description={t("connectionListView.emptyDescription")}
+                  action={
+                    <Button
+                      size="small"
+                      onClick={() => setConnectionListMode("connections")}
+                    >
+                      {t("connectionListView.showConnections")}
+                    </Button>
+                  }
+                />
+              )
             ) : connectionCatalog.connections.length === 0 &&
               connectionCatalog.groups.length === 0 ? (
               <EmptyState
@@ -1345,6 +1580,19 @@ export function App() {
                                 className="connection-catalog-item"
                                 key={item.config.id}
                                 data-tree-index={itemIndex}
+                                role="group"
+                                tabIndex={0}
+                                aria-label={t("connectionListView.openNamed", {
+                                  name: item.config.name,
+                                })}
+                                onDoubleClick={() =>
+                                  void loadSavedConnection(item)
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter") return;
+                                  event.preventDefault();
+                                  void loadSavedConnection(item);
+                                }}
                               >
                                 <span
                                   className="connection-catalog-color"
@@ -1367,6 +1615,22 @@ export function App() {
                                   </span>
                                 </div>
                                 <div className="connection-catalog-actions">
+                                  <Button
+                                    aria-label={t(
+                                      "connectionListView.openNamed",
+                                      { name: item.config.name },
+                                    )}
+                                    icon={<PlugZap size={13} />}
+                                    loading={
+                                      connectionActionId === item.config.id
+                                    }
+                                    size="small"
+                                    type="text"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void loadSavedConnection(item);
+                                    }}
+                                  />
                                   <Button
                                     aria-label={t(
                                       item.isFavorite
@@ -1395,9 +1659,10 @@ export function App() {
                                     }
                                     size="small"
                                     type="text"
-                                    onClick={() =>
-                                      void toggleFavoriteConnection(item)
-                                    }
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void toggleFavoriteConnection(item);
+                                    }}
                                   />
                                   <Button
                                     aria-label={t(
@@ -1413,9 +1678,14 @@ export function App() {
                                     icon={<MoveUp size={13} />}
                                     size="small"
                                     type="text"
-                                    onClick={() =>
-                                      void moveConnection(item, connections, -1)
-                                    }
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void moveConnection(
+                                        item,
+                                        connections,
+                                        -1,
+                                      );
+                                    }}
                                   />
                                   <Button
                                     aria-label={t(
@@ -1431,9 +1701,10 @@ export function App() {
                                     icon={<MoveDown size={13} />}
                                     size="small"
                                     type="text"
-                                    onClick={() =>
-                                      void moveConnection(item, connections, 1)
-                                    }
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void moveConnection(item, connections, 1);
+                                    }}
                                   />
                                   <Button
                                     aria-label={t(
@@ -1448,12 +1719,13 @@ export function App() {
                                     }
                                     size="small"
                                     type="text"
-                                    onClick={() =>
+                                    onClick={(event) => {
+                                      event.stopPropagation();
                                       void openSavedConnectionEditor(
                                         item,
                                         false,
-                                      )
-                                    }
+                                      );
+                                    }}
                                   />
                                   <Button
                                     aria-label={t(
@@ -1468,9 +1740,13 @@ export function App() {
                                     icon={<Copy size={14} />}
                                     size="small"
                                     type="text"
-                                    onClick={() =>
-                                      void openSavedConnectionEditor(item, true)
-                                    }
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void openSavedConnectionEditor(
+                                        item,
+                                        true,
+                                      );
+                                    }}
                                   />
                                   <Button
                                     aria-label={t(
@@ -1486,7 +1762,8 @@ export function App() {
                                     icon={<Trash2 size={14} />}
                                     size="small"
                                     type="text"
-                                    onClick={() => {
+                                    onClick={(event) => {
+                                      event.stopPropagation();
                                       setDeleteError(null);
                                       setDeleteTarget(item);
                                     }}
@@ -1659,6 +1936,26 @@ export function App() {
             />
           )}
         </aside>
+
+        {!sidebarCollapsed && (
+          <div
+            className="sidebar-resizer"
+            style={{ left: sidebarWidth - 3 }}
+            role="separator"
+            tabIndex={0}
+            aria-label={t("connectionSidebar.resize")}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_WIDTH_MIN}
+            aria-valuemax={SIDEBAR_WIDTH_MAX}
+            aria-valuenow={sidebarWidth}
+            aria-valuetext={t("connectionSidebar.widthValue", {
+              width: sidebarWidth,
+            })}
+            onDoubleClick={() => setSidebarWidth(SIDEBAR_WIDTH_DEFAULT)}
+            onKeyDown={resizeSidebarByKeyboard}
+            onPointerDown={startSidebarResize}
+          />
+        )}
 
         {workspaceMode === "terminal" ? (
           <main className="terminal-workspace">
@@ -2068,7 +2365,6 @@ function searchConnections(
 
 function getRecentConnections(
   connections: ConnectionListItem[],
-  limit: number,
 ): ConnectionListItem[] {
   return connections
     .filter((item) => item.lastConnectedAt !== null)
@@ -2077,8 +2373,45 @@ function getRecentConnections(
         (right.lastConnectedAt ?? 0) - (left.lastConnectedAt ?? 0) ||
         right.successfulConnectionCount - left.successfulConnectionCount ||
         left.config.name.localeCompare(right.config.name),
-    )
-    .slice(0, limit);
+    );
+}
+
+function formatConnectionTime(value: number | null, language: string): string {
+  if (value === null) return "—";
+  return new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function readSidebarWidth(): number {
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (stored === null) return SIDEBAR_WIDTH_DEFAULT;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed)
+      ? clampSidebarWidth(parsed)
+      : SIDEBAR_WIDTH_DEFAULT;
+  } catch {
+    return SIDEBAR_WIDTH_DEFAULT;
+  }
+}
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return (
+      window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function clampSidebarWidth(width: number): number {
+  return Math.min(
+    SIDEBAR_WIDTH_MAX,
+    Math.max(SIDEBAR_WIDTH_MIN, Math.round(width)),
+  );
 }
 
 function moveId(ids: string[], id: string, direction: -1 | 1): boolean {
