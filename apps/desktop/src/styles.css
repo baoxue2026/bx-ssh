@@ -366,7 +366,7 @@ select {
 
 .connection-draft-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 6px;
   margin-bottom: 10px;
 }
@@ -408,6 +408,80 @@ select {
   min-height: 0;
   overflow-y: auto;
   gap: 4px;
+}
+
+.connection-tree-group {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.connection-tree-group-heading {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px 7px minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  min-height: 26px;
+  gap: 5px;
+  padding-right: 4px;
+  color: var(--text-secondary);
+}
+
+.connection-tree-group-heading > .ant-btn,
+.connection-tree-group-actions .ant-btn {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.connection-tree-group-spacer {
+  width: 24px;
+}
+
+.connection-tree-group-color {
+  width: 7px;
+  height: 7px;
+  background: var(--border);
+  border-radius: 50%;
+}
+
+.connection-tree-group-heading strong {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-tree-group-count {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.connection-tree-group-actions {
+  position: absolute;
+  right: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 4px;
+  background: var(--surface);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.connection-tree-group-heading:hover .connection-tree-group-actions,
+.connection-tree-group-heading:focus-within .connection-tree-group-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.connection-tree-items {
+  display: grid;
+  gap: 4px;
+  padding-left: 9px;
 }
 
 .connection-catalog-item {
@@ -463,13 +537,25 @@ select {
 .connection-catalog-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  width: 72px;
+  flex-wrap: wrap;
 }
 
 .connection-catalog-actions .ant-btn {
-  width: 24px;
-  min-width: 24px;
-  height: 24px;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
   padding: 0;
+}
+
+.connection-catalog-actions .is-favorite {
+  color: #f5a623;
+}
+
+.connection-group-form {
+  display: grid;
+  gap: 14px;
 }
 
 .connection-catalog-empty {

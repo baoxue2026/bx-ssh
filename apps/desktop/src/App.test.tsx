@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -321,6 +322,195 @@ describe("App", { timeout: 15_000 }, () => {
     });
     expect(commandCalls("close_terminal_session")).toHaveLength(0);
     expect(commandCalls("close_sftp_session")).toHaveLength(0);
+  });
+
+  it("organizes connections once by group order with favorites first", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(organizedConnectionCatalog());
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    const production = await screen.findByRole("region", {
+      name: "生产环境",
+    });
+    const testing = screen.getByRole("region", { name: "测试环境" });
+    const ungrouped = screen.getByRole("region", { name: "未分组" });
+    expect(
+      production.compareDocumentPosition(testing) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(production).toHaveTextContent("收藏服务器");
+    expect(production).toHaveTextContent("普通服务器");
+    expect(production.textContent?.indexOf("收藏服务器")).toBeLessThan(
+      production.textContent?.indexOf("普通服务器") ?? 0,
+    );
+    expect(ungrouped).toHaveTextContent("遗失分组服务器");
+    expect(screen.getAllByText("遗失分组服务器")).toHaveLength(1);
+  });
+
+  it("persists favorite and group collapse actions through IPC", async () => {
+    let catalog = organizedConnectionCatalog();
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(catalog);
+      }
+      if (command === "set_connection_favorite") {
+        catalog = {
+          ...catalog,
+          connections: catalog.connections.map((item) =>
+            item.config.id === "connection-plain"
+              ? { ...item, isFavorite: true }
+              : item,
+          ),
+        };
+        return Promise.resolve(true);
+      }
+      if (command === "set_connection_group_collapsed") {
+        catalog = {
+          ...catalog,
+          groups: catalog.groups.map((group) =>
+            group.id === "group-production"
+              ? { ...group, isCollapsed: true }
+              : group,
+          ),
+        };
+        return Promise.resolve(true);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "收藏 普通服务器" }),
+    );
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("set_connection_favorite", {
+        id: "connection-plain",
+        isFavorite: true,
+      });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "折叠分组 生产环境" }));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "set_connection_group_collapsed",
+        { id: "group-production", isCollapsed: true },
+      );
+      expect(screen.queryByText("普通服务器")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "展开分组 生产环境" }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("persists connection ordering within its favorite section", async () => {
+    const baseCatalog = organizedConnectionCatalog();
+    const plainConnection = baseCatalog.connections.find(
+      (item) => item.config.id === "connection-plain",
+    );
+    if (!plainConnection) throw new Error("missing test connection");
+    const catalog = {
+      ...baseCatalog,
+      connections: [
+        ...baseCatalog.connections,
+        {
+          ...plainConnection,
+          config: {
+            ...plainConnection.config,
+            id: "connection-plain-second",
+            name: "备用服务器",
+          },
+          sortOrder: 1,
+        },
+      ],
+    };
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(catalog);
+      }
+      if (command === "reorder_connections") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "下移 普通服务器" }),
+    );
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("reorder_connections", {
+        groupId: "group-production",
+        ids: [
+          "connection-favorite",
+          "connection-plain-second",
+          "connection-plain",
+        ],
+      });
+    });
+  });
+
+  it("creates a colored connection group and persists group ordering", async () => {
+    let catalog = organizedConnectionCatalog();
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(catalog);
+      }
+      if (command === "save_connection_group") {
+        return Promise.resolve(null);
+      }
+      if (command === "reorder_connection_groups") {
+        catalog = {
+          ...catalog,
+          groups: [...catalog.groups].reverse(),
+        };
+        return Promise.resolve(null);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建分组" }));
+    const dialog = await screen.findByRole("dialog", { name: "新建连接分组" });
+    fireEvent.change(screen.getByLabelText("分组名称"), {
+      target: { value: "开发环境" },
+    });
+    fireEvent.change(screen.getByLabelText("分组颜色值"), {
+      target: { value: "#722ED1" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /确\s*定/ }));
+
+    await waitFor(() => {
+      expect(commandCalls("save_connection_group")).toHaveLength(1);
+    });
+    expect(commandCalls("save_connection_group")[0][1]).toEqual({
+      group: expect.objectContaining({
+        name: "开发环境",
+        color: "#722ED1",
+        sortOrder: 2,
+      }),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "下移分组 生产环境" }));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("reorder_connection_groups", {
+        ids: ["group-testing", "group-production"],
+      });
+    });
   });
 
   it("checks for a signed application update", async () => {
@@ -732,5 +922,69 @@ function savedConnectionDetails() {
         keepAliveSecs: 45,
       },
     },
+  };
+}
+
+function organizedConnectionCatalog() {
+  const connection = (
+    id: string,
+    name: string,
+    groupId: string | null,
+    isFavorite: boolean,
+    sortOrder: number,
+  ) => ({
+    ...savedConnectionDetails().connection,
+    config: {
+      ...savedConnectionDetails().connection.config,
+      id,
+      name,
+      groupId,
+    },
+    isFavorite,
+    sortOrder,
+  });
+  return {
+    groups: [
+      {
+        id: "group-testing",
+        name: "测试环境",
+        color: "#52C41A",
+        sortOrder: 1,
+        isCollapsed: false,
+        revision: 1,
+      },
+      {
+        id: "group-production",
+        name: "生产环境",
+        color: "#1677FF",
+        sortOrder: 0,
+        isCollapsed: false,
+        revision: 1,
+      },
+    ],
+    connections: [
+      connection(
+        "connection-plain",
+        "普通服务器",
+        "group-production",
+        false,
+        0,
+      ),
+      connection(
+        "connection-favorite",
+        "收藏服务器",
+        "group-production",
+        true,
+        8,
+      ),
+      connection("connection-testing", "测试服务器", "group-testing", false, 0),
+      connection(
+        "connection-orphan",
+        "遗失分组服务器",
+        "missing-group",
+        false,
+        0,
+      ),
+    ],
   };
 }

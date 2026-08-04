@@ -99,6 +99,64 @@ describe("IPC client", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("delete_connection", {
       id: "connection-1",
     });
+
+    const group = {
+      id: "group-production",
+      name: "Production",
+      color: "#1677ff",
+      sortOrder: 0,
+      isCollapsed: false,
+      revision: 1,
+    };
+    mocks.invoke.mockResolvedValue(null);
+    await expect(ipc.saveConnectionGroup(group)).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("save_connection_group", {
+      group,
+    });
+
+    mocks.invoke.mockResolvedValue(true);
+    await expect(
+      ipc.setConnectionGroupCollapsed("group-production", true),
+    ).resolves.toBe(true);
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "set_connection_group_collapsed",
+      { id: "group-production", isCollapsed: true },
+    );
+
+    await expect(ipc.setConnectionFavorite("connection-1", true)).resolves.toBe(
+      true,
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("set_connection_favorite", {
+      id: "connection-1",
+      isFavorite: true,
+    });
+
+    mocks.invoke.mockResolvedValue(null);
+    await expect(
+      ipc.reorderConnectionGroups(["group-production", "group-test"]),
+    ).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("reorder_connection_groups", {
+      ids: ["group-production", "group-test"],
+    });
+
+    await expect(
+      ipc.reorderConnections("group-production", [
+        "connection-2",
+        "connection-1",
+      ]),
+    ).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("reorder_connections", {
+      groupId: "group-production",
+      ids: ["connection-2", "connection-1"],
+    });
+
+    mocks.invoke.mockResolvedValue(true);
+    await expect(ipc.deleteConnectionGroup("group-production")).resolves.toBe(
+      true,
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("delete_connection_group", {
+      id: "group-production",
+    });
   });
 
   it("creates typed channels for the raw terminal command", async () => {

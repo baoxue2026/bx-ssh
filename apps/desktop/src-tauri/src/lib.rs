@@ -20,7 +20,9 @@ mod terminal;
 mod update;
 
 use connections::{
-    delete_connection, get_connection, list_connections, save_connection, ConnectionRepositoryState,
+    delete_connection, delete_connection_group, get_connection, list_connections,
+    reorder_connection_groups, reorder_connections, save_connection, save_connection_group,
+    set_connection_favorite, set_connection_group_collapsed, ConnectionRepositoryState,
 };
 #[cfg(any(debug_assertions, test))]
 use desktop_shell::AppMenuAction;
@@ -67,7 +69,13 @@ fn command_builder() -> Builder<tauri::Wry> {
             connections::list_connections,
             connections::get_connection,
             connections::save_connection,
-            connections::delete_connection
+            connections::delete_connection,
+            connections::save_connection_group,
+            connections::delete_connection_group,
+            connections::set_connection_group_collapsed,
+            connections::reorder_connection_groups,
+            connections::set_connection_favorite,
+            connections::reorder_connections
         ])
         .typ::<terminal::StartShellRequest>()
         .typ::<terminal::StartShellResponse>()
@@ -181,7 +189,13 @@ pub fn run() {
             list_connections,
             get_connection,
             save_connection,
-            delete_connection
+            delete_connection,
+            save_connection_group,
+            delete_connection_group,
+            set_connection_group_collapsed,
+            reorder_connection_groups,
+            set_connection_favorite,
+            reorder_connections
         ])
         .build(tauri::generate_context!())
         .expect("failed to build BX SSH")

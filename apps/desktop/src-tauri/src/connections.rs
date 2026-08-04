@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bx_contracts::{
-    ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionSettingsOverride,
+    ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionGroup,
+    ConnectionSettingsOverride,
 };
 use bx_persistence::{
     ConnectionRepository, EncryptedDatabase, PersistenceError, SystemCredentialStore,
@@ -61,6 +62,99 @@ pub(crate) async fn save_connection(
     let now_ms = current_timestamp_ms()?;
     run_query(state.inner().clone(), data_directory, move |repository| {
         repository.save_connection(&config, settings, now_ms)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn save_connection_group(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    group: ConnectionGroup,
+) -> Result<(), CommandError> {
+    let data_directory = app_data_directory(&app)?;
+    let now_ms = current_timestamp_ms()?;
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        repository.save_group(&group, now_ms)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn delete_connection_group(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    id: String,
+) -> Result<bool, CommandError> {
+    let data_directory = app_data_directory(&app)?;
+    let now_ms = current_timestamp_ms()?;
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        repository.delete_group(&id, now_ms)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn set_connection_group_collapsed(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    id: String,
+    is_collapsed: bool,
+) -> Result<bool, CommandError> {
+    let data_directory = app_data_directory(&app)?;
+    let now_ms = current_timestamp_ms()?;
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        repository.set_group_collapsed(&id, is_collapsed, now_ms)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn reorder_connection_groups(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    ids: Vec<String>,
+) -> Result<(), CommandError> {
+    let data_directory = app_data_directory(&app)?;
+    let now_ms = current_timestamp_ms()?;
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        repository.reorder_groups(&ids, now_ms)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn set_connection_favorite(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    id: String,
+    is_favorite: bool,
+) -> Result<bool, CommandError> {
+    let data_directory = app_data_directory(&app)?;
+    let now_ms = current_timestamp_ms()?;
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        repository.set_connection_favorite(&id, is_favorite, now_ms)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn reorder_connections(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    group_id: Option<String>,
+    ids: Vec<String>,
+) -> Result<(), CommandError> {
+    let data_directory = app_data_directory(&app)?;
+    let now_ms = current_timestamp_ms()?;
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        repository.reorder_connections(group_id.as_deref(), &ids, now_ms)
     })
     .await
 }
