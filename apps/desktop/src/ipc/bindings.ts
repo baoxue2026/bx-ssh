@@ -65,17 +65,17 @@ async listSftpDirectory(sessionId: string, path: string) : Promise<Result<Remote
     else return { status: "error", error: e  as any };
 }
 },
-async uploadSftpFile(sessionId: string, localPath: string, remotePath: string) : Promise<Result<TransferSummary, CommandError>> {
+async uploadSftpFile(sessionId: string, localPath: string, remotePath: string, language: string) : Promise<Result<TransferSummary, CommandError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("upload_sftp_file", { sessionId, localPath, remotePath }) };
+    return { status: "ok", data: await TAURI_INVOKE("upload_sftp_file", { sessionId, localPath, remotePath, language }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async downloadSftpFile(sessionId: string, remotePath: string, localPath: string) : Promise<Result<TransferSummary, CommandError>> {
+async downloadSftpFile(sessionId: string, remotePath: string, localPath: string, language: string) : Promise<Result<TransferSummary, CommandError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("download_sftp_file", { sessionId, remotePath, localPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("download_sftp_file", { sessionId, remotePath, localPath, language }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

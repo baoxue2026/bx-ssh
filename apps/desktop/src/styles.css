@@ -1,10 +1,50 @@
 :root {
-  color: #1f2328;
-  background: #eef1f4;
-  font-family:
-    Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-ui:
+    "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC",
+    "Noto Sans CJK SC", sans-serif;
+  --font-mono:
+    "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono",
+    "Noto Sans Mono CJK SC", monospace;
+  --app-bg: #eef1f4;
+  --surface: #ffffff;
+  --surface-subtle: #f2f5f8;
+  --border: #d8dde4;
+  --border-subtle: #edf0f3;
+  --text: #252a31;
+  --text-secondary: #596675;
+  --text-muted: #798491;
+  --hover: #edf5ff;
+  --fingerprint-bg: #f4f8fd;
+  --fingerprint-border: #cbdcf0;
+  --fingerprint-text: #315a86;
+  --status-bg: #e8ecf0;
+  --status-border: #d1d7de;
+  --status-divider: #c6ccd4;
+  color: var(--text);
+  color-scheme: light;
+  background: var(--app-bg);
+  font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+:root[data-theme="dark"] {
+  --app-bg: #171a1f;
+  --surface: #1f2329;
+  --surface-subtle: #252a31;
+  --border: #343a43;
+  --border-subtle: #2d333b;
+  --text: #d5dae1;
+  --text-secondary: #aeb6c1;
+  --text-muted: #7f8996;
+  --hover: #263647;
+  --fingerprint-bg: #222c37;
+  --fingerprint-border: #3b536d;
+  --fingerprint-text: #c3d5e8;
+  --status-bg: #242930;
+  --status-border: #363d46;
+  --status-divider: #464d57;
+  color-scheme: dark;
 }
 
 * {
@@ -34,7 +74,7 @@ select {
   height: 100%;
   min-width: 800px;
   min-height: 560px;
-  background: #eef1f4;
+  background: var(--app-bg);
 }
 
 .topbar {
@@ -111,7 +151,7 @@ select {
 
 .app-menu-item-label kbd {
   color: #7a8491;
-  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-family: var(--font-ui);
   font-size: 10px;
 }
 
@@ -215,7 +255,7 @@ select {
 
 .update-message {
   margin: 4px 0 0;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .update-details,
@@ -228,7 +268,7 @@ select {
   max-height: 180px;
   margin: 0;
   overflow: auto;
-  color: #475569;
+  color: var(--text-secondary);
   white-space: pre-wrap;
 }
 
@@ -236,12 +276,12 @@ select {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  color: #475569;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
 .update-progress > span {
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -291,8 +331,8 @@ select {
   min-width: 0;
   padding: 16px 14px;
   overflow-y: auto;
-  background: #ffffff;
-  border-right: 1px solid #d8dde4;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
 }
 
 .sidebar-heading {
@@ -304,7 +344,7 @@ select {
 
 .sidebar-heading h1 {
   margin: 0;
-  color: #252a31;
+  color: var(--text);
   font-size: 14px;
   font-weight: 650;
   line-height: 20px;
@@ -312,7 +352,7 @@ select {
 }
 
 .sidebar-heading span {
-  color: #8a939f;
+  color: var(--text-muted);
   font-size: 10px;
   letter-spacing: 0;
 }
@@ -340,7 +380,7 @@ select {
 }
 
 .field-label {
-  color: #4f5966;
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 550;
   line-height: 16px;
@@ -355,28 +395,28 @@ select {
   min-width: 0;
   gap: 8px;
   padding: 10px;
-  background: #f4f8fd;
-  border: 1px solid #cbdcf0;
+  background: var(--fingerprint-bg);
+  border: 1px solid var(--fingerprint-border);
   border-radius: 6px;
 }
 
 .fingerprint-title {
   gap: 6px;
-  color: #315a86;
+  color: var(--fingerprint-text);
   font-size: 11px;
   font-weight: 650;
 }
 
 .fingerprint-panel code {
   overflow-wrap: anywhere;
-  color: #27384a;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  color: var(--fingerprint-text);
+  font-family: var(--font-mono);
   font-size: 10px;
   line-height: 16px;
 }
 
 .fingerprint-panel .ant-checkbox-wrapper {
-  color: #3f4a57;
+  color: var(--fingerprint-text);
   font-size: 11px;
 }
 
@@ -419,7 +459,7 @@ select {
   overflow: hidden;
   max-width: 65%;
   color: #98a3af;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -445,7 +485,7 @@ select {
 .sftp-workspace {
   min-width: 0;
   min-height: 0;
-  background: #f7f9fb;
+  background: var(--app-bg);
 }
 
 .sftp-pane {
@@ -463,8 +503,8 @@ select {
   justify-content: space-between;
   gap: 12px;
   padding: 0 12px;
-  background: #ffffff;
-  border-bottom: 1px solid #d8dde4;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .sftp-path-controls {
@@ -491,14 +531,14 @@ select {
   position: relative;
   min-height: 0;
   overflow: auto;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .sftp-list table {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  color: #303741;
+  color: var(--text);
   font-size: 11px;
 }
 
@@ -508,9 +548,9 @@ select {
   top: 0;
   height: 30px;
   padding: 0 10px;
-  color: #6b7582;
-  background: #f2f5f8;
-  border-bottom: 1px solid #d8dde4;
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border);
   font-weight: 600;
   text-align: left;
 }
@@ -535,7 +575,7 @@ select {
   height: 32px;
   overflow: hidden;
   padding: 0 10px;
-  border-bottom: 1px solid #edf0f3;
+  border-bottom: 1px solid var(--border-subtle);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -547,7 +587,7 @@ select {
 
 .sftp-list tbody tr:hover,
 .sftp-list tbody tr:focus {
-  background: #edf5ff;
+  background: var(--hover);
 }
 
 .sftp-file-name {
@@ -574,7 +614,7 @@ select {
   place-content: center;
   justify-items: center;
   gap: 8px;
-  color: #798491;
+  color: var(--text-muted);
   pointer-events: none;
 }
 
@@ -586,8 +626,8 @@ select {
   display: grid;
   gap: 7px;
   padding: 9px 12px;
-  background: #f2f5f8;
-  border-top: 1px solid #d8dde4;
+  background: var(--surface-subtle);
+  border-top: 1px solid var(--border);
 }
 
 .sftp-transfer-row {
@@ -595,7 +635,7 @@ select {
   grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr) 82px;
   align-items: center;
   gap: 7px;
-  color: #687482;
+  color: var(--text-secondary);
 }
 
 .sftp-transfer-result {
@@ -610,8 +650,8 @@ select {
 
 .sftp-transfer-result code {
   overflow: hidden;
-  color: #596675;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -637,9 +677,9 @@ select {
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  color: #505a66;
-  background: #e8ecf0;
-  border-top: 1px solid #d1d7de;
+  color: var(--text-secondary);
+  background: var(--status-bg);
+  border-top: 1px solid var(--status-border);
   font-size: 10px;
   user-select: none;
 }
@@ -659,7 +699,7 @@ select {
 .status-divider {
   width: 1px;
   height: 10px;
-  background: #c6ccd4;
+  background: var(--status-divider);
 }
 
 @media (max-width: 900px) {
@@ -670,79 +710,5 @@ select {
   .topbar-session > span:nth-child(2),
   .version {
     display: none;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  :root,
-  .app-shell {
-    color: #e5e7eb;
-    background: #171a1f;
-  }
-
-  .sidebar {
-    background: #1f2329;
-    border-right-color: #343a43;
-  }
-
-  .sidebar-heading h1,
-  .field-label {
-    color: #d3d8df;
-  }
-
-  .sidebar-heading span {
-    color: #7f8996;
-  }
-
-  .fingerprint-panel {
-    background: #222c37;
-    border-color: #3b536d;
-  }
-
-  .fingerprint-title,
-  .fingerprint-panel code,
-  .fingerprint-panel .ant-checkbox-wrapper {
-    color: #c3d5e8;
-  }
-
-  .sftp-workspace,
-  .sftp-list,
-  .sftp-toolbar {
-    background: #1f2329;
-  }
-
-  .sftp-toolbar,
-  .sftp-list th,
-  .sftp-transfer-panel {
-    border-color: #343a43;
-  }
-
-  .sftp-list table {
-    color: #d5dae1;
-  }
-
-  .sftp-list th,
-  .sftp-transfer-panel {
-    color: #aeb6c1;
-    background: #252a31;
-  }
-
-  .sftp-list td {
-    border-bottom-color: #2d333b;
-  }
-
-  .sftp-list tbody tr:hover,
-  .sftp-list tbody tr:focus {
-    background: #263647;
-  }
-
-  .statusbar {
-    color: #bbc2cb;
-    background: #242930;
-    border-top-color: #363d46;
-  }
-
-  .status-divider {
-    background: #464d57;
   }
 }

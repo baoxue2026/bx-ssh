@@ -8,6 +8,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import i18n from "./i18n";
+import { UiPreferencesProvider } from "./ui/preferences";
 
 const mocks = vi.hoisted(() => ({
   channels: [] as Array<{ onmessage(message: unknown): void }>,
@@ -74,7 +76,13 @@ vi.mock("./components/TerminalPane", async () => {
 });
 
 describe("App", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    localStorage.clear();
+    delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.themeMode;
+    document.documentElement.style.colorScheme = "";
+    document.documentElement.lang = "zh-CN";
+    await i18n.changeLanguage("zh-CN");
     mocks.channels.length = 0;
     mocks.eventListeners.clear();
     mocks.invoke.mockReset();
@@ -107,7 +115,7 @@ describe("App", () => {
   });
 
   it("renders the terminal validation workspace", async () => {
-    render(<App />);
+    renderApp();
 
     expect(
       screen.getByRole("heading", { name: "连接验证" }),
@@ -141,7 +149,7 @@ describe("App", () => {
       }
       return Promise.resolve();
     });
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
 
@@ -151,7 +159,7 @@ describe("App", () => {
   });
 
   it("controls the native window from the custom title bar", async () => {
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: "最小化窗口" }));
     fireEvent.click(screen.getByRole("button", { name: "最大化窗口" }));
@@ -174,7 +182,7 @@ describe("App", () => {
       }
       return Promise.resolve();
     });
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: "工作区" }));
     fireEvent.click(
@@ -205,7 +213,7 @@ describe("App", () => {
   });
 
   it("requires an explicit host fingerprint probe", async () => {
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
 
@@ -219,7 +227,7 @@ describe("App", () => {
   });
 
   it("requires confirmation before exiting with active work", async () => {
-    render(<App />);
+    renderApp();
 
     await waitFor(() =>
       expect(mocks.eventListeners.get("app-exit-requested")).toHaveLength(1),
@@ -236,7 +244,10 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "当前有 2 个活动会话、1 个进行中的文件传输。退出将终止传输并断开所有连接。",
+        (text) =>
+          text.startsWith("当前有 2 个活动会话") &&
+          text.includes("1 个进行中的文件传输") &&
+          text.endsWith("退出将终止传输并断开所有连接。"),
       ),
     ).toBeInTheDocument();
 
@@ -283,7 +294,7 @@ describe("App", () => {
       }
       return Promise.resolve();
     });
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
     await screen.findByText("信任此主机指纹");
@@ -377,7 +388,7 @@ describe("App", () => {
       }
       return Promise.resolve();
     });
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getByText("SFTP"));
     fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
@@ -402,3 +413,11 @@ describe("App", () => {
     });
   });
 });
+
+function renderApp() {
+  return render(
+    <UiPreferencesProvider>
+      <App />
+    </UiPreferencesProvider>,
+  );
+}

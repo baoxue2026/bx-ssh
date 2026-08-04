@@ -106,14 +106,24 @@ export const ipc = {
   ) => unwrap(() => commands.startPasswordSftp(request)),
   listSftpDirectory: (sessionId: string, path: string) =>
     unwrap(() => commands.listSftpDirectory(sessionId, path)),
-  uploadSftpFile: (sessionId: string, localPath: string, remotePath: string) =>
-    unwrap(() => commands.uploadSftpFile(sessionId, localPath, remotePath)),
+  uploadSftpFile: (
+    sessionId: string,
+    localPath: string,
+    remotePath: string,
+    language: string,
+  ) =>
+    unwrap(() =>
+      commands.uploadSftpFile(sessionId, localPath, remotePath, language),
+    ),
   downloadSftpFile: (
     sessionId: string,
     remotePath: string,
     localPath: string,
+    language: string,
   ) =>
-    unwrap(() => commands.downloadSftpFile(sessionId, remotePath, localPath)),
+    unwrap(() =>
+      commands.downloadSftpFile(sessionId, remotePath, localPath, language),
+    ),
   hashRemoteSftpFile: (sessionId: string, remotePath: string) =>
     unwrap(() => commands.hashRemoteSftpFile(sessionId, remotePath)),
   closeSftpSession: (sessionId: string) =>

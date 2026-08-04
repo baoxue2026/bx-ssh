@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Dropdown, Tooltip, type MenuProps } from "antd";
 import { Check, Copy, Minus, Square, SquareTerminal, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { useUiPreferences } from "../ui/preferenceContext";
 import { UpdateControl } from "./UpdateControl";
 
 type WorkspaceMode = "terminal" | "sftp";
@@ -29,6 +31,8 @@ export function WindowTitleBar({
   workspaceMode,
   workspaceModeLocked,
 }: WindowTitleBarProps) {
+  const { t } = useTranslation();
+  const { language, setLanguage, setThemeMode, themeMode } = useUiPreferences();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -88,7 +92,7 @@ export function WindowTitleBar({
     items: [
       {
         key: "exit",
-        label: menuLabel("退出", "Ctrl+Shift+Q"),
+        label: menuLabel(t("menu.exit"), "Ctrl+Shift+Q"),
         onClick: close,
       },
     ],
@@ -99,15 +103,62 @@ export function WindowTitleBar({
         key: "terminal",
         disabled: workspaceModeLocked,
         icon: workspaceMode === "terminal" ? <Check size={13} /> : null,
-        label: menuLabel("终端", "Ctrl+1"),
+        label: menuLabel(t("common.terminal"), "Ctrl+1"),
         onClick: () => onWorkspaceModeChange("terminal"),
       },
       {
         key: "sftp",
         disabled: workspaceModeLocked,
         icon: workspaceMode === "sftp" ? <Check size={13} /> : null,
-        label: menuLabel("SFTP", "Ctrl+2"),
+        label: menuLabel(t("common.sftp"), "Ctrl+2"),
         onClick: () => onWorkspaceModeChange("sftp"),
+      },
+    ],
+  };
+  const appearanceMenu: MenuProps = {
+    items: [
+      {
+        type: "group",
+        label: t("appearance.theme"),
+        children: [
+          {
+            key: "theme-system",
+            icon: themeMode === "system" ? <Check size={13} /> : null,
+            label: t("appearance.themeSystem"),
+            onClick: () => setThemeMode("system"),
+          },
+          {
+            key: "theme-light",
+            icon: themeMode === "light" ? <Check size={13} /> : null,
+            label: t("appearance.themeLight"),
+            onClick: () => setThemeMode("light"),
+          },
+          {
+            key: "theme-dark",
+            icon: themeMode === "dark" ? <Check size={13} /> : null,
+            label: t("appearance.themeDark"),
+            onClick: () => setThemeMode("dark"),
+          },
+        ],
+      },
+      { type: "divider" },
+      {
+        type: "group",
+        label: t("appearance.language"),
+        children: [
+          {
+            key: "language-zh-CN",
+            icon: language === "zh-CN" ? <Check size={13} /> : null,
+            label: t("appearance.languageChinese"),
+            onClick: () => setLanguage("zh-CN"),
+          },
+          {
+            key: "language-en-US",
+            icon: language === "en-US" ? <Check size={13} /> : null,
+            label: t("appearance.languageEnglish"),
+            onClick: () => setLanguage("en-US"),
+          },
+        ],
       },
     ],
   };
@@ -115,7 +166,7 @@ export function WindowTitleBar({
     items: [
       {
         key: "check-updates",
-        label: menuLabel("检查更新", "Ctrl+Shift+U"),
+        label: menuLabel(t("menu.checkUpdates"), "Ctrl+Shift+U"),
         onClick: onCheckForUpdates,
       },
     ],
@@ -131,10 +182,11 @@ export function WindowTitleBar({
           <span>{appName}</span>
         </div>
       </div>
-      <nav className="app-menu-bar" aria-label="应用菜单">
-        <AppMenu label="文件" menu={fileMenu} />
-        <AppMenu label="工作区" menu={workspaceMenu} />
-        <AppMenu label="帮助" menu={helpMenu} />
+      <nav className="app-menu-bar" aria-label={t("menu.application")}>
+        <AppMenu label={t("menu.file")} menu={fileMenu} />
+        <AppMenu label={t("menu.workspace")} menu={workspaceMenu} />
+        <AppMenu label={t("menu.appearance")} menu={appearanceMenu} />
+        <AppMenu label={t("menu.help")} menu={helpMenu} />
       </nav>
       <div className="titlebar-drag-region" data-tauri-drag-region>
         <div className="topbar-session">
@@ -146,32 +198,39 @@ export function WindowTitleBar({
 
       <div className="titlebar-actions">
         <UpdateControl currentVersion={version} requestId={updateRequestId} />
-        <div className="window-controls" aria-label="窗口控制">
-          <Tooltip title="最小化" mouseEnterDelay={0.5}>
+        <div className="window-controls" aria-label={t("window.controls")}>
+          <Tooltip title={t("window.minimize")} mouseEnterDelay={0.5}>
             <button
               className="window-control"
               type="button"
-              aria-label="最小化窗口"
+              aria-label={t("window.minimizeWindow")}
               onClick={minimize}
             >
               <Minus size={14} />
             </button>
           </Tooltip>
-          <Tooltip title={maximized ? "还原" : "最大化"} mouseEnterDelay={0.5}>
+          <Tooltip
+            title={maximized ? t("window.restore") : t("window.maximize")}
+            mouseEnterDelay={0.5}
+          >
             <button
               className="window-control"
               type="button"
-              aria-label={maximized ? "还原窗口" : "最大化窗口"}
+              aria-label={
+                maximized
+                  ? t("window.restoreWindow")
+                  : t("window.maximizeWindow")
+              }
               onClick={toggleMaximize}
             >
               {maximized ? <Copy size={12} /> : <Square size={12} />}
             </button>
           </Tooltip>
-          <Tooltip title="关闭" mouseEnterDelay={0.5}>
+          <Tooltip title={t("window.close")} mouseEnterDelay={0.5}>
             <button
               className="window-control window-control-close"
               type="button"
-              aria-label="关闭窗口"
+              aria-label={t("window.closeWindow")}
               onClick={close}
             >
               <X size={15} />
@@ -193,11 +252,11 @@ function AppMenu({ label, menu }: { label: string; menu: MenuProps }) {
   );
 }
 
-function menuLabel(label: string, shortcut: string) {
+function menuLabel(label: string, shortcut?: string) {
   return (
     <span className="app-menu-item-label">
       <span>{label}</span>
-      <kbd>{shortcut}</kbd>
+      {shortcut && <kbd>{shortcut}</kbd>}
     </span>
   );
 }

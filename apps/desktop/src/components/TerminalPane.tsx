@@ -1,7 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { useTranslation } from "react-i18next";
 import "@xterm/xterm/css/xterm.css";
+import { MONOSPACE_FONT_STACK } from "../ui/fontStacks";
 
 export interface TerminalViewport {
   columns: number;
@@ -25,6 +27,7 @@ interface TerminalPaneProps {
 
 export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
   function TerminalPane({ connected, onData, onResize }, ref) {
+    const { t } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -52,8 +55,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         convertEol: false,
         cursorBlink: true,
         cursorStyle: "block",
-        fontFamily:
-          '"Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
+        fontFamily: MONOSPACE_FONT_STACK,
         fontSize: 13,
         lineHeight: 1.15,
         scrollback: 100_000,
@@ -139,7 +141,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         ref={containerRef}
         className="terminal-container"
         role="application"
-        aria-label="SSH 终端"
+        aria-label={t("terminal.aria")}
       />
     );
   },

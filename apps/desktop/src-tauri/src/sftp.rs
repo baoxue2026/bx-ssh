@@ -115,6 +115,7 @@ pub(crate) async fn upload_sftp_file(
     session_id: String,
     local_path: String,
     remote_path: String,
+    language: String,
 ) -> Result<TransferSummary, CommandError> {
     let session = manager.get(&session_id).await?;
     let _transfer_guard = manager.activity.track_transfer();
@@ -124,7 +125,11 @@ pub(crate) async fn upload_sftp_file(
         .upload_file(PathBuf::from(local_path), &remote_path)
         .await?;
     drop(session);
-    notify_transfer_completed(&app, "上传完成", &remote_path);
+    notify_transfer_completed(
+        &app,
+        localized_transfer_title(&language, "上传完成", "Upload complete"),
+        &remote_path,
+    );
     Ok(summary)
 }
 
@@ -136,6 +141,7 @@ pub(crate) async fn download_sftp_file(
     session_id: String,
     remote_path: String,
     local_path: String,
+    language: String,
 ) -> Result<TransferSummary, CommandError> {
     let session = manager.get(&session_id).await?;
     let _transfer_guard = manager.activity.track_transfer();
@@ -145,7 +151,11 @@ pub(crate) async fn download_sftp_file(
         .download_file(&remote_path, PathBuf::from(local_path))
         .await?;
     drop(session);
-    notify_transfer_completed(&app, "下载完成", &remote_path);
+    notify_transfer_completed(
+        &app,
+        localized_transfer_title(&language, "下载完成", "Download complete"),
+        &remote_path,
+    );
     Ok(summary)
 }
 
@@ -159,6 +169,14 @@ fn notify_transfer_completed(app: &AppHandle, title: &str, path: &str) {
     }
 
     let _ = app.notification().builder().title(title).body(path).show();
+}
+
+fn localized_transfer_title<'a>(language: &str, chinese: &'a str, english: &'a str) -> &'a str {
+    if language.eq_ignore_ascii_case("zh-CN") || language.eq_ignore_ascii_case("zh") {
+        chinese
+    } else {
+        english
+    }
 }
 
 #[tauri::command]
@@ -237,7 +255,7 @@ impl SftpSessionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::SftpSessionManager;
+    use super::{localized_transfer_title, SftpSessionManager};
     use crate::command_error::CommandErrorCode;
 
     #[tokio::test]
@@ -248,5 +266,17 @@ mod tests {
         };
 
         assert_eq!(error.code, CommandErrorCode::SessionNotFound);
+    }
+
+    #[test]
+    fn localizes_background_transfer_notifications() {
+        assert_eq!(
+            localized_transfer_title("zh-CN", "上传完成", "Upload complete"),
+            "上传完成"
+        );
+        assert_eq!(
+            localized_transfer_title("en-US", "上传完成", "Upload complete"),
+            "Upload complete"
+        );
     }
 }

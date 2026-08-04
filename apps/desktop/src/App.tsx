@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { TFunction } from "i18next";
 import {
   Alert,
   Button,
@@ -20,6 +21,7 @@ import {
   SquareTerminal,
   Unplug,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   TerminalPane,
   type TerminalHandle,
@@ -36,6 +38,7 @@ import type {
   RemoteDirectoryListing,
   TerminalEvent,
 } from "./ipc/bindings";
+import { useUiPreferences } from "./ui/preferenceContext";
 
 type ConnectionState =
   | "idle"
@@ -66,6 +69,8 @@ const EXIT_REQUESTED_EVENT = "app-exit-requested";
 const APP_MENU_ACTION_EVENT = "app-menu-action";
 
 export function App() {
+  const { t } = useTranslation();
+  const { language } = useUiPreferences();
   const [appInfo, setAppInfo] = useState(fallbackInfo);
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(22);
@@ -98,6 +103,10 @@ export function App() {
   const exitCancelButtonRef = useRef<HTMLButtonElement>(null);
   const connectionStateRef = useRef<ConnectionState>("idle");
   const hostKeyRef = useRef<HostKeyInfo | null>(null);
+  const localizedErrorText = useCallback(
+    (error: unknown) => errorText(error, t("errors.sshOperation")),
+    [t],
+  );
 
   const enableLowMemoryUsage = useCallback(async () => {
     if (memoryUsageTimerRef.current !== null) {
@@ -282,7 +291,7 @@ export function App() {
       setHostKey(result);
       setConnectionState("ready");
     } catch (error) {
-      setErrorMessage(errorText(error));
+      setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
     }
   };
@@ -323,7 +332,7 @@ export function App() {
             sessionIdRef.current === activeSessionId &&
             !isClosedSessionError(error)
           ) {
-            setErrorMessage(errorText(error));
+            setErrorMessage(localizedErrorText(error));
             setConnectionState("failed");
           }
         });
@@ -410,7 +419,7 @@ export function App() {
         return;
       }
       setPassword("");
-      setErrorMessage(errorText(error));
+      setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
     }
   };
@@ -453,7 +462,7 @@ export function App() {
         return;
       }
       setPassword("");
-      setErrorMessage(errorText(error));
+      setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
     }
   };
@@ -486,7 +495,7 @@ export function App() {
         void enableLowMemoryUsage();
       }
     } catch (error) {
-      setErrorMessage(errorText(error));
+      setErrorMessage(localizedErrorText(error));
       if (workspaceMode === "terminal") {
         sessionIdRef.current = null;
         setSessionId(null);
@@ -511,7 +520,7 @@ export function App() {
       const directory = await ipc.listSftpDirectory(activeSessionId, path);
       setSftpDirectory(directory);
     } catch (error) {
-      setErrorMessage(errorText(error));
+      setErrorMessage(localizedErrorText(error));
     } finally {
       setSftpBusy(false);
     }
@@ -535,6 +544,7 @@ export function App() {
         activeSessionId,
         localPath,
         remotePath,
+        language,
       );
       setSftpTransferResult({ direction: "upload", summary });
       const directory = await ipc.listSftpDirectory(
@@ -543,7 +553,7 @@ export function App() {
       );
       setSftpDirectory(directory);
     } catch (error) {
-      setErrorMessage(errorText(error));
+      setErrorMessage(localizedErrorText(error));
     } finally {
       setSftpBusy(false);
     }
@@ -563,46 +573,53 @@ export function App() {
         activeSessionId,
         remotePath,
         localPath,
+        language,
       );
       setSftpTransferResult({ direction: "download", summary });
     } catch (error) {
-      setErrorMessage(errorText(error));
+      setErrorMessage(localizedErrorText(error));
     } finally {
       setSftpBusy(false);
     }
   };
 
-  const writeTerminal = useCallback((data: string) => {
-    const activeSessionId = sessionIdRef.current;
-    if (!activeSessionId) {
-      return;
-    }
-
-    inputQueueRef.current = inputQueueRef.current
-      .then(() => ipc.writeTerminal(activeSessionId, data))
-      .catch((error: unknown) => {
-        setErrorMessage(errorText(error));
-        setConnectionState("failed");
-      });
-  }, []);
-
-  const resizeTerminal = useCallback((viewport: TerminalViewport) => {
-    if (resizeTimerRef.current !== null) {
-      window.clearTimeout(resizeTimerRef.current);
-    }
-
-    resizeTimerRef.current = window.setTimeout(() => {
+  const writeTerminal = useCallback(
+    (data: string) => {
       const activeSessionId = sessionIdRef.current;
       if (!activeSessionId) {
         return;
       }
 
-      void ipc.resizeTerminal(activeSessionId, viewport).catch((error) => {
-        setErrorMessage(errorText(error));
-        setConnectionState("failed");
-      });
-    }, 80);
-  }, []);
+      inputQueueRef.current = inputQueueRef.current
+        .then(() => ipc.writeTerminal(activeSessionId, data))
+        .catch((error: unknown) => {
+          setErrorMessage(localizedErrorText(error));
+          setConnectionState("failed");
+        });
+    },
+    [localizedErrorText],
+  );
+
+  const resizeTerminal = useCallback(
+    (viewport: TerminalViewport) => {
+      if (resizeTimerRef.current !== null) {
+        window.clearTimeout(resizeTimerRef.current);
+      }
+
+      resizeTimerRef.current = window.setTimeout(() => {
+        const activeSessionId = sessionIdRef.current;
+        if (!activeSessionId) {
+          return;
+        }
+
+        void ipc.resizeTerminal(activeSessionId, viewport).catch((error) => {
+          setErrorMessage(localizedErrorText(error));
+          setConnectionState("failed");
+        });
+      }, 80);
+    },
+    [localizedErrorText],
+  );
 
   const confirmAppExit = async () => {
     setExitPending(true);
@@ -612,7 +629,7 @@ export function App() {
       setExitImpact(null);
     } catch (error) {
       setExitPending(false);
-      setExitError(errorText(error));
+      setExitError(localizedErrorText(error));
     }
   };
 
@@ -633,7 +650,7 @@ export function App() {
     <div className="app-shell">
       <WindowTitleBar
         appName={appInfo.name}
-        connectionLabel={connectionLabel(connectionState)}
+        connectionLabel={connectionLabel(connectionState, t)}
         connectionState={connectionState}
         onCheckForUpdates={() => setUpdateRequestId((current) => current + 1)}
         onWorkspaceModeChange={selectWorkspaceMode}
@@ -644,11 +661,13 @@ export function App() {
       />
 
       <div className="workspace">
-        <aside className="sidebar" aria-label="SSH 连接验证">
+        <aside className="sidebar" aria-label={t("connection.sidebar")}>
           <div className="sidebar-heading">
-            <h1>连接验证</h1>
+            <h1>{t("connection.title")}</h1>
             <span>
-              {workspaceMode === "terminal" ? "SSH / PTY" : "SFTP v3"}
+              {workspaceMode === "terminal"
+                ? t("terminal.protocol")
+                : t("sftp.protocol")}
             </span>
           </div>
 
@@ -660,12 +679,12 @@ export function App() {
             options={[
               {
                 value: "terminal",
-                label: "终端",
+                label: t("common.terminal"),
                 icon: <SquareTerminal size={14} />,
               },
               {
                 value: "sftp",
-                label: "SFTP",
+                label: t("common.sftp"),
                 icon: <FolderOpen size={14} />,
               },
             ]}
@@ -678,7 +697,7 @@ export function App() {
 
           <div className="connection-form">
             <label className="field-group">
-              <span className="field-label">主机</span>
+              <span className="field-label">{t("connection.host")}</span>
               <Input
                 value={host}
                 disabled={connected || busy}
@@ -686,12 +705,12 @@ export function App() {
                   setHost(event.target.value);
                   resetHostTrust();
                 }}
-                placeholder="hostname 或 IP"
+                placeholder={t("connection.hostPlaceholder")}
               />
             </label>
 
             <label className="field-group">
-              <span className="field-label">端口</span>
+              <span className="field-label">{t("connection.port")}</span>
               <InputNumber
                 value={port}
                 min={1}
@@ -712,11 +731,14 @@ export function App() {
               onClick={() => void probeHost()}
               block
             >
-              检测主机指纹
+              {t("connection.probeFingerprint")}
             </Button>
 
             {hostKey && (
-              <section className="fingerprint-panel" aria-label="主机指纹">
+              <section
+                className="fingerprint-panel"
+                aria-label={t("connection.fingerprint")}
+              >
                 <div className="fingerprint-title">
                   <Fingerprint size={14} />
                   <span>{hostKey.algorithm}</span>
@@ -727,13 +749,13 @@ export function App() {
                   disabled={connected || busy}
                   onChange={(event) => setTrusted(event.target.checked)}
                 >
-                  信任此主机指纹
+                  {t("connection.trustFingerprint")}
                 </Checkbox>
               </section>
             )}
 
             <label className="field-group">
-              <span className="field-label">用户名</span>
+              <span className="field-label">{t("connection.username")}</span>
               <Input
                 value={username}
                 autoComplete="username"
@@ -743,7 +765,7 @@ export function App() {
             </label>
 
             <label className="field-group">
-              <span className="field-label">密码</span>
+              <span className="field-label">{t("connection.password")}</span>
               <Input.Password
                 value={password}
                 autoComplete="current-password"
@@ -764,7 +786,7 @@ export function App() {
                 onClick={() => void connectCurrentMode()}
                 block
               >
-                连接
+                {t("connection.connect")}
               </Button>
             ) : (
               <Button
@@ -775,7 +797,7 @@ export function App() {
                 onClick={() => void closeSession()}
                 block
               >
-                断开
+                {t("connection.disconnect")}
               </Button>
             )}
           </div>
@@ -785,7 +807,11 @@ export function App() {
               className="connection-error"
               type="error"
               showIcon
-              message={connected ? "操作失败" : "连接失败"}
+              message={
+                connected
+                  ? t("connection.errorConnected")
+                  : t("connection.errorDisconnected")
+              }
               description={errorMessage}
               closable
               onClose={() => setErrorMessage(null)}
@@ -798,10 +824,12 @@ export function App() {
             <div className="terminal-toolbar">
               <div className="terminal-title">
                 <SquareTerminal size={14} />
-                <span>终端</span>
+                <span>{t("common.terminal")}</span>
               </div>
               <span className="endpoint-label">
-                {connected ? `${username}@${host}:${port}` : "未连接"}
+                {connected
+                  ? `${username}@${host}:${port}`
+                  : t("sftp.notConnected")}
               </span>
             </div>
             <div className="terminal-stage">
@@ -814,7 +842,7 @@ export function App() {
               {!connected && (
                 <div className="terminal-empty" aria-live="polite">
                   <SquareTerminal size={36} strokeWidth={1.3} />
-                  <span>{connectionLabel(connectionState)}</span>
+                  <span>{connectionLabel(connectionState, t)}</span>
                 </div>
               )}
             </div>
@@ -843,10 +871,16 @@ export function App() {
             size={7}
             fill="currentColor"
           />
-          {connectionLabel(connectionState)}
+          {connectionLabel(connectionState, t)}
         </span>
         <span className="status-spacer" />
-        <Tooltip title={workspaceMode === "terminal" ? "终端类型" : "协议版本"}>
+        <Tooltip
+          title={
+            workspaceMode === "terminal"
+              ? t("terminal.type")
+              : t("sftp.protocolVersion")
+          }
+        >
           <span>
             {workspaceMode === "terminal" ? "xterm-256color" : "SFTP v3"}
           </span>
@@ -857,7 +891,7 @@ export function App() {
 
       <Modal
         open={exitImpact !== null}
-        title="退出 BX SSH？"
+        title={t("exit.title")}
         closable={false}
         keyboard={!exitPending}
         maskClosable={false}
@@ -873,7 +907,7 @@ export function App() {
               disabled={exitPending}
               onClick={cancelAppExit}
             >
-              取消
+              {t("common.cancel")}
             </Button>
             <Button
               type="primary"
@@ -881,18 +915,18 @@ export function App() {
               loading={exitPending}
               onClick={() => void confirmAppExit()}
             >
-              退出并断开
+              {t("exit.confirm")}
             </Button>
           </>
         }
         onCancel={cancelAppExit}
       >
-        {exitImpact && <p>{exitImpactMessage(exitImpact)}</p>}
+        {exitImpact && <p>{exitImpactMessage(exitImpact, t, language)}</p>}
         {exitError && (
           <Alert
             type="error"
             showIcon
-            message="退出失败"
+            message={t("exit.error")}
             description={exitError}
           />
         )}
@@ -901,41 +935,50 @@ export function App() {
   );
 }
 
-function exitImpactMessage(impact: ExitImpact): string {
+function exitImpactMessage(
+  impact: ExitImpact,
+  t: TFunction,
+  language: string,
+): string {
   const activity = [];
   if (impact.activeSessions > 0) {
-    activity.push(`${impact.activeSessions} 个活动会话`);
+    activity.push(t("exit.activeSessions", { count: impact.activeSessions }));
   }
   if (impact.activeTransfers > 0) {
-    activity.push(`${impact.activeTransfers} 个进行中的文件传输`);
+    activity.push(t("exit.activeTransfers", { count: impact.activeTransfers }));
   }
 
-  return `当前有 ${activity.join("、")}。退出将终止传输并断开所有连接。`;
+  return t("exit.message", {
+    activity: new Intl.ListFormat(language, {
+      style: "long",
+      type: "conjunction",
+    }).format(activity),
+  });
 }
 
-function connectionLabel(state: ConnectionState): string {
+function connectionLabel(state: ConnectionState, t: TFunction): string {
   const labels: Record<ConnectionState, string> = {
-    idle: "就绪",
-    probing: "正在检测指纹",
-    ready: "等待连接",
-    connecting: "正在连接",
-    connected: "已连接",
-    closing: "正在断开",
-    disconnected: "已断开",
-    failed: "连接失败",
+    idle: t("status.idle"),
+    probing: t("status.probing"),
+    ready: t("status.ready"),
+    connecting: t("status.connecting"),
+    connected: t("status.connected"),
+    closing: t("status.closing"),
+    disconnected: t("status.disconnected"),
+    failed: t("status.failed"),
   };
 
   return labels[state];
 }
 
-function errorText(error: unknown): string {
+function errorText(error: unknown, fallback: string): string {
   if (typeof error === "string") {
     return error;
   }
   if (error instanceof Error) {
     return error.message;
   }
-  return "SSH 操作失败";
+  return fallback;
 }
 
 function isClosedSessionError(error: unknown): boolean {
