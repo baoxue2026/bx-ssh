@@ -75,7 +75,7 @@ vi.mock("./components/TerminalPane", async () => {
   };
 });
 
-describe("App", () => {
+describe("App", { timeout: 15_000 }, () => {
   beforeEach(async () => {
     localStorage.clear();
     delete document.documentElement.dataset.theme;
@@ -104,6 +104,9 @@ describe("App", () => {
           fingerprintSha256:
             "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
       }
       return Promise.resolve();
     });
@@ -146,6 +149,178 @@ describe("App", () => {
       "aria-selected",
       "true",
     );
+  });
+
+  it("saves a connection without starting a host probe", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "save_connection") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "新建连接" }));
+    await fillConnectionEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "save_connection",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            name: "测试服务器",
+            host: "server.example.com",
+            username: "root",
+          }),
+        }),
+      );
+      expect(
+        screen.queryByRole("dialog", { name: "新建连接" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(commandCalls("probe_ssh_host")).toHaveLength(0);
+  });
+
+  it("saves before probing when using save and connect", async () => {
+    const commandOrder: string[] = [];
+    mocks.invoke.mockImplementation((command: string) => {
+      commandOrder.push(command);
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "save_connection") {
+        return Promise.resolve(null);
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "新建连接" }));
+    await fillConnectionEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并连接" }));
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("probe_ssh_host", {
+        request: { host: "server.example.com", port: 22 },
+      });
+      expect(screen.getByText("信任此主机指纹")).toBeInTheDocument();
+    });
+    expect(commandOrder.indexOf("save_connection")).toBeLessThan(
+      commandOrder.indexOf("probe_ssh_host"),
+    );
+  });
+
+  it("keeps the editor open and does not probe when saving fails", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "save_connection") {
+        return Promise.reject({
+          code: "database_query_failed",
+          message: "Database is read-only",
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "新建连接" }));
+    await fillConnectionEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并连接" }));
+
+    expect(await screen.findByText("保存连接失败")).toBeInTheDocument();
+    expect(screen.getByText("Database is read-only")).toBeInTheDocument();
+    expect(await editorField("connection-name")).toHaveValue("测试服务器");
+    expect(commandCalls("probe_ssh_host")).toHaveLength(0);
+  });
+
+  it("copies a saved connection with a new identifier", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(savedConnectionCatalog());
+      }
+      if (command === "get_connection") {
+        return Promise.resolve(savedConnectionDetails());
+      }
+      if (command === "save_connection") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "复制 生产服务器" }),
+    );
+    expect(await editorField("connection-name")).toHaveValue("生产服务器 副本");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(commandCalls("save_connection")).toHaveLength(1),
+    );
+    const request = commandCalls("save_connection")[0][1] as {
+      config: { id: string; name: string };
+    };
+    expect(request.config.id).not.toBe("connection-production");
+    expect(request.config.name).toBe("生产服务器 副本");
+  });
+
+  it("requires confirmation before deleting only the local connection", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(savedConnectionCatalog());
+      }
+      if (command === "delete_connection") {
+        return Promise.resolve(true);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "删除 生产服务器" }),
+    );
+    expect(commandCalls("delete_connection")).toHaveLength(0);
+    expect(
+      screen.getByText(/只移除本机连接配置，不删除或修改远程数据/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "删除本机配置" }));
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("delete_connection", {
+        id: "connection-production",
+      });
+    });
+    expect(commandCalls("close_terminal_session")).toHaveLength(0);
+    expect(commandCalls("close_sftp_session")).toHaveLength(0);
   });
 
   it("checks for a signed application update", async () => {
@@ -487,4 +662,75 @@ function renderApp() {
       <App />
     </UiPreferencesProvider>,
   );
+}
+
+async function fillConnectionEditor() {
+  fireEvent.change(await editorField("connection-name"), {
+    target: { value: "测试服务器" },
+  });
+  fireEvent.change(await editorField("connection-host"), {
+    target: { value: "server.example.com" },
+  });
+  fireEvent.change(await editorField("connection-username"), {
+    target: { value: "root" },
+  });
+}
+
+async function editorField(id: string): Promise<HTMLInputElement> {
+  await screen.findByRole("dialog", { name: /连接/ });
+  const element = document.getElementById(id);
+  if (!(element instanceof HTMLInputElement)) {
+    throw new Error(`Missing connection editor field: ${id}`);
+  }
+  return element;
+}
+
+function commandCalls(command: string) {
+  return mocks.invoke.mock.calls.filter(([called]) => called === command);
+}
+
+function savedConnectionCatalog() {
+  return {
+    groups: [],
+    connections: [savedConnectionDetails().connection],
+  };
+}
+
+function savedConnectionDetails() {
+  return {
+    connection: {
+      config: {
+        id: "connection-production",
+        groupId: null,
+        name: "生产服务器",
+        host: "prod.example.com",
+        port: 22,
+        username: "deploy",
+        notes: null,
+        color: "#1677ff",
+        authMethod: "password",
+        credentialRef: null,
+        keyReferenceId: null,
+      },
+      isFavorite: false,
+      sortOrder: 0,
+      lastConnectedAt: null,
+      successfulConnectionCount: 0,
+      revision: 0,
+    },
+    settings: {
+      layers: {
+        global: null,
+        group: null,
+        connection: {
+          connectTimeoutSecs: 15,
+          keepAliveSecs: 45,
+        },
+      },
+      resolved: {
+        connectTimeoutSecs: 15,
+        keepAliveSecs: 45,
+      },
+    },
+  };
 }

@@ -19,7 +19,9 @@ mod sftp;
 mod terminal;
 mod update;
 
-use connections::{get_connection, list_connections, ConnectionRepositoryState};
+use connections::{
+    delete_connection, get_connection, list_connections, save_connection, ConnectionRepositoryState,
+};
 #[cfg(any(debug_assertions, test))]
 use desktop_shell::AppMenuAction;
 use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
@@ -63,7 +65,9 @@ fn command_builder() -> Builder<tauri::Wry> {
             update::check_for_update,
             lifecycle::confirm_app_exit,
             connections::list_connections,
-            connections::get_connection
+            connections::get_connection,
+            connections::save_connection,
+            connections::delete_connection
         ])
         .typ::<terminal::StartShellRequest>()
         .typ::<terminal::StartShellResponse>()
@@ -175,7 +179,9 @@ pub fn run() {
             install_update,
             confirm_app_exit,
             list_connections,
-            get_connection
+            get_connection,
+            save_connection,
+            delete_connection
         ])
         .build(tauri::generate_context!())
         .expect("failed to build BX SSH")

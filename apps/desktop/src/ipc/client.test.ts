@@ -68,6 +68,39 @@ describe("IPC client", () => {
     });
   });
 
+  it("uses generated connection mutation commands", async () => {
+    const config = {
+      id: "connection-1",
+      groupId: null,
+      name: "Production",
+      host: "example.com",
+      port: 22,
+      username: "deploy",
+      notes: null,
+      color: null,
+      authMethod: "password" as const,
+      credentialRef: null,
+      keyReferenceId: null,
+    };
+    const settings = {
+      connectTimeoutSecs: 12,
+      keepAliveSecs: null,
+    };
+    mocks.invoke.mockResolvedValue(null);
+
+    await expect(ipc.saveConnection(config, settings)).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("save_connection", {
+      config,
+      settings,
+    });
+
+    mocks.invoke.mockResolvedValue(true);
+    await expect(ipc.deleteConnection("connection-1")).resolves.toBe(true);
+    expect(mocks.invoke).toHaveBeenCalledWith("delete_connection", {
+      id: "connection-1",
+    });
+  });
+
   it("creates typed channels for the raw terminal command", async () => {
     const onEvent = vi.fn();
     const onOutput = vi.fn();

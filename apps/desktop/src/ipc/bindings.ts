@@ -136,6 +136,22 @@ async getConnection(id: string) : Promise<Result<ConnectionDetails | null, Comma
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async saveConnection(config: ConnectionConfig, settings: ConnectionSettingsOverride) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_connection", { config, settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteConnection(id: string) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_connection", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

@@ -150,6 +150,7 @@ describe("ConnectionEditorDialog", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     const result = onSubmit.mock.calls[0][0] as ConnectionEditorValue;
+    expect(onSubmit.mock.calls[0][1]).toBe("save");
     expect(result).toMatchObject({
       config: {
         authMethod: "password",
@@ -169,6 +170,31 @@ describe("ConnectionEditorDialog", () => {
     });
     expect(result.config.id).toMatch(/^connection-/);
     expect(hasPropertyNamed(result, "password")).toBe(false);
+  });
+
+  it("distinguishes save and save-and-connect actions", async () => {
+    const onSubmit = vi.fn();
+    renderEditor({ onSubmit });
+    fillRequiredBasicFields();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并连接" }));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ name: "测试连接" }),
+        }),
+        "saveAndConnect",
+      ),
+    );
+  });
+
+  it("locks dialog actions while a save is pending", () => {
+    renderEditor({ pending: true });
+
+    expect(screen.getByRole("button", { name: /取\s*消/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存并连接" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
   });
 });
 

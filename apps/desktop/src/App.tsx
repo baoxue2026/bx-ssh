@@ -5,18 +5,22 @@ import type { TFunction } from "i18next";
 import { Button, Checkbox, Input, InputNumber, Segmented, Tooltip } from "antd";
 import {
   Circle,
+  Copy,
   FilePenLine,
   Fingerprint,
   FolderOpen,
   Plus,
   PlugZap,
+  RefreshCw,
   ScanSearch,
   SquareTerminal,
+  Trash2,
   Unplug,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   ConnectionEditorDialog,
+  type ConnectionEditorIntent,
   type ConnectionEditorValue,
 } from "./components/ConnectionEditorDialog";
 import {
@@ -24,13 +28,21 @@ import {
   type TerminalHandle,
   type TerminalViewport,
 } from "./components/TerminalPane";
-import { AppDialog, EmptyState, FeedbackNotice } from "./components/Feedback";
+import {
+  AppDialog,
+  EmptyState,
+  FeedbackNotice,
+  LoadingState,
+} from "./components/Feedback";
 import { SftpPane, type SftpTransferResult } from "./components/SftpPane";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { IpcError, ipc } from "./ipc/client";
 import type {
   AppInfo,
   AppMenuAction,
+  ConnectionCatalog,
+  ConnectionDetails,
+  ConnectionListItem,
   ExitImpact,
   HostKeyInfo,
   RemoteDirectoryListing,
@@ -91,11 +103,38 @@ export function App() {
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
   const [updateRequestId, setUpdateRequestId] = useState(0);
-  const [connectionDraft, setConnectionDraft] =
-    useState<ConnectionEditorValue | null>(null);
+  const [connectionCatalog, setConnectionCatalog] = useState<ConnectionCatalog>(
+    { groups: [], connections: [] },
+  );
+  const [connectionCatalogLoading, setConnectionCatalogLoading] =
+    useState(true);
+  const [connectionCatalogError, setConnectionCatalogError] = useState<
+    string | null
+  >(null);
+  const [connectionCatalogNotice, setConnectionCatalogNotice] = useState<
+    string | null
+  >(null);
+  const [connectionActionId, setConnectionActionId] = useState<string | null>(
+    null,
+  );
+  const [loadedConnectionId, setLoadedConnectionId] = useState<string | null>(
+    null,
+  );
   const [connectionEditorInitialValue, setConnectionEditorInitialValue] =
     useState<ConnectionEditorValue>();
   const [connectionEditorOpen, setConnectionEditorOpen] = useState(false);
+  const [connectionEditorPending, setConnectionEditorPending] = useState(false);
+  const [connectionEditorError, setConnectionEditorError] = useState<
+    string | null
+  >(null);
+  const [connectionEditorNotice, setConnectionEditorNotice] = useState<
+    string | undefined
+  >();
+  const [deleteTarget, setDeleteTarget] = useState<ConnectionListItem | null>(
+    null,
+  );
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const terminalRef = useRef<TerminalHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
   const sftpSessionIdRef = useRef<string | null>(null);
@@ -110,6 +149,19 @@ export function App() {
     (error: unknown) => errorText(error, t("errors.sshOperation")),
     [t],
   );
+
+  const loadConnectionCatalog = useCallback(async () => {
+    setConnectionCatalogLoading(true);
+    setConnectionCatalogError(null);
+    try {
+      const catalog = await ipc.listConnections();
+      setConnectionCatalog(catalog ?? { groups: [], connections: [] });
+    } catch (error) {
+      setConnectionCatalogError(localizedErrorText(error));
+    } finally {
+      setConnectionCatalogLoading(false);
+    }
+  }, [localizedErrorText]);
 
   const enableLowMemoryUsage = useCallback(async () => {
     if (memoryUsageTimerRef.current !== null) {
@@ -159,6 +211,33 @@ export function App() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    void ipc
+      .listConnections()
+      .then((catalog) => {
+        if (active) {
+          setConnectionCatalog(catalog ?? { groups: [], connections: [] });
+          setConnectionCatalogError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setConnectionCatalogError(localizedErrorText(error));
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setConnectionCatalogLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [localizedErrorText]);
 
   useEffect(() => {
     let disposed = false;
@@ -283,19 +362,114 @@ export function App() {
     setConnectionState("idle");
   }, []);
 
-  const probeHost = async () => {
+  const probeHost = async (targetHost = host, targetPort = port) => {
     setConnectionState("probing");
     setErrorMessage(null);
     setHostKey(null);
     setTrusted(false);
 
     try {
-      const result = await ipc.probeSshHost({ host, port });
+      const result = await ipc.probeSshHost({
+        host: targetHost,
+        port: targetPort,
+      });
       setHostKey(result);
       setConnectionState("ready");
     } catch (error) {
       setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
+    }
+  };
+
+  const openNewConnectionEditor = () => {
+    setConnectionEditorInitialValue(undefined);
+    setConnectionEditorError(null);
+    setConnectionEditorNotice(undefined);
+    setConnectionEditorOpen(true);
+  };
+
+  const openSavedConnectionEditor = async (
+    item: ConnectionListItem,
+    duplicate: boolean,
+  ) => {
+    setConnectionActionId(item.config.id);
+    setConnectionCatalogError(null);
+    setConnectionCatalogNotice(null);
+    try {
+      const details = await ipc.getConnection(item.config.id);
+      if (!details) {
+        throw new Error(t("connectionCatalog.notFound"));
+      }
+      setConnectionEditorInitialValue(
+        duplicate
+          ? duplicateConnection(details, t)
+          : connectionDetailsToEditorValue(details),
+      );
+      setConnectionEditorError(null);
+      setConnectionEditorNotice(
+        !duplicate &&
+          loadedConnectionId === item.config.id &&
+          (connected || sessionId !== null || sftpSessionId !== null)
+          ? t("connectionCatalog.editActiveNotice")
+          : undefined,
+      );
+      setConnectionEditorOpen(true);
+    } catch (error) {
+      setConnectionCatalogError(localizedErrorText(error));
+    } finally {
+      setConnectionActionId(null);
+    }
+  };
+
+  const saveConnection = async (
+    value: ConnectionEditorValue,
+    intent: ConnectionEditorIntent,
+  ) => {
+    setConnectionEditorPending(true);
+    setConnectionEditorError(null);
+    try {
+      await ipc.saveConnection(value.config, value.settings);
+      await loadConnectionCatalog();
+      setConnectionCatalogNotice(
+        t("connectionCatalog.saved", {
+          name: value.config.name,
+        }),
+      );
+      setConnectionEditorOpen(false);
+
+      if (intent === "saveAndConnect") {
+        setHost(value.config.host);
+        setPort(value.config.port);
+        setUsername(value.config.username);
+        setPassword("");
+        setLoadedConnectionId(value.config.id);
+        resetHostTrust();
+        await probeHost(value.config.host, value.config.port);
+      }
+    } catch (error) {
+      setConnectionEditorError(localizedErrorText(error));
+    } finally {
+      setConnectionEditorPending(false);
+    }
+  };
+
+  const confirmDeleteConnection = async () => {
+    if (!deleteTarget) {
+      return;
+    }
+    setDeletePending(true);
+    setDeleteError(null);
+    try {
+      await ipc.deleteConnection(deleteTarget.config.id);
+      await loadConnectionCatalog();
+      setConnectionCatalogNotice(
+        t("connectionCatalog.deleted", { name: deleteTarget.config.name }),
+      );
+      setDeleteTarget(null);
+    } catch (error) {
+      setDeleteError(localizedErrorText(error));
+    } finally {
+      setDeletePending(false);
     }
   };
 
@@ -677,35 +851,142 @@ export function App() {
           <div className="connection-draft-actions">
             <Button
               icon={<Plus size={15} />}
-              onClick={() => {
-                setConnectionEditorInitialValue(undefined);
-                setConnectionEditorOpen(true);
-              }}
+              onClick={openNewConnectionEditor}
               block
             >
               {t("connectionEditor.actions.newConnection")}
             </Button>
-            {connectionDraft && (
-              <Button
-                aria-label={t("connectionEditor.actions.editDraft")}
-                icon={<FilePenLine size={15} />}
-                onClick={() => {
-                  setConnectionEditorInitialValue(connectionDraft);
-                  setConnectionEditorOpen(true);
-                }}
-              />
-            )}
+            <Button
+              aria-label={t("connectionCatalog.refresh")}
+              icon={<RefreshCw size={15} />}
+              loading={connectionCatalogLoading}
+              onClick={() => void loadConnectionCatalog()}
+            />
           </div>
 
-          {connectionDraft && (
+          {connectionCatalogNotice && (
             <FeedbackNotice
               className="connection-draft-notice"
-              message={connectionDraft.config.name}
-              description={t("connectionEditor.draftReady")}
+              closable
+              message={connectionCatalogNotice}
+              onClose={() => setConnectionCatalogNotice(null)}
               showIcon
-              type="info"
+              type="success"
             />
           )}
+
+          <section
+            className="connection-catalog"
+            aria-label={t("connectionCatalog.title")}
+          >
+            <div className="connection-catalog-heading">
+              <span>{t("connectionCatalog.title")}</span>
+              {!connectionCatalogLoading && !connectionCatalogError && (
+                <span>{connectionCatalog.connections.length}</span>
+              )}
+            </div>
+
+            {connectionCatalogLoading ? (
+              <LoadingState label={t("connectionCatalog.loading")} />
+            ) : connectionCatalogError ? (
+              <FeedbackNotice
+                message={t("connectionCatalog.loadFailed")}
+                description={connectionCatalogError}
+                showIcon
+                type="error"
+                action={
+                  <Button
+                    size="small"
+                    onClick={() => void loadConnectionCatalog()}
+                  >
+                    {t("connectionCatalog.retry")}
+                  </Button>
+                }
+              />
+            ) : connectionCatalog.connections.length === 0 ? (
+              <EmptyState
+                className="connection-catalog-empty"
+                title={t("connectionCatalog.empty")}
+                description={t("connectionCatalog.emptyDescription")}
+              />
+            ) : (
+              <div className="connection-catalog-list">
+                {connectionCatalog.connections.map((item) => (
+                  <article
+                    className="connection-catalog-item"
+                    key={item.config.id}
+                  >
+                    <span
+                      className="connection-catalog-color"
+                      style={
+                        item.config.color
+                          ? { backgroundColor: item.config.color }
+                          : undefined
+                      }
+                      aria-hidden="true"
+                    />
+                    <div className="connection-catalog-summary">
+                      <strong title={item.config.name}>
+                        {item.config.name}
+                      </strong>
+                      <span
+                        title={`${item.config.username}@${item.config.host}:${item.config.port}`}
+                      >
+                        {item.config.username}@{item.config.host}:
+                        {item.config.port}
+                      </span>
+                    </div>
+                    <div className="connection-catalog-actions">
+                      <Tooltip title={t("connectionCatalog.edit")}>
+                        <Button
+                          aria-label={t("connectionCatalog.editNamed", {
+                            name: item.config.name,
+                          })}
+                          icon={<FilePenLine size={14} />}
+                          loading={connectionActionId === item.config.id}
+                          size="small"
+                          type="text"
+                          onClick={() =>
+                            void openSavedConnectionEditor(item, false)
+                          }
+                        />
+                      </Tooltip>
+                      <Tooltip title={t("connectionCatalog.copy")}>
+                        <Button
+                          aria-label={t("connectionCatalog.copyNamed", {
+                            name: item.config.name,
+                          })}
+                          disabled={connectionActionId === item.config.id}
+                          icon={<Copy size={14} />}
+                          size="small"
+                          type="text"
+                          onClick={() =>
+                            void openSavedConnectionEditor(item, true)
+                          }
+                        />
+                      </Tooltip>
+                      <Tooltip title={t("connectionCatalog.delete")}>
+                        <Button
+                          aria-label={t("connectionCatalog.deleteNamed", {
+                            name: item.config.name,
+                          })}
+                          danger
+                          disabled={connectionActionId === item.config.id}
+                          icon={<Trash2 size={14} />}
+                          size="small"
+                          type="text"
+                          onClick={() => {
+                            setDeleteError(null);
+                            setDeleteTarget(item);
+                          }}
+                        />
+                      </Tooltip>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
 
           <Segmented<WorkspaceMode>
             className="workspace-mode"
@@ -967,17 +1248,117 @@ export function App() {
         )}
       </AppDialog>
 
-      <ConnectionEditorDialog
-        initialValue={connectionEditorInitialValue}
-        open={connectionEditorOpen}
-        onClose={() => setConnectionEditorOpen(false)}
-        onSubmit={(value) => {
-          setConnectionDraft(value);
-          setConnectionEditorOpen(false);
+      <AppDialog
+        open={deleteTarget !== null}
+        title={t("connectionCatalog.deleteTitle")}
+        closable={!deletePending}
+        closeOnEscape={!deletePending}
+        maskClosable={false}
+        onClose={() => {
+          if (!deletePending) {
+            setDeleteTarget(null);
+            setDeleteError(null);
+          }
         }}
+        description={
+          deleteTarget
+            ? t("connectionCatalog.deleteDescription", {
+                name: deleteTarget.config.name,
+              })
+            : undefined
+        }
+        footer={
+          <>
+            <Button
+              disabled={deletePending}
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteError(null);
+              }}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              aria-label={t("connectionCatalog.confirmDelete")}
+              danger
+              loading={deletePending}
+              type="primary"
+              onClick={() => void confirmDeleteConnection()}
+            >
+              {t("connectionCatalog.confirmDelete")}
+            </Button>
+          </>
+        }
+      >
+        <FeedbackNotice
+          message={t("connectionCatalog.remoteDataSafe")}
+          showIcon
+          type="warning"
+        />
+        {deleteError && (
+          <FeedbackNotice
+            className="connection-delete-error"
+            message={t("connectionCatalog.deleteFailed")}
+            description={deleteError}
+            showIcon
+            type="error"
+          />
+        )}
+      </AppDialog>
+
+      <ConnectionEditorDialog
+        errorMessage={connectionEditorError ?? undefined}
+        groupOptions={connectionCatalog.groups.map((group) => ({
+          label: group.name,
+          value: group.id,
+        }))}
+        initialValue={connectionEditorInitialValue}
+        notice={connectionEditorNotice}
+        open={connectionEditorOpen}
+        pending={connectionEditorPending}
+        saveAndConnectDisabled={connected || busy || activeSessionId !== null}
+        onClose={() => {
+          if (!connectionEditorPending) {
+            setConnectionEditorOpen(false);
+            setConnectionEditorError(null);
+          }
+        }}
+        onSubmit={(value, intent) => void saveConnection(value, intent)}
       />
     </div>
   );
+}
+
+function connectionDetailsToEditorValue(
+  details: ConnectionDetails,
+): ConnectionEditorValue {
+  return {
+    config: details.connection.config,
+    settings: details.settings.layers.connection ?? {
+      connectTimeoutSecs: null,
+      keepAliveSecs: null,
+    },
+  };
+}
+
+function duplicateConnection(
+  details: ConnectionDetails,
+  t: TFunction,
+): ConnectionEditorValue {
+  const value = connectionDetailsToEditorValue(details);
+  return {
+    config: {
+      ...value.config,
+      id: createConnectionId(),
+      name: t("connectionCatalog.copyName", { name: value.config.name }),
+    },
+    settings: value.settings,
+  };
+}
+
+function createConnectionId(): string {
+  const id = globalThis.crypto?.randomUUID?.();
+  return `connection-${id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
 }
 
 function exitImpactMessage(

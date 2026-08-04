@@ -204,6 +204,26 @@ impl ConnectionRepository {
             .map_err(|source| database_operation("commit a settings transaction", source))
     }
 
+    pub fn delete_connection(&mut self, id: &str, now_ms: u64) -> Result<bool> {
+        if id.trim().is_empty() {
+            return Err(PersistenceError::InvalidConnectionConfiguration);
+        }
+        let now = timestamp_to_i64(now_ms)?;
+        let changed = self
+            .database
+            .connection()
+            .execute(
+                "UPDATE connections
+                 SET deleted_at = ?2,
+                     updated_at = ?2,
+                     revision = revision + 1
+                 WHERE id = ?1 AND deleted_at IS NULL",
+                params![id, now],
+            )
+            .map_err(|source| database_operation("delete a connection", source))?;
+        Ok(changed > 0)
+    }
+
     pub fn record_successful_connection(&mut self, id: &str, now_ms: u64) -> Result<()> {
         if id.trim().is_empty() {
             return Err(PersistenceError::InvalidConnectionConfiguration);
@@ -724,6 +744,44 @@ mod tests {
         assert_ne!(
             details.settings.resolved.connect_timeout_secs,
             DEFAULT_CONNECT_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn soft_deletes_and_restores_a_connection_without_touching_its_settings() {
+        let mut repository = test_repository();
+        let config = ConnectionConfig::new("connection-1", "Production", "example.com", "alice");
+        repository
+            .save_connection(
+                &config,
+                ConnectionSettingsOverride {
+                    connect_timeout_secs: Some(15),
+                    keep_alive_secs: Some(45),
+                },
+                1000,
+            )
+            .unwrap();
+
+        assert!(repository.delete_connection("connection-1", 1001).unwrap());
+        assert!(!repository.delete_connection("connection-1", 1002).unwrap());
+        assert!(repository.get_connection("connection-1").unwrap().is_none());
+        assert!(repository.list_catalog().unwrap().connections.is_empty());
+
+        repository
+            .save_connection(
+                &config,
+                ConnectionSettingsOverride {
+                    connect_timeout_secs: Some(20),
+                    keep_alive_secs: None,
+                },
+                1003,
+            )
+            .unwrap();
+        let restored = repository.get_connection("connection-1").unwrap().unwrap();
+        assert_eq!(restored.settings.resolved.connect_timeout_secs, 20);
+        assert_eq!(
+            restored.settings.resolved.keep_alive_secs,
+            DEFAULT_KEEP_ALIVE_SECS
         );
     }
 
