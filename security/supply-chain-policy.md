@@ -20,7 +20,7 @@ Every GitHub Action uses a full commit SHA with a readable version comment. `Car
 
 The Rust allowlist is in `deny.toml` and contains the permissive licenses encountered in the three-platform Cargo graph. Linux GTK/WebKit system libraries are dynamically linked and remain subject to their system-package licenses. The formal phase-one target is Windows; Linux and macOS packages still need their applicable third-party notices.
 
-Production npm dependencies are limited to MIT, ISC, and `Apache-2.0 OR MIT`. Development tools are reported separately. Unknown licenses cannot enter a production bundle or be newly introduced, and the current exception requires review within 30 days.
+Production npm dependencies are limited to MIT, ISC, Apache-2.0, and `Apache-2.0 OR MIT`. Development tools are reported separately. Unknown licenses cannot enter a production bundle or be newly introduced, and the current exception requires review within 30 days.
 
 ## Keys and build artifacts
 
