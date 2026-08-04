@@ -45,8 +45,13 @@ import {
   type ConnectionEditorValue,
 } from "./components/ConnectionEditorDialog";
 import { ConnectionGroupDialog } from "./components/ConnectionGroupDialog";
+import {
+  ConnectionLaunchDialog,
+  type ConnectionLaunchStep,
+} from "./components/ConnectionLaunchDialog";
 import { ConnectionWorkspaceEmptyState } from "./components/ConnectionWorkspaceEmptyState";
 import { OpenSshImportDialog } from "./components/OpenSshImportDialog";
+import { SessionTabBar, type SessionTab } from "./components/SessionTabBar";
 import {
   TerminalPane,
   type TerminalHandle,
@@ -64,7 +69,9 @@ import { IpcError, ipc } from "./ipc/client";
 import type {
   AppInfo,
   AppMenuAction,
+  AuthMethod,
   ConnectionCatalog,
+  ConnectionConfig,
   ConnectionDetails,
   ConnectionGroup,
   ConnectionListItem,
@@ -187,6 +194,11 @@ export function App() {
   const [loadedConnectionId, setLoadedConnectionId] = useState<string | null>(
     null,
   );
+  const [activeSessionTab, setActiveSessionTab] = useState<SessionTab | null>(
+    null,
+  );
+  const [connectionLaunchStep, setConnectionLaunchStep] =
+    useState<ConnectionLaunchStep>();
   const [connectionEditorInitialValue, setConnectionEditorInitialValue] =
     useState<ConnectionEditorValue>();
   const [connectionEditorOpen, setConnectionEditorOpen] = useState(false);
@@ -222,6 +234,8 @@ export function App() {
   const resizeTimerRef = useRef<number | null>(null);
   const memoryUsageTimerRef = useRef<number | null>(null);
   const connectionAttemptRef = useRef(0);
+  const connectionFlowPendingRef = useRef(false);
+  const sessionTabSequenceRef = useRef(0);
   const exitCancelButtonRef = useRef<HTMLButtonElement>(null);
   const connectionStateRef = useRef<ConnectionState>("idle");
   const hostKeyRef = useRef<HostKeyInfo | null>(null);
@@ -349,6 +363,7 @@ export function App() {
 
   const selectWorkspaceMode = useCallback((mode: WorkspaceMode) => {
     if (
+      connectionFlowPendingRef.current ||
       ["probing", "connecting", "connected", "closing"].includes(
         connectionStateRef.current,
       )
@@ -532,7 +547,10 @@ export function App() {
     setConnectionState("idle");
   }, []);
 
-  const probeHost = async (targetHost = host, targetPort = port) => {
+  const probeHost = async (
+    targetHost = host,
+    targetPort = port,
+  ): Promise<HostKeyInfo | null> => {
     setConnectionState("probing");
     setErrorMessage(null);
     setHostKey(null);
@@ -545,9 +563,11 @@ export function App() {
       });
       setHostKey(result);
       setConnectionState("ready");
+      return result;
     } catch (error) {
       setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
+      return null;
     }
   };
 
@@ -556,6 +576,56 @@ export function App() {
     setConnectionEditorError(null);
     setConnectionEditorNotice(undefined);
     setConnectionEditorOpen(true);
+  };
+
+  const connectionLaunchBlocked = () =>
+    connectionFlowPendingRef.current ||
+    ["probing", "connecting", "connected", "closing"].includes(
+      connectionStateRef.current,
+    ) ||
+    sessionIdRef.current !== null ||
+    sftpSessionIdRef.current !== null;
+
+  const beginConnectionFlow = async (config: ConnectionConfig) => {
+    if (connectionLaunchBlocked()) {
+      return;
+    }
+
+    const request = ++connectionAttemptRef.current;
+    connectionFlowPendingRef.current = true;
+    const tab: SessionTab = {
+      clientId: `session-tab-${++sessionTabSequenceRef.current}`,
+      connectionId: config.id,
+      endpoint: `${config.username}@${config.host}:${config.port}`,
+      name: config.name,
+    };
+    setActiveSessionTab(tab);
+    setWorkspaceMode("terminal");
+    setHost(config.host);
+    setPort(config.port);
+    setUsername(config.username);
+    setPassword("");
+    setLoadedConnectionId(config.id);
+    loadedConnectionIdRef.current = config.id;
+    resetHostTrust();
+
+    if (config.authMethod !== "password") {
+      setConnectionState("failed");
+      setErrorMessage(
+        t("connectionAuthentication.unsupported", {
+          method: connectionAuthLabel(config.authMethod, t),
+        }),
+      );
+      connectionFlowPendingRef.current = false;
+      return;
+    }
+
+    const result = await probeHost(config.host, config.port);
+    if (connectionAttemptRef.current === request && result) {
+      setConnectionLaunchStep("fingerprint");
+    } else {
+      connectionFlowPendingRef.current = false;
+    }
   };
 
   const loadOpenSshImportPreview = async (path: string | null) => {
@@ -783,6 +853,7 @@ export function App() {
   };
 
   const loadSavedConnection = async (item: ConnectionListItem) => {
+    if (connectionLaunchBlocked()) return;
     setConnectionActionId(item.config.id);
     setConnectionCatalogError(null);
     setConnectionCatalogNotice(null);
@@ -791,17 +862,7 @@ export function App() {
       if (!details) {
         throw new Error(t("connectionCatalog.notFound"));
       }
-      setHost(details.connection.config.host);
-      setPort(details.connection.config.port);
-      setUsername(details.connection.config.username);
-      setPassword("");
-      setLoadedConnectionId(details.connection.config.id);
-      loadedConnectionIdRef.current = details.connection.config.id;
-      resetHostTrust();
-      await probeHost(
-        details.connection.config.host,
-        details.connection.config.port,
-      );
+      await beginConnectionFlow(details.connection.config);
     } catch (error) {
       setConnectionCatalogError(localizedErrorText(error));
     } finally {
@@ -838,14 +899,7 @@ export function App() {
       setConnectionEditorOpen(false);
 
       if (intent === "saveAndConnect") {
-        setHost(value.config.host);
-        setPort(value.config.port);
-        setUsername(value.config.username);
-        setPassword("");
-        setLoadedConnectionId(value.config.id);
-        loadedConnectionIdRef.current = value.config.id;
-        resetHostTrust();
-        await probeHost(value.config.host, value.config.port);
+        await beginConnectionFlow(value.config);
       }
     } catch (error) {
       setConnectionEditorError(localizedErrorText(error));
@@ -874,9 +928,12 @@ export function App() {
     }
   };
 
-  const connectTerminal = async () => {
-    if (!hostKey || !trusted || !username || !password) {
-      return;
+  const connectTerminal = async (
+    passwordOverride?: string,
+  ): Promise<boolean> => {
+    const connectionPassword = passwordOverride ?? password;
+    if (!hostKey || !trusted || !username || !connectionPassword) {
+      return false;
     }
 
     setConnectionState("connecting");
@@ -959,7 +1016,7 @@ export function App() {
           host,
           port,
           username,
-          password,
+          password: connectionPassword,
           expectedFingerprint: hostKey.fingerprintSha256,
           ...viewport,
         },
@@ -975,7 +1032,7 @@ export function App() {
         void ipc
           .closeTerminalSession(response.sessionId)
           .catch(() => undefined);
-        return;
+        return false;
       }
 
       setPassword("");
@@ -983,7 +1040,7 @@ export function App() {
         void ipc
           .closeTerminalSession(response.sessionId)
           .catch(() => undefined);
-        return;
+        return false;
       }
 
       sessionIdRef.current = response.sessionId;
@@ -993,13 +1050,15 @@ export function App() {
       setConnectionState("connected");
       void recordLoadedConnectionSuccess();
       terminalRef.current?.focus();
+      return true;
     } catch (error) {
       if (connectionAttemptRef.current !== attempt) {
-        return;
+        return false;
       }
       setPassword("");
       setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
+      return false;
     }
   };
 
@@ -1055,6 +1114,33 @@ export function App() {
     }
   };
 
+  const confirmConnectionFingerprint = () => {
+    setTrusted(true);
+    setConnectionLaunchStep("password");
+  };
+
+  const cancelConnectionFlow = () => {
+    connectionAttemptRef.current += 1;
+    connectionFlowPendingRef.current = false;
+    setConnectionLaunchStep(undefined);
+    setPassword("");
+    setTrusted(false);
+    setHostKey(null);
+    setConnectionState("idle");
+    setActiveSessionTab(null);
+    setLoadedConnectionId(null);
+    loadedConnectionIdRef.current = null;
+  };
+
+  const authenticatePendingConnection = async (credential: string) => {
+    connectionFlowPendingRef.current = true;
+    const connectedSuccessfully = await connectTerminal(credential);
+    if (connectedSuccessfully) {
+      connectionFlowPendingRef.current = false;
+      setConnectionLaunchStep(undefined);
+    }
+  };
+
   const closeSession = async () => {
     const activeSessionId =
       workspaceMode === "terminal" ? sessionId : sftpSessionId;
@@ -1086,6 +1172,28 @@ export function App() {
       }
       setConnectionState("disconnected");
     }
+  };
+
+  const closeActiveSessionTab = async () => {
+    connectionAttemptRef.current += 1;
+    connectionFlowPendingRef.current = false;
+    if (sessionId || sftpSessionId) {
+      await closeSession();
+    }
+    setConnectionLaunchStep(undefined);
+    setConnectionState("idle");
+    sessionIdRef.current = null;
+    setSessionId(null);
+    sftpSessionIdRef.current = null;
+    setSftpSessionId(null);
+    setSftpDirectory(null);
+    setActiveSessionTab(null);
+    setLoadedConnectionId(null);
+    loadedConnectionIdRef.current = null;
+    setHostKey(null);
+    setTrusted(false);
+    setPassword("");
+    terminalRef.current?.reset();
   };
 
   const navigateSftp = async (path: string) => {
@@ -1895,6 +2003,7 @@ export function App() {
                 disabled={connected || busy}
                 onChange={(event) => {
                   setHost(event.target.value);
+                  setActiveSessionTab(null);
                   setLoadedConnectionId(null);
                   loadedConnectionIdRef.current = null;
                   resetHostTrust();
@@ -1913,6 +2022,7 @@ export function App() {
                 disabled={connected || busy}
                 onChange={(value) => {
                   setPort(value ?? 22);
+                  setActiveSessionTab(null);
                   setLoadedConnectionId(null);
                   loadedConnectionIdRef.current = null;
                   resetHostTrust();
@@ -1958,6 +2068,7 @@ export function App() {
                 disabled={connected || busy}
                 onChange={(event) => {
                   setUsername(event.target.value);
+                  setActiveSessionTab(null);
                   setLoadedConnectionId(null);
                   loadedConnectionIdRef.current = null;
                 }}
@@ -2039,28 +2150,76 @@ export function App() {
           />
         )}
 
-        {workspaceMode === "terminal" ? (
-          <main className="terminal-workspace">
-            <div className="terminal-toolbar">
-              <div className="terminal-title">
-                <SquareTerminal size={14} />
-                <span>{t("common.terminal")}</span>
-              </div>
-              <span className="endpoint-label">
-                {connected
-                  ? `${username}@${host}:${port}`
-                  : t("sftp.notConnected")}
-              </span>
-            </div>
-            <div className="terminal-stage">
-              <TerminalPane
-                ref={terminalRef}
-                connected={connected}
-                onData={writeTerminal}
-                onResize={resizeTerminal}
-              />
-              {!connected &&
-                (connectionState === "idle" && !hostKey ? (
+        <main
+          className={`session-workspace${activeSessionTab ? " has-session-tab" : ""}`}
+        >
+          {activeSessionTab && (
+            <SessionTabBar
+              closing={connectionState === "closing"}
+              connectionState={connectionState}
+              disabled={busy || connectionLaunchStep !== undefined}
+              statusLabel={connectionLabel(connectionState, t)}
+              tab={activeSessionTab}
+              onClose={() => void closeActiveSessionTab()}
+            />
+          )}
+          <div className="session-workspace-content">
+            {workspaceMode === "terminal" ? (
+              <section className="terminal-workspace">
+                <div className="terminal-toolbar">
+                  <div className="terminal-title">
+                    <SquareTerminal size={14} />
+                    <span>{t("common.terminal")}</span>
+                  </div>
+                  <span className="endpoint-label">
+                    {connected
+                      ? `${username}@${host}:${port}`
+                      : t("sftp.notConnected")}
+                  </span>
+                </div>
+                <div className="terminal-stage">
+                  <TerminalPane
+                    ref={terminalRef}
+                    connected={connected}
+                    onData={writeTerminal}
+                    onResize={resizeTerminal}
+                  />
+                  {!connected &&
+                    (connectionState === "idle" && !hostKey ? (
+                      <ConnectionWorkspaceEmptyState
+                        language={language}
+                        loadingConnectionId={connectionActionId}
+                        recentConnections={recentConnections}
+                        totalConnections={connectionCatalog.connections.length}
+                        onImportConfig={openOpenSshImport}
+                        onNewConnection={openNewConnectionEditor}
+                        onQuickConnect={(item) =>
+                          void loadSavedConnection(item)
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        className="terminal-empty"
+                        icon={<SquareTerminal size={36} strokeWidth={1.3} />}
+                        title={connectionLabel(connectionState, t)}
+                      />
+                    ))}
+                </div>
+              </section>
+            ) : (
+              <section className="sftp-workspace">
+                <SftpPane
+                  busy={sftpBusy}
+                  connected={connected}
+                  directory={sftpDirectory}
+                  endpoint={`${username}@${host}:${port}`}
+                  transferResult={sftpTransferResult}
+                  onNavigate={navigateSftp}
+                  onRefresh={refreshSftp}
+                  onUpload={uploadSftp}
+                  onDownload={downloadSftp}
+                />
+                {!connected && connectionState === "idle" && !hostKey && (
                   <ConnectionWorkspaceEmptyState
                     language={language}
                     loadingConnectionId={connectionActionId}
@@ -2070,41 +2229,11 @@ export function App() {
                     onNewConnection={openNewConnectionEditor}
                     onQuickConnect={(item) => void loadSavedConnection(item)}
                   />
-                ) : (
-                  <EmptyState
-                    className="terminal-empty"
-                    icon={<SquareTerminal size={36} strokeWidth={1.3} />}
-                    title={connectionLabel(connectionState, t)}
-                  />
-                ))}
-            </div>
-          </main>
-        ) : (
-          <main className="sftp-workspace">
-            <SftpPane
-              busy={sftpBusy}
-              connected={connected}
-              directory={sftpDirectory}
-              endpoint={`${username}@${host}:${port}`}
-              transferResult={sftpTransferResult}
-              onNavigate={navigateSftp}
-              onRefresh={refreshSftp}
-              onUpload={uploadSftp}
-              onDownload={downloadSftp}
-            />
-            {!connected && connectionState === "idle" && !hostKey && (
-              <ConnectionWorkspaceEmptyState
-                language={language}
-                loadingConnectionId={connectionActionId}
-                recentConnections={recentConnections}
-                totalConnections={connectionCatalog.connections.length}
-                onImportConfig={openOpenSshImport}
-                onNewConnection={openNewConnectionEditor}
-                onQuickConnect={(item) => void loadSavedConnection(item)}
-              />
+                )}
+              </section>
             )}
-          </main>
-        )}
+          </div>
+        </main>
       </div>
 
       <footer className="statusbar">
@@ -2131,6 +2260,23 @@ export function App() {
         <span className="status-divider" />
         <span>UTF-8</span>
       </footer>
+
+      <ConnectionLaunchDialog
+        key={`connection-launch-${activeSessionTab?.clientId ?? "closed"}`}
+        connectionName={activeSessionTab?.name ?? ""}
+        endpoint={activeSessionTab?.endpoint ?? ""}
+        errorMessage={
+          connectionState === "failed" ? (errorMessage ?? undefined) : undefined
+        }
+        hostKey={hostKey ?? undefined}
+        pending={connectionState === "connecting"}
+        step={activeSessionTab ? connectionLaunchStep : undefined}
+        onCancel={cancelConnectionFlow}
+        onConfirmFingerprint={confirmConnectionFingerprint}
+        onSubmitPassword={(credential) =>
+          void authenticatePendingConnection(credential)
+        }
+      />
 
       <AppDialog
         open={exitImpact !== null}
@@ -2574,6 +2720,17 @@ function errorText(error: unknown, fallback: string): string {
     return error.message;
   }
   return fallback;
+}
+
+function connectionAuthLabel(method: AuthMethod, t: TFunction): string {
+  switch (method) {
+    case "privateKey":
+      return t("connectionEditor.auth.privateKey");
+    case "keyboardInteractive":
+      return t("connectionEditor.auth.keyboardInteractive");
+    default:
+      return t("connectionEditor.auth.password");
+  }
 }
 
 function isClosedSessionError(error: unknown): boolean {

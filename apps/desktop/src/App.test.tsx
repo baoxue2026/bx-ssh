@@ -1136,14 +1136,43 @@ describe("App", { timeout: 15_000 }, () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "打开 生产服务器" }),
     );
-    await screen.findByText("信任此主机指纹");
-    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
-    fireEvent.change(screen.getByLabelText("密码"), {
+    const fingerprintDialog = await screen.findByRole("dialog", {
+      name: "确认主机身份",
+    });
+    expect(
+      screen.getByRole("tab", { name: /生产服务器.*等待连接/ }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "2", ctrlKey: true });
+    expect(
+      screen.getByText("SSH / PTY", { selector: ".sidebar-heading span" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      within(fingerprintDialog).getByRole("button", { name: "信任并继续" }),
+    );
+    const authenticationDialog = await screen.findByRole("dialog", {
+      name: "输入连接密码",
+    });
+    fireEvent.change(within(authenticationDialog).getByLabelText("密码"), {
       target: { value: "secret" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    fireEvent.click(
+      within(authenticationDialog).getByRole("button", { name: /连\s*接/ }),
+    );
 
     await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "start_password_shell",
+        expect.objectContaining({
+          request: expect.objectContaining({
+            host: "prod.example.com",
+            port: 22,
+            username: "deploy",
+            password: "secret",
+            expectedFingerprint:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          }),
+        }),
+      );
       expect(mocks.invoke).toHaveBeenCalledWith(
         "record_successful_connection",
         { id: "connection-production" },
@@ -1153,6 +1182,57 @@ describe("App", { timeout: 15_000 }, () => {
     expect(
       screen.queryByText("recent history unavailable"),
     ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "关闭会话 生产服务器" }),
+    );
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("close_terminal_session", {
+        sessionId: "session-saved",
+      });
+      expect(
+        screen.queryByRole("tab", { name: /生产服务器/ }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("stops unsupported saved authentication before probing the host", async () => {
+    const saved = savedConnectionDetails();
+    const details = {
+      ...saved,
+      connection: {
+        ...saved.connection,
+        config: {
+          ...saved.connection.config,
+          authMethod: "privateKey" as const,
+          keyReferenceId: "key-production",
+        },
+      },
+    };
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({
+          groups: [],
+          connections: [details.connection],
+        });
+      }
+      if (command === "get_connection") {
+        return Promise.resolve(details);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "打开 生产服务器" }),
+    );
+
+    expect(await screen.findByText(/对应认证能力尚未接入/)).toBeInTheDocument();
+    expect(commandCalls("probe_ssh_host")).toHaveLength(0);
+    expect(commandCalls("start_password_shell")).toHaveLength(0);
   });
 });
 
