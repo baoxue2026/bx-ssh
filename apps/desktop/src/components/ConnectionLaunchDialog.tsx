@@ -65,12 +65,12 @@ export function ConnectionLaunchDialog({
           : t("hostFingerprint.description", { name: connectionName })
       }
       initialFocusRef={passwordStep ? undefined : cancelRef}
-      closable={!pending}
-      closeOnEscape={!pending}
+      closable
+      closeOnEscape
       onClose={cancel}
       footer={
         <>
-          <Button ref={cancelRef} disabled={pending} onClick={cancel}>
+          <Button ref={cancelRef} onClick={cancel}>
             {t("common.cancel")}
           </Button>
           {passwordStep ? (

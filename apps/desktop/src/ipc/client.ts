@@ -9,6 +9,10 @@ import {
   type OpenSshImportRequest,
   type ProbeHostRequest,
   type Result,
+  type SshConnectionEvent,
+  type SshConnectionStage,
+  type StartSftpRequest,
+  type StartSftpResponse,
   type StartShellRequest,
   type StartShellResponse,
   type TerminalEvent,
@@ -21,11 +25,18 @@ export type IpcErrorCode = CommandErrorCode | typeof IPC_TRANSPORT_ERROR;
 
 export class IpcError extends Error {
   readonly code: IpcErrorCode;
+  readonly stage: SshConnectionStage | null;
 
-  constructor(code: IpcErrorCode, message: string, cause?: unknown) {
+  constructor(
+    code: IpcErrorCode,
+    message: string,
+    cause?: unknown,
+    stage: SshConnectionStage | null = null,
+  ) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "IpcError";
     this.code = code;
+    this.stage = stage;
   }
 
   static from(error: unknown): IpcError {
@@ -33,7 +44,12 @@ export class IpcError extends Error {
       return error;
     }
     if (isCommandError(error)) {
-      return new IpcError(error.code, error.message, error);
+      return new IpcError(
+        error.code,
+        error.message,
+        error,
+        error.stage ?? null,
+      );
     }
     if (error instanceof Error) {
       return new IpcError(IPC_TRANSPORT_ERROR, error.message, error);
@@ -51,6 +67,7 @@ type TerminalSize = Pick<
 >;
 
 interface TerminalChannels {
+  onState(event: SshConnectionEvent): void;
   onEvent(event: TerminalEvent): void;
   onOutput(data: ArrayBuffer): void;
 }
@@ -130,9 +147,18 @@ export const ipc = {
     unwrapVoid(() => commands.acknowledgeTerminalOutput(sessionId, sequence)),
   closeTerminalSession: (sessionId: string) =>
     unwrapVoid(() => commands.closeTerminalSession(sessionId)),
+  cancelSshConnection: (attemptId: string) =>
+    unwrap(() => commands.cancelSshConnection(attemptId)),
   startPasswordSftp: (
-    request: Parameters<typeof commands.startPasswordSftp>[0],
-  ) => unwrap(() => commands.startPasswordSftp(request)),
+    request: StartSftpRequest,
+    onState: (event: SshConnectionEvent) => void,
+  ) =>
+    call(() =>
+      invoke<StartSftpResponse>("start_password_sftp", {
+        request,
+        onState: createChannel(onState),
+      }),
+    ),
   listSftpDirectory: (sessionId: string, path: string) =>
     unwrap(() => commands.listSftpDirectory(sessionId, path)),
   uploadSftpFile: (
@@ -168,6 +194,7 @@ export const ipc = {
     call(() =>
       invoke<StartShellResponse>("start_password_shell", {
         request,
+        onState: createChannel(channels.onState),
         onEvent: createChannel(channels.onEvent),
         onOutput: createChannel(channels.onOutput),
       }),

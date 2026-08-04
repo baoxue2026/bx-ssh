@@ -27,6 +27,7 @@ describe("IPC client", () => {
     mocks.invoke.mockRejectedValue({
       code: "host_key_mismatch",
       message: "The host key changed",
+      stage: "handshaking",
     });
 
     const error = await ipc
@@ -37,6 +38,7 @@ describe("IPC client", () => {
     expect(error).toMatchObject({
       code: "host_key_mismatch",
       message: "The host key changed",
+      stage: "handshaking",
     });
   });
 
@@ -179,6 +181,7 @@ describe("IPC client", () => {
 
     await ipc.startPasswordShell(
       {
+        attemptId: "4f715a34-6a86-4e45-bc2a-8ae680acb614",
         host: "example.com",
         port: 22,
         username: "bxssh",
@@ -190,18 +193,19 @@ describe("IPC client", () => {
         pixelWidth: 800,
         pixelHeight: 600,
       },
-      { onEvent, onOutput },
+      { onState: vi.fn(), onEvent, onOutput },
     );
 
     expect(mocks.invoke).toHaveBeenCalledWith("start_password_shell", {
       request: expect.objectContaining({ username: "bxssh", columns: 80 }),
-      onEvent: mocks.channels[0],
-      onOutput: mocks.channels[1],
+      onState: mocks.channels[0],
+      onEvent: mocks.channels[1],
+      onOutput: mocks.channels[2],
     });
 
     const output = Uint8Array.from([0x62, 0x78]).buffer;
-    mocks.channels[0].onmessage({ type: "exited", code: 0, signal: null });
-    mocks.channels[1].onmessage(output);
+    mocks.channels[1].onmessage({ type: "exited", code: 0, signal: null });
+    mocks.channels[2].onmessage(output);
 
     expect(onEvent).toHaveBeenCalledWith({
       type: "exited",

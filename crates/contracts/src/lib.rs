@@ -36,6 +36,22 @@ pub struct HostKeyInfo {
     pub fingerprint_sha256: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum SshConnectionStage {
+    Created,
+    ResolvingDns,
+    ConnectingTcp,
+    Handshaking,
+    Authenticating,
+    OpeningChannel,
+    Connected,
+    Closing,
+    Closed,
+    Cancelled,
+    Failed,
+}
+
 impl HostKeyInfo {
     pub fn new(algorithm: impl Into<String>, fingerprint_sha256: impl Into<String>) -> Self {
         Self {
@@ -83,7 +99,9 @@ pub struct TransferSummary {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppInfo, HostKeyInfo, RemoteFileEntry, RemoteFileKind, TransferSummary};
+    use super::{
+        AppInfo, HostKeyInfo, RemoteFileEntry, RemoteFileKind, SshConnectionStage, TransferSummary,
+    };
 
     #[test]
     fn creates_app_info() {
@@ -102,6 +120,18 @@ mod tests {
 
         assert_eq!(info.algorithm, "ssh-ed25519");
         assert!(info.fingerprint_sha256.starts_with("SHA256:"));
+    }
+
+    #[test]
+    fn serializes_connection_stages_with_stable_names() {
+        assert_eq!(
+            serde_json::to_value(SshConnectionStage::ResolvingDns).unwrap(),
+            "resolvingDns"
+        );
+        assert_eq!(
+            serde_json::to_value(SshConnectionStage::OpeningChannel).unwrap(),
+            "openingChannel"
+        );
     }
 
     #[test]

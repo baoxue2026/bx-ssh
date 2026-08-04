@@ -1,3 +1,4 @@
+use bx_contracts::SshConnectionStage;
 use bx_persistence::PersistenceError;
 use bx_ssh_core::SshError;
 use serde::Serialize;
@@ -17,6 +18,13 @@ pub(crate) enum CommandErrorCode {
     RemoteTargetExists,
     TransferIntegrityMismatch,
     ConnectTimeout,
+    DnsLookupFailed,
+    TcpConnectFailed,
+    HandshakeFailed,
+    ConnectionCancelled,
+    InvalidConnectionAttempt,
+    ConnectionAttemptConflict,
+    SessionStateInvalid,
     AuthenticationTimeout,
     HostKeyUnavailable,
     HostKeyMismatch,
@@ -49,6 +57,7 @@ pub(crate) enum CommandErrorCode {
 pub(crate) struct CommandError {
     pub(crate) code: CommandErrorCode,
     pub(crate) message: String,
+    pub(crate) stage: Option<SshConnectionStage>,
 }
 
 impl CommandError {
@@ -56,7 +65,13 @@ impl CommandError {
         Self {
             code,
             message: message.into(),
+            stage: None,
         }
+    }
+
+    pub(crate) fn with_stage(mut self, stage: Option<SshConnectionStage>) -> Self {
+        self.stage = stage;
+        self
     }
 
     pub(crate) fn session_not_found(kind: &str) -> Self {
@@ -94,20 +109,30 @@ impl From<SshError> for CommandError {
                 CommandErrorCode::TransferIntegrityMismatch
             }
             SshError::ConnectTimeout => CommandErrorCode::ConnectTimeout,
+            SshError::DnsLookupTimeout => CommandErrorCode::ConnectTimeout,
+            SshError::DnsLookupFailed(_) => CommandErrorCode::DnsLookupFailed,
+            SshError::TcpConnectTimeout => CommandErrorCode::ConnectTimeout,
+            SshError::TcpConnectFailed(_) => CommandErrorCode::TcpConnectFailed,
+            SshError::HandshakeTimeout => CommandErrorCode::ConnectTimeout,
+            SshError::HandshakeFailed(_) => CommandErrorCode::HandshakeFailed,
+            SshError::ConnectionCancelled => CommandErrorCode::ConnectionCancelled,
             SshError::AuthenticationTimeout => CommandErrorCode::AuthenticationTimeout,
+            SshError::AuthenticationFailed(_) => CommandErrorCode::TransportError,
             SshError::HostKeyUnavailable => CommandErrorCode::HostKeyUnavailable,
             SshError::HostKeyMismatch { .. } => CommandErrorCode::HostKeyMismatch,
             SshError::AuthenticationRejected { .. } => CommandErrorCode::AuthenticationRejected,
             SshError::LegacyRsaSignatureOnly => CommandErrorCode::LegacyRsaSignatureOnly,
             SshError::ChannelRequestRejected { .. } => CommandErrorCode::ChannelRequestRejected,
             SshError::ChannelClosed { .. } => CommandErrorCode::ChannelClosed,
+            SshError::ChannelOpenFailed(_) => CommandErrorCode::TransportError,
             SshError::PrivateKey(_) => CommandErrorCode::PrivateKeyError,
             SshError::Sftp(_) => CommandErrorCode::SftpError,
             SshError::TransferIo(_) => CommandErrorCode::TransferIoError,
             SshError::Transport(_) => CommandErrorCode::TransportError,
         };
 
-        Self::new(code, error.to_string())
+        let stage = error.connection_stage();
+        Self::new(code, error.to_string()).with_stage(stage)
     }
 }
 
@@ -138,6 +163,10 @@ mod tests {
         let remote_path = CommandError::from(SshError::InvalidRemotePath);
 
         assert_eq!(host_key.code, CommandErrorCode::HostKeyMismatch);
+        assert_eq!(
+            host_key.stage,
+            Some(bx_contracts::SshConnectionStage::Handshaking)
+        );
         assert_eq!(remote_path.code, CommandErrorCode::InvalidRemotePath);
 
         let serialized = serde_json::to_value(host_key).expect("command error must serialize");
@@ -146,6 +175,7 @@ mod tests {
             serialized["message"],
             "server host key changed: expected SHA256:expected, received SHA256:actual"
         );
+        assert_eq!(serialized["stage"], "handshaking");
     }
 
     #[test]

@@ -8,6 +8,7 @@ use tauri::{AppHandle, State};
 use tokio::time::timeout;
 
 use crate::command_error::CommandError;
+use crate::session_manager::SshSessionManager;
 use crate::sftp::SftpSessionManager;
 use crate::terminal::TerminalSessionManager;
 
@@ -110,12 +111,14 @@ pub(crate) async fn confirm_app_exit(
     app: AppHandle,
     terminal_manager: State<'_, TerminalSessionManager>,
     sftp_manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     coordinator: State<'_, ExitCoordinator>,
 ) -> Result<(), CommandError> {
     let cleanup = async {
         tokio::join!(terminal_manager.close_all(), sftp_manager.close_all());
     };
     let _ = timeout(EXIT_CLEANUP_TIMEOUT, cleanup).await;
+    session_manager.clear();
     coordinator.approve();
     app.exit(0);
     Ok(())

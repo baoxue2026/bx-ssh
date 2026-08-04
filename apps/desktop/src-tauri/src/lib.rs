@@ -16,6 +16,7 @@ mod desktop_shell;
 mod lifecycle;
 mod openssh_import;
 mod platform;
+mod session_manager;
 mod sftp;
 mod terminal;
 mod update;
@@ -31,6 +32,7 @@ use desktop_shell::AppMenuAction;
 use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
 use openssh_import::{import_openssh_connections, preview_openssh_config};
 use platform::set_webview_memory_usage;
+use session_manager::{cancel_ssh_connection, SshSessionManager};
 use sftp::{
     close_sftp_session, download_sftp_file, hash_remote_sftp_file, list_sftp_directory,
     start_password_sftp, upload_sftp_file, SftpSessionManager,
@@ -60,7 +62,6 @@ fn command_builder() -> Builder<tauri::Wry> {
             terminal::resize_terminal,
             terminal::acknowledge_terminal_output,
             terminal::close_terminal_session,
-            sftp::start_password_sftp,
             sftp::list_sftp_directory,
             sftp::upload_sftp_file,
             sftp::download_sftp_file,
@@ -81,11 +82,15 @@ fn command_builder() -> Builder<tauri::Wry> {
             connections::set_connection_favorite,
             connections::reorder_connections,
             openssh_import::preview_openssh_config,
-            openssh_import::import_openssh_connections
+            openssh_import::import_openssh_connections,
+            session_manager::cancel_ssh_connection
         ])
         .typ::<terminal::StartShellRequest>()
         .typ::<terminal::StartShellResponse>()
         .typ::<terminal::TerminalEvent>()
+        .typ::<sftp::StartSftpRequest>()
+        .typ::<sftp::StartSftpResponse>()
+        .typ::<session_manager::SshConnectionEvent>()
         .typ::<update::UpdateEvent>()
         .typ::<AppMenuAction>()
         .typ::<ExitImpact>()
@@ -129,6 +134,7 @@ pub fn run() {
     let activity = AppActivity::default();
     let terminal_manager = TerminalSessionManager::with_activity(activity.clone());
     let sftp_manager = SftpSessionManager::with_activity(activity.clone());
+    let session_manager = SshSessionManager::default();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -162,6 +168,7 @@ pub fn run() {
         .manage(ExitCoordinator::default())
         .manage(terminal_manager)
         .manage(sftp_manager)
+        .manage(session_manager)
         .manage(ConnectionRepositoryState::default())
         .on_window_event(|window, event| {
             if window.label() != "main" {
@@ -189,6 +196,7 @@ pub fn run() {
             download_sftp_file,
             hash_remote_sftp_file,
             close_sftp_session,
+            cancel_ssh_connection,
             set_webview_memory_usage,
             check_for_update,
             install_update,
