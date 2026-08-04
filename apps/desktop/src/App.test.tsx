@@ -134,6 +134,20 @@ describe("App", () => {
     });
   });
 
+  it("opens the connection editor from the sidebar", async () => {
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "新建连接" }));
+
+    expect(
+      await screen.findByRole("dialog", { name: "新建连接" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "基础信息" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   it("checks for a signed application update", async () => {
     mocks.invoke.mockImplementation((command: string) => {
       if (command === "app_info") {

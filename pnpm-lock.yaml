@@ -19,6 +19,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@hookform/resolvers':
+        specifier: 5.2.1
+        version: 5.2.1(react-hook-form@7.62.0(react@18.3.1))
       '@tauri-apps/api':
         specifier: 2.11.1
         version: 2.11.1
@@ -43,9 +46,15 @@ importers:
       react-dom:
         specifier: 18.3.1
         version: 18.3.1(react@18.3.1)
+      react-hook-form:
+        specifier: 7.62.0
+        version: 7.62.0(react@18.3.1)
       react-i18next:
         specifier: 17.0.11
         version: 17.0.11(i18next@26.3.6(typescript@5.9.3))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)
+      zod:
+        specifier: 4.0.17
+        version: 4.0.17
     devDependencies:
       '@eslint/js':
         specifier: 9.39.5
@@ -518,6 +527,11 @@ packages:
       '@noble/hashes':
         optional: true
 
+  '@hookform/resolvers@5.2.1':
+    resolution: {integrity: sha512-u0+6X58gkjMcxur1wRWokA7XsiiBJ6aK17aPZxhkoYiK5J+HcTx0Vhu9ovXe6H+dVpO6cjrn2FkJTryXEMlryQ==}
+    peerDependencies:
+      react-hook-form: ^7.55.0
+
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
     engines: {node: '>=18.18.0'}
@@ -946,6 +960,9 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@standard-schema/utils@0.3.0':
+    resolution: {integrity: sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==}
 
   '@tauri-apps/api@2.11.0':
     resolution: {integrity: sha512-7CinYODhky9lmO23xHnUFv0Xt43fbtWMyxZcLcRBlFkcgXKuEirBvHpmtJ89YMhyeGcq20Wuc47Fa4XjyniywA==}
@@ -2976,6 +2993,12 @@ packages:
     peerDependencies:
       react: ^18.3.1
 
+  react-hook-form@7.62.0:
+    resolution: {integrity: sha512-7KWFejc98xqG/F4bAxpL41NB3o1nnvQO1RWZT3TqRZYL8RryQETGfEdVnJN2fy1crCiBLLjkRBVK05j24FxJGA==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      react: ^16.8.0 || ^17 || ^18 || ^19
+
   react-i18next@17.0.11:
     resolution: {integrity: sha512-cDtkXgxjuFTWUH6V+aQn1Ve5vDiUztCNPWW5GtSHDccsgRXO1nE6QFWCEmc1KAutrb3OUv87wFShJL5RhUwPXg==}
     peerDependencies:
@@ -3669,8 +3692,8 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.0.17:
+    resolution: {integrity: sha512-1PHjlYRevNxxdy2JZ8JcNAw7rX8V9P1AKkP+x/xZfxB0K5FYfuV+Ug6P/6NVSR2jHQ+FzDDoDHS04nYUsOIyLQ==}
 
 snapshots:
 
@@ -4014,6 +4037,11 @@ snapshots:
       levn: 0.4.1
 
   '@exodus/bytes@1.15.1': {}
+
+  '@hookform/resolvers@5.2.1(react-hook-form@7.62.0(react@18.3.1))':
+    dependencies:
+      '@standard-schema/utils': 0.3.0
+      react-hook-form: 7.62.0(react@18.3.1)
 
   '@humanfs/core@0.19.2':
     dependencies:
@@ -4389,6 +4417,8 @@ snapshots:
   '@sindresorhus/merge-streams@4.0.0': {}
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@standard-schema/utils@0.3.0': {}
 
   '@tauri-apps/api@2.11.0': {}
 
@@ -5616,8 +5646,8 @@ snapshots:
       '@babel/parser': 7.29.8
       eslint: 9.39.5(jiti@2.7.0)
       hermes-parser: 0.25.1
-      zod: 4.4.3
-      zod-validation-error: 4.0.2(zod@4.4.3)
+      zod: 4.0.17
+      zod-validation-error: 4.0.2(zod@4.0.17)
     transitivePeerDependencies:
       - supports-color
 
@@ -6832,6 +6862,10 @@ snapshots:
       react: 18.3.1
       scheduler: 0.23.2
 
+  react-hook-form@7.62.0(react@18.3.1):
+    dependencies:
+      react: 18.3.1
+
   react-i18next@17.0.11(i18next@26.3.6(typescript@5.9.3))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3):
     dependencies:
       '@babel/runtime': 7.29.7
@@ -7551,8 +7585,8 @@ snapshots:
       compress-commons: 6.0.2
       readable-stream: 4.7.0
 
-  zod-validation-error@4.0.2(zod@4.4.3):
+  zod-validation-error@4.0.2(zod@4.0.17):
     dependencies:
-      zod: 4.4.3
+      zod: 4.0.17
 
-  zod@4.4.3: {}
+  zod@4.0.17: {}
