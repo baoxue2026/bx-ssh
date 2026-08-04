@@ -39,6 +39,9 @@ pub(crate) enum CommandErrorCode {
     WebviewMemoryUsageFailed,
     DatabaseUnavailable,
     DatabaseQueryFailed,
+    OpenSshConfigNotFound,
+    OpenSshConfigIoError,
+    OpenSshConfigInvalid,
 }
 
 #[derive(Clone, Debug, Serialize, Type)]

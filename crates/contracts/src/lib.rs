@@ -7,7 +7,9 @@ pub use connection::{
     AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionGroup,
     ConnectionGroupValidationError, ConnectionListItem, ConnectionSettings,
     ConnectionSettingsLayers, ConnectionSettingsOverride, ConnectionSettingsScope,
-    ConnectionSettingsSnapshot, ConnectionValidationError, DEFAULT_CONNECTION_PORT,
+    ConnectionSettingsSnapshot, ConnectionValidationError, OpenSshDuplicateStrategy,
+    OpenSshImportError, OpenSshImportItem, OpenSshImportPreview, OpenSshImportRequest,
+    OpenSshImportResult, OpenSshImportWarning, DEFAULT_CONNECTION_PORT,
     DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS,
 };
 

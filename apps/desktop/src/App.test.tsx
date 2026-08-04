@@ -161,8 +161,20 @@ describe("App", { timeout: 15_000 }, () => {
     expect(
       screen.getByText("创建第一个 SSH 连接，连接配置只保存在本机。"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "导入配置" })).toBeDisabled();
+    const importButton = screen.getByRole("button", { name: "导入配置" });
+    expect(importButton).toBeEnabled();
     expect(screen.getByText("暂无已保存连接")).toBeInTheDocument();
+
+    fireEvent.click(importButton);
+
+    expect(
+      await screen.findByRole("dialog", { name: "导入 OpenSSH 配置" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("preview_openssh_config", {
+        path: null,
+      });
+    });
   });
 
   it("saves a connection without starting a host probe", async () => {

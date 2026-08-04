@@ -199,7 +199,7 @@ export const resources = {
         firstStartTitle: "开始使用 BX SSH",
         firstStartAction: "新建第一个连接",
         importConfig: "导入配置",
-        importPlanned: "OpenSSH config 导入将在后续连接导入任务中提供。",
+        importHelp: "支持从 OpenSSH config 预览并选择连接导入。",
         noRecent: "成功连接后，最近使用的连接会显示在这里。",
         noSessionDescription: "从侧栏选择连接，或使用最近连接快速开始。",
         noSessionTitle: "当前没有活动会话",
@@ -207,6 +207,46 @@ export const resources = {
         quickConnect: "快速连接",
         recentMetadata: "{{time}} · 成功 {{count}} 次",
         recentTitle: "最近连接",
+      },
+      connectionImport: {
+        action: "导入 OpenSSH 配置",
+        chooseFile: "选择文件",
+        chooseFileTitle: "选择 OpenSSH config 文件",
+        completed:
+          "OpenSSH 导入完成：新增 {{imported}} 项，覆盖 {{overwritten}} 项，跳过 {{skipped}} 项。",
+        description:
+          "解析 Host、HostName、Port、User 和 IdentityFile，确认后写入本机连接列表。",
+        duplicateOverwrite: "覆盖现有连接的主机、端口和用户名",
+        duplicates: "选中项中有 {{count}} 个重复连接",
+        duplicateSkip: "跳过重复连接",
+        emptyDescription: "配置中没有可导入的具体 Host 条目。",
+        emptyTitle: "没有可导入连接",
+        errors: {
+          invalidPort: "端口无效",
+          missingHost: "缺少主机地址",
+          missingUsername: "缺少用户名",
+        },
+        identityDescription:
+          "IdentityFile 路径会记录到连接备注，但不会伪造成私钥记录。私钥认证需在后续密钥管理中完成绑定。",
+        identityTitle: "检测到 IdentityFile",
+        importSelected: "导入选中项（{{count}}）",
+        loadDefault: "默认配置",
+        loadDefaultHelp: "读取当前用户目录下的 ~/.ssh/config",
+        loadFailed: "无法加载 OpenSSH 配置",
+        loading: "正在解析 OpenSSH 配置",
+        noPreviewDescription: "读取默认配置，或选择一个其他 config 文件。",
+        noPreviewTitle: "选择导入来源",
+        noSource: "尚未选择配置文件",
+        openSshConfig: "OpenSSH 配置",
+        previewSummary: "共 {{count}} 项，已忽略 {{ignored}} 个通配符规则",
+        ready: "可导入",
+        selectAll: "选择全部可导入项（{{count}}）",
+        selectNamed: "选择 {{name}}",
+        title: "导入 OpenSSH 配置",
+        warnings: {
+          duplicate: "与“{{name}}”重复",
+          identityFileRequiresKeySetup: "导入后需绑定私钥",
+        },
       },
       connectionGroup: {
         clearColor: "清除分组颜色",
@@ -515,8 +555,8 @@ export const resources = {
         firstStartTitle: "Get Started with BX SSH",
         firstStartAction: "Create your first connection",
         importConfig: "Import Configuration",
-        importPlanned:
-          "OpenSSH config import is provided by a later connection-import task.",
+        importHelp:
+          "Preview and select connections from an OpenSSH config file.",
         noRecent:
           "Recently used connections appear here after a successful connection.",
         noSessionDescription:
@@ -526,6 +566,49 @@ export const resources = {
         quickConnect: "Quick Connect",
         recentMetadata: "{{time}} · {{count}} successful connections",
         recentTitle: "Recent Connections",
+      },
+      connectionImport: {
+        action: "Import OpenSSH Configuration",
+        chooseFile: "Choose File",
+        chooseFileTitle: "Choose an OpenSSH config file",
+        completed:
+          "OpenSSH import completed: {{imported}} added, {{overwritten}} overwritten, {{skipped}} skipped.",
+        description:
+          "Parse Host, HostName, Port, User, and IdentityFile before writing selected connections to the local catalog.",
+        duplicateOverwrite:
+          "Overwrite the host, port, and username of existing connections",
+        duplicates: "{{count}} selected connections are duplicates",
+        duplicateSkip: "Skip duplicate connections",
+        emptyDescription:
+          "The configuration does not contain concrete Host entries that can be imported.",
+        emptyTitle: "No Importable Connections",
+        errors: {
+          invalidPort: "Invalid port",
+          missingHost: "Host address is missing",
+          missingUsername: "Username is missing",
+        },
+        identityDescription:
+          "IdentityFile paths are recorded in connection notes and are not forged into key records. Bind the private key later through key management.",
+        identityTitle: "IdentityFile detected",
+        importSelected: "Import Selected ({{count}})",
+        loadDefault: "Default Config",
+        loadDefaultHelp: "Read ~/.ssh/config from the current user profile",
+        loadFailed: "Unable to Load OpenSSH Configuration",
+        loading: "Parsing OpenSSH configuration",
+        noPreviewDescription:
+          "Load the default configuration or choose another config file.",
+        noPreviewTitle: "Choose an Import Source",
+        noSource: "No configuration file selected",
+        openSshConfig: "OpenSSH Configuration",
+        previewSummary: "{{count}} entries; {{ignored}} wildcard rules ignored",
+        ready: "Ready to import",
+        selectAll: "Select all importable entries ({{count}})",
+        selectNamed: "Select {{name}}",
+        title: "Import OpenSSH Configuration",
+        warnings: {
+          duplicate: 'Duplicates "{{name}}"',
+          identityFileRequiresKeySetup: "Private-key binding required",
+        },
       },
       connectionGroup: {
         clearColor: "Clear group color",

@@ -14,6 +14,7 @@ mod command_error;
 mod connections;
 mod desktop_shell;
 mod lifecycle;
+mod openssh_import;
 mod platform;
 mod sftp;
 mod terminal;
@@ -28,6 +29,7 @@ use connections::{
 #[cfg(any(debug_assertions, test))]
 use desktop_shell::AppMenuAction;
 use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
+use openssh_import::{import_openssh_connections, preview_openssh_config};
 use platform::set_webview_memory_usage;
 use sftp::{
     close_sftp_session, download_sftp_file, hash_remote_sftp_file, list_sftp_directory,
@@ -77,7 +79,9 @@ fn command_builder() -> Builder<tauri::Wry> {
             connections::set_connection_group_collapsed,
             connections::reorder_connection_groups,
             connections::set_connection_favorite,
-            connections::reorder_connections
+            connections::reorder_connections,
+            openssh_import::preview_openssh_config,
+            openssh_import::import_openssh_connections
         ])
         .typ::<terminal::StartShellRequest>()
         .typ::<terminal::StartShellResponse>()
@@ -139,6 +143,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .menu(desktop_shell::application_menu)
         .on_menu_event(desktop_shell::handle_menu_event)
@@ -198,7 +203,9 @@ pub fn run() {
             set_connection_group_collapsed,
             reorder_connection_groups,
             set_connection_favorite,
-            reorder_connections
+            reorder_connections,
+            preview_openssh_config,
+            import_openssh_connections
         ])
         .build(tauri::generate_context!())
         .expect("failed to build BX SSH")

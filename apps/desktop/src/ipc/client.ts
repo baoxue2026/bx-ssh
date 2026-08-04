@@ -6,6 +6,7 @@ import {
   type ConnectionConfig,
   type ConnectionGroup,
   type ConnectionSettingsOverride,
+  type OpenSshImportRequest,
   type ProbeHostRequest,
   type Result,
   type StartShellRequest,
@@ -88,6 +89,10 @@ export const ipc = {
   appInfo: () => call(() => commands.appInfo()),
   listConnections: () => unwrap(() => commands.listConnections()),
   getConnection: (id: string) => unwrap(() => commands.getConnection(id)),
+  previewOpenSshConfig: (path: string | null) =>
+    unwrap(() => commands.previewOpensshConfig(path)),
+  importOpenSshConnections: (request: OpenSshImportRequest) =>
+    unwrap(() => commands.importOpensshConnections(request)),
   saveConnection: (
     config: ConnectionConfig,
     settings: ConnectionSettingsOverride,

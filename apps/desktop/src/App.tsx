@@ -9,6 +9,7 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import type { TFunction } from "i18next";
 import { Button, Checkbox, Input, InputNumber, Segmented, Tooltip } from "antd";
 import {
@@ -17,6 +18,7 @@ import {
   ChevronRight,
   Copy,
   FilePenLine,
+  FileInput,
   Fingerprint,
   FolderPlus,
   FolderOpen,
@@ -44,6 +46,7 @@ import {
 } from "./components/ConnectionEditorDialog";
 import { ConnectionGroupDialog } from "./components/ConnectionGroupDialog";
 import { ConnectionWorkspaceEmptyState } from "./components/ConnectionWorkspaceEmptyState";
+import { OpenSshImportDialog } from "./components/OpenSshImportDialog";
 import {
   TerminalPane,
   type TerminalHandle,
@@ -67,6 +70,8 @@ import type {
   ConnectionListItem,
   ExitImpact,
   HostKeyInfo,
+  OpenSshImportPreview,
+  OpenSshImportRequest,
   RemoteDirectoryListing,
   TerminalEvent,
 } from "./ipc/bindings";
@@ -192,6 +197,14 @@ export function App() {
   const [connectionEditorNotice, setConnectionEditorNotice] = useState<
     string | undefined
   >();
+  const [openSshImportOpen, setOpenSshImportOpen] = useState(false);
+  const [openSshImportPreview, setOpenSshImportPreview] =
+    useState<OpenSshImportPreview>();
+  const [openSshImportLoading, setOpenSshImportLoading] = useState(false);
+  const [openSshImportPending, setOpenSshImportPending] = useState(false);
+  const [openSshImportError, setOpenSshImportError] = useState<string | null>(
+    null,
+  );
   const [deleteTarget, setDeleteTarget] = useState<ConnectionListItem | null>(
     null,
   );
@@ -543,6 +556,70 @@ export function App() {
     setConnectionEditorError(null);
     setConnectionEditorNotice(undefined);
     setConnectionEditorOpen(true);
+  };
+
+  const loadOpenSshImportPreview = async (path: string | null) => {
+    setOpenSshImportLoading(true);
+    setOpenSshImportError(null);
+    try {
+      const preview = await ipc.previewOpenSshConfig(path);
+      setOpenSshImportPreview(preview);
+    } catch (error) {
+      setOpenSshImportPreview(undefined);
+      setOpenSshImportError(localizedErrorText(error));
+    } finally {
+      setOpenSshImportLoading(false);
+    }
+  };
+
+  const openOpenSshImport = () => {
+    setOpenSshImportOpen(true);
+    setOpenSshImportPreview(undefined);
+    setOpenSshImportError(null);
+    void loadOpenSshImportPreview(null);
+  };
+
+  const browseOpenSshConfig = async () => {
+    try {
+      const selected = await openFileDialog({
+        multiple: false,
+        directory: false,
+        title: t("connectionImport.chooseFileTitle"),
+        filters: [
+          {
+            name: t("connectionImport.openSshConfig"),
+            extensions: ["config", "conf", "txt"],
+          },
+        ],
+      });
+      if (typeof selected === "string") {
+        await loadOpenSshImportPreview(selected);
+      }
+    } catch (error) {
+      setOpenSshImportError(localizedErrorText(error));
+    }
+  };
+
+  const importOpenSshConnections = async (request: OpenSshImportRequest) => {
+    setOpenSshImportPending(true);
+    setOpenSshImportError(null);
+    try {
+      const result = await ipc.importOpenSshConnections(request);
+      await loadConnectionCatalog();
+      setConnectionCatalogNotice(
+        t("connectionImport.completed", {
+          imported: result.imported,
+          overwritten: result.overwritten,
+          skipped: result.skipped,
+        }),
+      );
+      setOpenSshImportOpen(false);
+      setOpenSshImportPreview(undefined);
+    } catch (error) {
+      setOpenSshImportError(localizedErrorText(error));
+    } finally {
+      setOpenSshImportPending(false);
+    }
   };
 
   const openNewConnectionGroup = () => {
@@ -1215,6 +1292,11 @@ export function App() {
               aria-label={t("connectionGroup.new")}
               icon={<FolderPlus size={15} />}
               onClick={openNewConnectionGroup}
+            />
+            <Button
+              aria-label={t("connectionImport.action")}
+              icon={<FileInput size={15} />}
+              onClick={openOpenSshImport}
             />
             <Button
               aria-label={t("connectionCatalog.refresh")}
@@ -1984,6 +2066,7 @@ export function App() {
                     loadingConnectionId={connectionActionId}
                     recentConnections={recentConnections}
                     totalConnections={connectionCatalog.connections.length}
+                    onImportConfig={openOpenSshImport}
                     onNewConnection={openNewConnectionEditor}
                     onQuickConnect={(item) => void loadSavedConnection(item)}
                   />
@@ -2015,6 +2098,7 @@ export function App() {
                 loadingConnectionId={connectionActionId}
                 recentConnections={recentConnections}
                 totalConnections={connectionCatalog.connections.length}
+                onImportConfig={openOpenSshImport}
                 onNewConnection={openNewConnectionEditor}
                 onQuickConnect={(item) => void loadSavedConnection(item)}
               />
@@ -2208,7 +2292,7 @@ export function App() {
         key={
           connectionGroupDialogOpen
             ? (connectionGroupInitialValue?.id ?? "new")
-            : "closed"
+            : "connection-group-closed"
         }
         errorMessage={connectionGroupError ?? undefined}
         initialValue={connectionGroupInitialValue}
@@ -2221,6 +2305,30 @@ export function App() {
           }
         }}
         onSubmit={(group) => void saveConnectionGroup(group)}
+      />
+
+      <OpenSshImportDialog
+        key={
+          openSshImportPreview
+            ? `${openSshImportPreview.sourcePath}:${openSshImportPreview.items.map((item) => item.sourceId).join("|")}`
+            : openSshImportOpen
+              ? "loading"
+              : "openssh-import-closed"
+        }
+        errorMessage={openSshImportError ?? undefined}
+        loading={openSshImportLoading}
+        open={openSshImportOpen}
+        pending={openSshImportPending}
+        preview={openSshImportPreview}
+        onBrowse={() => void browseOpenSshConfig()}
+        onClose={() => {
+          if (!openSshImportPending) {
+            setOpenSshImportOpen(false);
+            setOpenSshImportError(null);
+          }
+        }}
+        onLoadDefault={() => void loadOpenSshImportPreview(null)}
+        onSubmit={(request) => void importOpenSshConnections(request)}
       />
 
       <ConnectionEditorDialog
