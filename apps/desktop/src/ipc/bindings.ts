@@ -153,6 +153,14 @@ async deleteConnection(id: string) : Promise<Result<boolean, CommandError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async recordSuccessfulConnection(id: string) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("record_successful_connection", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async saveConnectionGroup(group: ConnectionGroup) : Promise<Result<null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("save_connection_group", { group }) };

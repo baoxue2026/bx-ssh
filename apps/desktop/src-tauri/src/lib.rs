@@ -21,8 +21,9 @@ mod update;
 
 use connections::{
     delete_connection, delete_connection_group, get_connection, list_connections,
-    reorder_connection_groups, reorder_connections, save_connection, save_connection_group,
-    set_connection_favorite, set_connection_group_collapsed, ConnectionRepositoryState,
+    record_successful_connection, reorder_connection_groups, reorder_connections, save_connection,
+    save_connection_group, set_connection_favorite, set_connection_group_collapsed,
+    ConnectionRepositoryState,
 };
 #[cfg(any(debug_assertions, test))]
 use desktop_shell::AppMenuAction;
@@ -70,6 +71,7 @@ fn command_builder() -> Builder<tauri::Wry> {
             connections::get_connection,
             connections::save_connection,
             connections::delete_connection,
+            connections::record_successful_connection,
             connections::save_connection_group,
             connections::delete_connection_group,
             connections::set_connection_group_collapsed,
@@ -190,6 +192,7 @@ pub fn run() {
             get_connection,
             save_connection,
             delete_connection,
+            record_successful_connection,
             save_connection_group,
             delete_connection_group,
             set_connection_group_collapsed,
