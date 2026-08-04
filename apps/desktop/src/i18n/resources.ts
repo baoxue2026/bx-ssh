@@ -55,6 +55,79 @@ export const resources = {
         trustFingerprint: "信任此主机指纹",
         username: "用户名",
       },
+      connectionEditor: {
+        actions: {
+          applyDraft: "应用草稿",
+          clearColor: "清除颜色",
+          editDraft: "编辑连接草稿",
+          newConnection: "新建连接",
+        },
+        auth: {
+          keyboardInteractive: "Keyboard Interactive",
+          password: "密码凭据",
+          privateKey: "私钥",
+        },
+        description:
+          "在此检查连接配置。应用后仅生成本地草稿，下一阶段接入安全持久化。",
+        draftReady: "连接草稿已生成，尚未写入本地数据库。",
+        fields: {
+          authMethod: "认证方式",
+          color: "标识颜色",
+          connectTimeout: "连接超时（秒）",
+          credentialRef: "凭据引用",
+          group: "分组",
+          host: "主机地址",
+          keepAlive: "KeepAlive 间隔（秒）",
+          keyReference: "私钥引用",
+          name: "连接名称",
+          noColor: "未设置",
+          notes: "备注",
+          port: "端口",
+          username: "用户名",
+        },
+        help: {
+          authentication:
+            "认证引用只保存标识，不在连接配置中保存密码或私钥明文。",
+          color: "用于连接列表中的快速识别。",
+          credentialRef:
+            "留空表示连接时询问。系统凭据服务将在后续安全任务中提供选择。",
+          host: "支持 IPv4、裸 IPv6 或域名，不要填写协议、路径和端口。",
+          inheritKeepAlive: "留空继承上级设置；0 表示禁用 KeepAlive。",
+          inheritTimeout: "留空继承上级设置。",
+          keyboardInteractive:
+            "连接时由服务端提供交互式问题，配置中不保存回答。",
+          keyReference:
+            "填写密钥记录 ID，不填写私钥路径或私钥内容。密钥选择器将在后续任务接入。",
+          noGroups: "尚无可选分组，连接将归入未分组。",
+        },
+        placeholders: {
+          credentialRef: "例：credential-production-root",
+          group: "未分组",
+          host: "192.168.1.10 或 server.example.com",
+          keyReference: "例：key-ed25519-production",
+          name: "例：生产环境 Web 服务器",
+          notes: "用途、环境或维护信息",
+          username: "例：root",
+        },
+        tabs: {
+          authentication: "认证",
+          basic: "基础信息",
+          hasError: "{{tab}}页签存在错误",
+          label: "连接配置分类",
+          settings: "连接设置",
+        },
+        titleEdit: "编辑连接",
+        titleNew: "新建连接",
+        validation: {
+          color: "颜色必须为 #RRGGBB 格式",
+          host: "请输入有效的 IPv4、裸 IPv6 或域名",
+          keepAlive: "KeepAlive 必须是 0 或正整数",
+          port: "端口必须是 1 到 65535 之间的整数",
+          required: "此项为必填项",
+          timeout: "连接超时必须是大于 0 的整数",
+          wholeNumber: "请输入整数",
+        },
+      },
       status: {
         closing: "正在断开",
         connected: "已连接",
@@ -186,6 +259,82 @@ export const resources = {
         title: "Connection Verification",
         trustFingerprint: "Trust this host fingerprint",
         username: "Username",
+      },
+      connectionEditor: {
+        actions: {
+          applyDraft: "Apply Draft",
+          clearColor: "Clear color",
+          editDraft: "Edit connection draft",
+          newConnection: "New Connection",
+        },
+        auth: {
+          keyboardInteractive: "Keyboard Interactive",
+          password: "Password credential",
+          privateKey: "Private key",
+        },
+        description:
+          "Review the connection configuration here. Applying creates an in-memory draft; secure persistence is added in the next stage.",
+        draftReady:
+          "The connection draft is ready and has not been written to the local database.",
+        fields: {
+          authMethod: "Authentication method",
+          color: "Identity color",
+          connectTimeout: "Connection timeout (seconds)",
+          credentialRef: "Credential reference",
+          group: "Group",
+          host: "Host address",
+          keepAlive: "KeepAlive interval (seconds)",
+          keyReference: "Private key reference",
+          name: "Connection name",
+          noColor: "Not set",
+          notes: "Notes",
+          port: "Port",
+          username: "Username",
+        },
+        help: {
+          authentication:
+            "Authentication references store identifiers only. Passwords and private keys are never stored in the connection configuration.",
+          color: "Used to identify the connection quickly in lists.",
+          credentialRef:
+            "Leave empty to ask when connecting. Credential-service selection is added in a later security task.",
+          host: "Enter an IPv4 address, bare IPv6 address, or hostname without a scheme, path, or port.",
+          inheritKeepAlive:
+            "Leave empty to inherit from the parent scope; 0 disables KeepAlive.",
+          inheritTimeout: "Leave empty to inherit from the parent scope.",
+          keyboardInteractive:
+            "The server supplies interactive prompts when connecting; answers are not stored in this configuration.",
+          keyReference:
+            "Enter a key record ID, not a private-key path or contents. A key picker is added in a later task.",
+          noGroups:
+            "No groups are available yet. The connection will be ungrouped.",
+        },
+        placeholders: {
+          credentialRef: "e.g. credential-production-root",
+          group: "Ungrouped",
+          host: "192.168.1.10 or server.example.com",
+          keyReference: "e.g. key-ed25519-production",
+          name: "e.g. Production web server",
+          notes: "Purpose, environment, or maintenance notes",
+          username: "e.g. root",
+        },
+        tabs: {
+          authentication: "Authentication",
+          basic: "Basic",
+          hasError: "{{tab}} tab has errors",
+          label: "Connection configuration categories",
+          settings: "Connection Settings",
+        },
+        titleEdit: "Edit Connection",
+        titleNew: "New Connection",
+        validation: {
+          color: "Color must use the #RRGGBB format",
+          host: "Enter a valid IPv4 address, bare IPv6 address, or hostname",
+          keepAlive: "KeepAlive must be zero or a positive integer",
+          port: "Port must be an integer from 1 to 65535",
+          required: "This field is required",
+          timeout: "Connection timeout must be a positive integer",
+          wholeNumber: "Enter a whole number",
+        },
       },
       status: {
         closing: "Disconnecting",

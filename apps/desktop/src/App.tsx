@@ -5,14 +5,20 @@ import type { TFunction } from "i18next";
 import { Button, Checkbox, Input, InputNumber, Segmented, Tooltip } from "antd";
 import {
   Circle,
+  FilePenLine,
   Fingerprint,
   FolderOpen,
+  Plus,
   PlugZap,
   ScanSearch,
   SquareTerminal,
   Unplug,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import {
+  ConnectionEditorDialog,
+  type ConnectionEditorValue,
+} from "./components/ConnectionEditorDialog";
 import {
   TerminalPane,
   type TerminalHandle,
@@ -85,6 +91,11 @@ export function App() {
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
   const [updateRequestId, setUpdateRequestId] = useState(0);
+  const [connectionDraft, setConnectionDraft] =
+    useState<ConnectionEditorValue | null>(null);
+  const [connectionEditorInitialValue, setConnectionEditorInitialValue] =
+    useState<ConnectionEditorValue>();
+  const [connectionEditorOpen, setConnectionEditorOpen] = useState(false);
   const terminalRef = useRef<TerminalHandle>(null);
   const sessionIdRef = useRef<string | null>(null);
   const sftpSessionIdRef = useRef<string | null>(null);
@@ -663,6 +674,39 @@ export function App() {
             </span>
           </div>
 
+          <div className="connection-draft-actions">
+            <Button
+              icon={<Plus size={15} />}
+              onClick={() => {
+                setConnectionEditorInitialValue(undefined);
+                setConnectionEditorOpen(true);
+              }}
+              block
+            >
+              {t("connectionEditor.actions.newConnection")}
+            </Button>
+            {connectionDraft && (
+              <Button
+                aria-label={t("connectionEditor.actions.editDraft")}
+                icon={<FilePenLine size={15} />}
+                onClick={() => {
+                  setConnectionEditorInitialValue(connectionDraft);
+                  setConnectionEditorOpen(true);
+                }}
+              />
+            )}
+          </div>
+
+          {connectionDraft && (
+            <FeedbackNotice
+              className="connection-draft-notice"
+              message={connectionDraft.config.name}
+              description={t("connectionEditor.draftReady")}
+              showIcon
+              type="info"
+            />
+          )}
+
           <Segmented<WorkspaceMode>
             className="workspace-mode"
             block
@@ -922,6 +966,16 @@ export function App() {
           />
         )}
       </AppDialog>
+
+      <ConnectionEditorDialog
+        initialValue={connectionEditorInitialValue}
+        open={connectionEditorOpen}
+        onClose={() => setConnectionEditorOpen(false)}
+        onSubmit={(value) => {
+          setConnectionDraft(value);
+          setConnectionEditorOpen(false);
+        }}
+      />
     </div>
   );
 }
