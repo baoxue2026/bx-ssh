@@ -337,6 +337,8 @@ describe("App", { timeout: 15_000 }, () => {
     expect(
       screen.getByText(/只移除本机连接配置，不删除或修改远程数据/),
     ).toBeInTheDocument();
+    const cancel = screen.getByRole("button", { name: /取\s*消/ });
+    await waitFor(() => expect(cancel).toHaveFocus());
 
     fireEvent.click(screen.getByRole("button", { name: "删除本机配置" }));
 
@@ -1091,7 +1093,91 @@ describe("App", { timeout: 15_000 }, () => {
     });
   });
 
-  it("records a successful saved connection without failing the live session", async () => {
+  it("confirms the active session and transfer impact before closing SFTP", async () => {
+    let resolveUpload: ((value: unknown) => void) | undefined;
+    const upload = new Promise((resolve) => {
+      resolveUpload = resolve;
+    });
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-active",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: { path: "/home/bxssh", entries: [] },
+        });
+      }
+      if (command === "upload_sftp_file") {
+        return upload;
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    await screen.findByText("目录为空");
+
+    fireEvent.change(screen.getByLabelText("上传本地源文件"), {
+      target: { value: "D:\\release.zip" },
+    });
+    fireEvent.change(screen.getByLabelText("上传远端目标"), {
+      target: { value: "/home/bxssh/release.zip" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+    fireEvent.click(screen.getByRole("button", { name: "断开" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "关闭会话？" });
+    expect(within(dialog).getByText(/1 个活动连接/)).toHaveTextContent(
+      "1 个进行中的文件传输",
+    );
+    const cancel = within(dialog).getByRole("button", { name: /取\s*消/ });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    expect(commandCalls("close_sftp_session")).toHaveLength(0);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "断开并关闭" }));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("close_sftp_session", {
+        sessionId: "sftp-active",
+      });
+      expect(
+        screen.queryByRole("dialog", { name: "关闭会话？" }),
+      ).not.toBeInTheDocument();
+    });
+
+    await act(async () => {
+      resolveUpload?.({
+        bytes: 1024,
+        bytesPerSecond: 1024,
+        sha256: "a".repeat(64),
+      });
+    });
+    expect(screen.queryByText("1.00 KiB")).not.toBeInTheDocument();
+  });
+
+  it("confirms before closing a saved live session", async () => {
     mocks.invoke.mockImplementation((command: string) => {
       if (command === "app_info") {
         return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
@@ -1182,9 +1268,38 @@ describe("App", { timeout: 15_000 }, () => {
     expect(
       screen.queryByText("recent history unavailable"),
     ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "输入连接密码" }),
+      ).not.toBeInTheDocument(),
+    );
 
+    const disconnect = screen.getByRole("button", { name: "断开" });
+    fireEvent.click(disconnect);
+    expect(commandCalls("close_terminal_session")).toHaveLength(0);
+    const closeDialog = (
+      await screen.findByText("关闭会话？")
+    ).closest<HTMLElement>('[role="dialog"]');
+    expect(closeDialog).not.toBeNull();
+    if (!closeDialog) throw new Error("close session dialog was not rendered");
+    await waitFor(() => expect(closeDialog).toBeVisible());
+    expect(within(closeDialog).getByText(/生产服务器/)).toHaveTextContent(
+      "1 个活动连接",
+    );
+    const cancel = within(closeDialog).getByRole("button", {
+      name: /取\s*消/,
+    });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    fireEvent.click(cancel);
+    await waitFor(() => expect(closeDialog).not.toBeVisible());
+    expect(commandCalls("close_terminal_session")).toHaveLength(0);
+
+    fireEvent.click(disconnect);
+    await waitFor(() => expect(closeDialog).toBeVisible());
     fireEvent.click(
-      screen.getByRole("button", { name: "关闭会话 生产服务器" }),
+      within(closeDialog).getByRole("button", {
+        name: "断开并关闭",
+      }),
     );
     await waitFor(() => {
       expect(mocks.invoke).toHaveBeenCalledWith("close_terminal_session", {

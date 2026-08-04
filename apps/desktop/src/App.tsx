@@ -155,8 +155,14 @@ export function App() {
   const [sftpDirectory, setSftpDirectory] =
     useState<RemoteDirectoryListing | null>(null);
   const [sftpBusy, setSftpBusy] = useState(false);
+  const [sftpTransferActive, setSftpTransferActive] = useState(false);
   const [sftpTransferResult, setSftpTransferResult] =
     useState<SftpTransferResult | null>(null);
+  const [sessionCloseOpen, setSessionCloseOpen] = useState(false);
+  const [sessionClosePending, setSessionClosePending] = useState(false);
+  const [sessionCloseError, setSessionCloseError] = useState<string | null>(
+    null,
+  );
   const [exitImpact, setExitImpact] = useState<ExitImpact | null>(null);
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
@@ -236,7 +242,10 @@ export function App() {
   const connectionAttemptRef = useRef(0);
   const connectionFlowPendingRef = useRef(false);
   const sessionTabSequenceRef = useRef(0);
+  const sftpOperationGenerationRef = useRef(0);
+  const sessionCloseCancelButtonRef = useRef<HTMLButtonElement>(null);
   const exitCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const deleteCancelButtonRef = useRef<HTMLButtonElement>(null);
   const connectionStateRef = useRef<ConnectionState>("idle");
   const hostKeyRef = useRef<HostKeyInfo | null>(null);
   const localizedErrorText = useCallback(
@@ -980,14 +989,16 @@ export function App() {
 
       ended = true;
       void enableLowMemoryUsage();
+      sessionIdRef.current = null;
+      setSessionId(null);
+      setSessionCloseOpen(false);
+      setSessionCloseError(null);
       if (event.type === "error") {
         setErrorMessage(event.message);
         setConnectionState("failed");
         return;
       }
 
-      sessionIdRef.current = null;
-      setSessionId(null);
       setConnectionState("disconnected");
     };
     const handleTerminalOutput = (data: ArrayBuffer) => {
@@ -1141,45 +1152,10 @@ export function App() {
     }
   };
 
-  const closeSession = async () => {
-    const activeSessionId =
-      workspaceMode === "terminal" ? sessionId : sftpSessionId;
-    if (!activeSessionId) {
-      return;
-    }
-
-    setConnectionState("closing");
-    try {
-      if (workspaceMode === "terminal") {
-        await ipc.closeTerminalSession(activeSessionId);
-      } else {
-        await ipc.closeSftpSession(activeSessionId);
-        sftpSessionIdRef.current = null;
-        setSftpSessionId(null);
-        setSftpDirectory(null);
-        setConnectionState("disconnected");
-        void enableLowMemoryUsage();
-      }
-    } catch (error) {
-      setErrorMessage(localizedErrorText(error));
-      if (workspaceMode === "terminal") {
-        sessionIdRef.current = null;
-        setSessionId(null);
-      } else {
-        sftpSessionIdRef.current = null;
-        setSftpSessionId(null);
-        setSftpDirectory(null);
-      }
-      setConnectionState("disconnected");
-    }
-  };
-
-  const closeActiveSessionTab = async () => {
+  const resetSessionWorkspace = () => {
     connectionAttemptRef.current += 1;
     connectionFlowPendingRef.current = false;
-    if (sessionId || sftpSessionId) {
-      await closeSession();
-    }
+    sftpOperationGenerationRef.current += 1;
     setConnectionLaunchStep(undefined);
     setConnectionState("idle");
     sessionIdRef.current = null;
@@ -1187,6 +1163,12 @@ export function App() {
     sftpSessionIdRef.current = null;
     setSftpSessionId(null);
     setSftpDirectory(null);
+    setSftpBusy(false);
+    setSftpTransferActive(false);
+    setSftpTransferResult(null);
+    setSessionCloseOpen(false);
+    setSessionClosePending(false);
+    setSessionCloseError(null);
     setActiveSessionTab(null);
     setLoadedConnectionId(null);
     loadedConnectionIdRef.current = null;
@@ -1196,21 +1178,118 @@ export function App() {
     terminalRef.current?.reset();
   };
 
+  const requestSessionClose = () => {
+    const impact = {
+      activeSessions:
+        Number(sessionId !== null) + Number(sftpSessionId !== null),
+      activeTransfers: Number(sftpTransferActive),
+    };
+
+    if (!impact.activeSessions && !impact.activeTransfers) {
+      resetSessionWorkspace();
+      return;
+    }
+
+    setSessionCloseError(null);
+    setSessionCloseOpen(true);
+  };
+
+  const confirmSessionClose = async () => {
+    const terminalSessionId = sessionId ?? sessionIdRef.current;
+    const fileSessionId = sftpSessionId ?? sftpSessionIdRef.current;
+    const connectionAttempt = connectionAttemptRef.current;
+    const sftpOperationGeneration = sftpOperationGenerationRef.current;
+    setSessionClosePending(true);
+    setSessionCloseError(null);
+    setConnectionState("closing");
+    connectionAttemptRef.current += 1;
+    sftpOperationGenerationRef.current += 1;
+
+    const failures: unknown[] = [];
+    if (terminalSessionId) {
+      try {
+        await ipc.closeTerminalSession(terminalSessionId);
+        sessionIdRef.current = null;
+        setSessionId(null);
+      } catch (error) {
+        if (isClosedSessionError(error)) {
+          sessionIdRef.current = null;
+          setSessionId(null);
+        } else {
+          failures.push(error);
+        }
+      }
+    }
+
+    if (fileSessionId) {
+      try {
+        await ipc.closeSftpSession(fileSessionId);
+        sftpSessionIdRef.current = null;
+        setSftpSessionId(null);
+      } catch (error) {
+        if (isClosedSessionError(error)) {
+          sftpSessionIdRef.current = null;
+          setSftpSessionId(null);
+        } else {
+          failures.push(error);
+        }
+      }
+    }
+
+    if (failures.length > 0) {
+      connectionAttemptRef.current = connectionAttempt;
+      sftpOperationGenerationRef.current = sftpOperationGeneration;
+      setSessionClosePending(false);
+      setSessionCloseError(localizedErrorText(failures[0]));
+      setConnectionState(
+        sessionIdRef.current || sftpSessionIdRef.current
+          ? "connected"
+          : "disconnected",
+      );
+      return;
+    }
+
+    setSessionClosePending(false);
+    setSessionCloseOpen(false);
+    setSessionCloseError(null);
+    resetSessionWorkspace();
+    void enableLowMemoryUsage();
+  };
+
+  const cancelSessionClose = () => {
+    if (sessionClosePending) {
+      return;
+    }
+    setSessionCloseOpen(false);
+    setSessionCloseError(null);
+  };
+
   const navigateSftp = async (path: string) => {
     const activeSessionId = sftpSessionIdRef.current;
     if (!activeSessionId) {
       return;
     }
+    const operationGeneration = sftpOperationGenerationRef.current;
 
     setSftpBusy(true);
     setErrorMessage(null);
     try {
       const directory = await ipc.listSftpDirectory(activeSessionId, path);
+      if (
+        operationGeneration !== sftpOperationGenerationRef.current ||
+        sftpSessionIdRef.current !== activeSessionId
+      ) {
+        return;
+      }
       setSftpDirectory(directory);
     } catch (error) {
-      setErrorMessage(localizedErrorText(error));
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setErrorMessage(localizedErrorText(error));
+      }
     } finally {
-      setSftpBusy(false);
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setSftpBusy(false);
+      }
     }
   };
 
@@ -1223,8 +1302,10 @@ export function App() {
     if (!activeSessionId) {
       return;
     }
+    const operationGeneration = sftpOperationGenerationRef.current;
 
     setSftpBusy(true);
+    setSftpTransferActive(true);
     setErrorMessage(null);
     setSftpTransferResult(null);
     try {
@@ -1234,16 +1315,33 @@ export function App() {
         remotePath,
         language,
       );
+      if (
+        operationGeneration !== sftpOperationGenerationRef.current ||
+        sftpSessionIdRef.current !== activeSessionId
+      ) {
+        return;
+      }
       setSftpTransferResult({ direction: "upload", summary });
       const directory = await ipc.listSftpDirectory(
         activeSessionId,
         sftpDirectory?.path ?? ".",
       );
+      if (
+        operationGeneration !== sftpOperationGenerationRef.current ||
+        sftpSessionIdRef.current !== activeSessionId
+      ) {
+        return;
+      }
       setSftpDirectory(directory);
     } catch (error) {
-      setErrorMessage(localizedErrorText(error));
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setErrorMessage(localizedErrorText(error));
+      }
     } finally {
-      setSftpBusy(false);
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setSftpBusy(false);
+        setSftpTransferActive(false);
+      }
     }
   };
 
@@ -1252,8 +1350,10 @@ export function App() {
     if (!activeSessionId) {
       return;
     }
+    const operationGeneration = sftpOperationGenerationRef.current;
 
     setSftpBusy(true);
+    setSftpTransferActive(true);
     setErrorMessage(null);
     setSftpTransferResult(null);
     try {
@@ -1263,11 +1363,22 @@ export function App() {
         localPath,
         language,
       );
+      if (
+        operationGeneration !== sftpOperationGenerationRef.current ||
+        sftpSessionIdRef.current !== activeSessionId
+      ) {
+        return;
+      }
       setSftpTransferResult({ direction: "download", summary });
     } catch (error) {
-      setErrorMessage(localizedErrorText(error));
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setErrorMessage(localizedErrorText(error));
+      }
     } finally {
-      setSftpBusy(false);
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setSftpBusy(false);
+        setSftpTransferActive(false);
+      }
     }
   };
 
@@ -1333,6 +1444,10 @@ export function App() {
   const connected = connectionState === "connected";
   const activeSessionId =
     workspaceMode === "terminal" ? sessionId : sftpSessionId;
+  const currentSessionCloseImpact = {
+    activeSessions: Number(sessionId !== null) + Number(sftpSessionId !== null),
+    activeTransfers: Number(sftpTransferActive),
+  };
 
   return (
     <div className="app-shell">
@@ -2104,8 +2219,7 @@ export function App() {
                 danger
                 icon={<Unplug size={15} />}
                 loading={connectionState === "closing"}
-                disabled={workspaceMode === "sftp" && sftpBusy}
-                onClick={() => void closeSession()}
+                onClick={requestSessionClose}
                 block
               >
                 {t("connection.disconnect")}
@@ -2160,7 +2274,7 @@ export function App() {
               disabled={busy || connectionLaunchStep !== undefined}
               statusLabel={connectionLabel(connectionState, t)}
               tab={activeSessionTab}
-              onClose={() => void closeActiveSessionTab()}
+              onClose={requestSessionClose}
             />
           )}
           <div className="session-workspace-content">
@@ -2279,6 +2393,54 @@ export function App() {
       />
 
       <AppDialog
+        open={sessionCloseOpen}
+        title={t("sessionClose.title")}
+        closable={!sessionClosePending}
+        closeOnEscape={!sessionClosePending}
+        maskClosable={false}
+        initialFocusRef={sessionCloseCancelButtonRef}
+        onClose={cancelSessionClose}
+        description={
+          sessionCloseOpen
+            ? sessionCloseImpactMessage(
+                currentSessionCloseImpact,
+                activeSessionTab?.name,
+                t,
+                language,
+              )
+            : undefined
+        }
+        footer={
+          <>
+            <Button
+              ref={sessionCloseCancelButtonRef}
+              disabled={sessionClosePending}
+              onClick={cancelSessionClose}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              danger
+              loading={sessionClosePending}
+              type="primary"
+              onClick={() => void confirmSessionClose()}
+            >
+              {t("sessionClose.confirm")}
+            </Button>
+          </>
+        }
+      >
+        {sessionCloseError && (
+          <FeedbackNotice
+            type="error"
+            showIcon
+            message={t("sessionClose.error")}
+            description={sessionCloseError}
+          />
+        )}
+      </AppDialog>
+
+      <AppDialog
         open={exitImpact !== null}
         title={t("exit.title")}
         closable={false}
@@ -2325,6 +2487,7 @@ export function App() {
         closable={!deletePending}
         closeOnEscape={!deletePending}
         maskClosable={false}
+        initialFocusRef={deleteCancelButtonRef}
         onClose={() => {
           if (!deletePending) {
             setDeleteTarget(null);
@@ -2341,6 +2504,7 @@ export function App() {
         footer={
           <>
             <Button
+              ref={deleteCancelButtonRef}
               disabled={deletePending}
               onClick={() => {
                 setDeleteTarget(null);
@@ -2366,6 +2530,15 @@ export function App() {
           showIcon
           type="warning"
         />
+        {deleteTarget &&
+          activeSessionTab?.connectionId === deleteTarget.config.id &&
+          (sessionId !== null || sftpSessionId !== null) && (
+            <FeedbackNotice
+              message={t("connectionCatalog.activeSessionUnaffected")}
+              showIcon
+              type="info"
+            />
+          )}
         {deleteError && (
           <FeedbackNotice
             className="connection-delete-error"
@@ -2694,6 +2867,33 @@ function exitImpactMessage(
       style: "long",
       type: "conjunction",
     }).format(activity),
+  });
+}
+
+function sessionCloseImpactMessage(
+  impact: ExitImpact,
+  sessionName: string | undefined,
+  t: TFunction,
+  language: string,
+): string {
+  const activity = [];
+  if (impact.activeSessions > 0) {
+    activity.push(
+      t("sessionClose.activeSessions", { count: impact.activeSessions }),
+    );
+  }
+  if (impact.activeTransfers > 0) {
+    activity.push(
+      t("sessionClose.activeTransfers", { count: impact.activeTransfers }),
+    );
+  }
+
+  return t("sessionClose.message", {
+    activity: new Intl.ListFormat(language, {
+      style: "long",
+      type: "conjunction",
+    }).format(activity),
+    name: sessionName ?? t("sessionClose.currentSession"),
   });
 }
 
