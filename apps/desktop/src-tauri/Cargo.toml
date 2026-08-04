@@ -19,6 +19,7 @@ tauri-build.workspace = true
 
 [dependencies]
 bx-contracts.workspace = true
+bx-persistence.workspace = true
 bx-ssh-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

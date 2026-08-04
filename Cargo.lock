@@ -592,10 +592,12 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm 0.10.3",
  "argon2 0.5.3",
+ "bx-contracts",
  "getrandom 0.3.4",
  "keyring",
  "rusqlite",
  "secrecy",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.19",
 ]
@@ -617,6 +619,7 @@ name = "bx-ssh-desktop"
 version = "0.1.0"
 dependencies = [
  "bx-contracts",
+ "bx-persistence",
  "bx-ssh-core",
  "serde",
  "serde_json",

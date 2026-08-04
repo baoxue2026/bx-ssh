@@ -52,6 +52,22 @@ describe("IPC client", () => {
     });
   });
 
+  it("uses generated connection query commands", async () => {
+    mocks.invoke.mockResolvedValue({ groups: [], connections: [] });
+
+    await expect(ipc.listConnections()).resolves.toEqual({
+      groups: [],
+      connections: [],
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("list_connections");
+
+    mocks.invoke.mockResolvedValue(null);
+    await expect(ipc.getConnection("connection-1")).resolves.toBeNull();
+    expect(mocks.invoke).toHaveBeenCalledWith("get_connection", {
+      id: "connection-1",
+    });
+  });
+
   it("creates typed channels for the raw terminal command", async () => {
     const onEvent = vi.fn();
     const onOutput = vi.fn();

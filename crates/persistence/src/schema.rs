@@ -33,6 +33,17 @@ mod tests {
     }
 
     #[test]
+    fn application_migration_versions_are_strictly_increasing() {
+        assert!(APPLICATION_MIGRATIONS
+            .windows(2)
+            .all(|pair| pair[0].version() < pair[1].version()));
+        assert_eq!(
+            APPLICATION_MIGRATIONS.last().map(|item| item.version()),
+            Some(LATEST_SCHEMA_VERSION)
+        );
+    }
+
+    #[test]
     fn initial_schema_contains_the_phase_one_entities_and_indexes() {
         let connection = migrated_connection();
         let tables = object_names(&connection, "table");
