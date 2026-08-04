@@ -25,6 +25,8 @@ describe("BX SSH desktop shell", () => {
     await expect($(".brand")).toHaveText(appInfo.name);
     await expect($(".version")).toHaveText(`v${appInfo.version}`);
     await expect($("h1=连接验证")).toBeDisplayed();
+    await expect($(".terminal-empty")).toHaveAttribute("role", "status");
+    await expect($(".terminal-empty")).toHaveAttribute("aria-live", "polite");
   });
 
   it("keeps form state consistent while switching workspace modes", async () => {
@@ -35,6 +37,8 @@ describe("BX SSH desktop shell", () => {
 
     await expect($(".sidebar-heading span")).toHaveText("SFTP v3");
     await expect(host).toHaveValue("ssh.example.test");
+    await expect($(".sftp-empty")).toHaveAttribute("role", "status");
+    await expect($(".sftp-empty")).toHaveAttribute("aria-live", "polite");
   });
 
   it("handles the fixed workspace shortcuts", async () => {

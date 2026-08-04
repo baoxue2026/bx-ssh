@@ -158,6 +158,40 @@ describe("App", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("check_for_update");
   });
 
+  it("prevents duplicate update checks while a request is pending", async () => {
+    let resolveCheck: ((value: null) => void) | undefined;
+    const checkResponse = new Promise<null>((resolve) => {
+      resolveCheck = resolve;
+    });
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "check_for_update") {
+        return checkResponse;
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    const checkButton = screen.getByRole("button", { name: "检查更新" });
+    act(() => {
+      checkButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      checkButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(
+      mocks.invoke.mock.calls.filter(
+        ([command]) => command === "check_for_update",
+      ),
+    ).toHaveLength(1);
+
+    await act(async () => resolveCheck?.(null));
+    expect(
+      await screen.findByText("当前版本 v0.1.0 已是最新版本。"),
+    ).toBeInTheDocument();
+  });
+
   it("controls the native window from the custom title bar", async () => {
     renderApp();
 
@@ -224,6 +258,25 @@ describe("App", () => {
       expect(screen.getByText("ssh-ed25519")).toBeInTheDocument();
       expect(screen.getByText("信任此主机指纹")).toBeInTheDocument();
     });
+  });
+
+  it("announces connection failures assertively", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.reject(new Error("Network unavailable"));
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveAttribute("aria-live", "assertive");
+    expect(alert).toHaveTextContent("Network unavailable");
   });
 
   it("requires confirmation before exiting with active work", async () => {

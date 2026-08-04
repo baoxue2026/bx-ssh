@@ -2,6 +2,7 @@ import { ConfigProvider, theme } from "antd";
 import enUS from "antd/locale/en_US";
 import zhCN from "antd/locale/zh_CN";
 import { App } from "./App";
+import { DefaultErrorFallback, ErrorBoundary } from "./components/Feedback";
 import { UI_FONT_STACK } from "./ui/fontStacks";
 import { useUiPreferences } from "./ui/preferenceContext";
 
@@ -23,7 +24,13 @@ export function ThemedApplication() {
         },
       }}
     >
-      <App />
+      <ErrorBoundary
+        fallback={() => (
+          <DefaultErrorFallback onReload={() => window.location.reload()} />
+        )}
+      >
+        <App />
+      </ErrorBoundary>
     </ConfigProvider>
   );
 }

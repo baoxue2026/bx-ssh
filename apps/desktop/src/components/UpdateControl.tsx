@@ -1,10 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Modal, Progress, Tooltip } from "antd";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Button, Progress, Tooltip } from "antd";
 import type { TFunction } from "i18next";
 import { Download, RefreshCw, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { AppDialog, FeedbackNotice } from "./Feedback";
 import { ipc } from "../ipc/client";
 import type { UpdateInfo } from "../ipc/bindings";
+import { useAsyncAction } from "./useAsyncAction";
 
 type UpdateStatus =
   | "idle"
@@ -32,6 +41,8 @@ export function UpdateControl({
   const [totalBytes, setTotalBytes] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const handledRequestId = useRef(0);
+  const checkButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogDescriptionId = useId();
 
   const progress = useMemo(() => {
     if (!totalBytes || totalBytes <= 0) return 0;
@@ -52,14 +63,16 @@ export function UpdateControl({
       setOpen(true);
     }
   }, [t]);
+  const { execute: runCheckForUpdate, pending: checkPending } =
+    useAsyncAction(checkForUpdate);
 
   useEffect(() => {
     if (requestId <= handledRequestId.current) return;
     handledRequestId.current = requestId;
-    void checkForUpdate();
-  }, [checkForUpdate, requestId]);
+    void runCheckForUpdate();
+  }, [requestId, runCheckForUpdate]);
 
-  const installUpdate = async () => {
+  const installUpdate = useCallback(async () => {
     if (!update) return;
 
     setStatus("downloading");
@@ -81,7 +94,9 @@ export function UpdateControl({
       setErrorMessage(errorText(error, t("update.serviceUnavailable")));
       setStatus("error");
     }
-  };
+  }, [t, update]);
+  const { execute: runInstallUpdate, pending: installPending } =
+    useAsyncAction(installUpdate);
 
   const close = () => {
     if (status === "downloading" || status === "verified") return;
@@ -93,22 +108,26 @@ export function UpdateControl({
       <Tooltip title={t("update.checking")}>
         <Button
           className="update-trigger"
+          ref={checkButtonRef}
           type="text"
           size="small"
           aria-label={t("update.checking")}
           icon={<RefreshCw size={14} />}
-          loading={status === "checking"}
-          onClick={() => void checkForUpdate()}
+          loading={status === "checking" || checkPending}
+          onClick={() => void runCheckForUpdate()}
         />
       </Tooltip>
 
-      <Modal
+      <AppDialog
         title={modalTitle(status, update, t)}
         open={open}
         width={440}
         closable={status !== "downloading" && status !== "verified"}
+        closeOnEscape={status !== "downloading" && status !== "verified"}
         maskClosable={false}
-        onCancel={close}
+        onClose={close}
+        returnFocusRef={checkButtonRef}
+        descriptionId={dialogDescriptionId}
         footer={
           status === "available"
             ? [
@@ -119,7 +138,8 @@ export function UpdateControl({
                   key="install"
                   type="primary"
                   icon={<Download size={15} />}
-                  onClick={() => void installUpdate()}
+                  loading={installPending}
+                  onClick={() => void runInstallUpdate()}
                 >
                   {t("update.downloadAndInstall")}
                 </Button>,
@@ -133,57 +153,61 @@ export function UpdateControl({
                 ]
         }
       >
-        {status === "current" && (
-          <p className="update-message">
-            {t("update.current", { version: currentVersion })}
-          </p>
-        )}
+        <div id={dialogDescriptionId}>
+          {status === "current" && (
+            <p className="update-message">
+              {t("update.current", { version: currentVersion })}
+            </p>
+          )}
 
-        {status === "available" && update && (
-          <div className="update-details">
-            <div className="update-version-row">
-              <span>
-                {t("update.currentVersion", {
-                  version: update.currentVersion,
-                })}
-              </span>
-              <span>{t("update.newVersion", { version: update.version })}</span>
+          {status === "available" && update && (
+            <div className="update-details">
+              <div className="update-version-row">
+                <span>
+                  {t("update.currentVersion", {
+                    version: update.currentVersion,
+                  })}
+                </span>
+                <span>
+                  {t("update.newVersion", { version: update.version })}
+                </span>
+              </div>
+              {update.notes && <p>{update.notes}</p>}
             </div>
-            {update.notes && <p>{update.notes}</p>}
-          </div>
-        )}
+          )}
 
-        {status === "downloading" && (
-          <div className="update-progress">
-            <Progress
-              percent={progress}
-              status="active"
-              format={() =>
-                totalBytes
-                  ? `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
-                  : formatBytes(downloadedBytes)
-              }
+          {status === "downloading" && (
+            <div className="update-progress">
+              <Progress
+                percent={progress}
+                status="active"
+                format={() =>
+                  totalBytes
+                    ? `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
+                    : formatBytes(downloadedBytes)
+                }
+              />
+              <span>{t("update.downloading")}</span>
+            </div>
+          )}
+
+          {status === "verified" && (
+            <div className="update-verified">
+              <ShieldCheck size={20} />
+              <span>{t("update.verified")}</span>
+            </div>
+          )}
+
+          {status === "error" && errorMessage && (
+            <FeedbackNotice
+              type="error"
+              showIcon
+              message={t("update.error")}
+              description={errorMessage}
             />
-            <span>{t("update.downloading")}</span>
-          </div>
-        )}
-
-        {status === "verified" && (
-          <div className="update-verified">
-            <ShieldCheck size={20} />
-            <span>{t("update.verified")}</span>
-          </div>
-        )}
-
-        {status === "error" && errorMessage && (
-          <Alert
-            type="error"
-            showIcon
-            message={t("update.error")}
-            description={errorMessage}
-          />
-        )}
-      </Modal>
+          )}
+        </div>
+      </AppDialog>
     </>
   );
 }

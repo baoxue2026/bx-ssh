@@ -123,6 +123,12 @@ export const resources = {
       errors: {
         sshOperation: "SSH 操作失败",
       },
+      feedback: {
+        loading: "正在加载",
+        reload: "重新加载",
+        reloadDescription: "当前界面无法继续显示，请重新加载应用。",
+        unexpectedError: "应用遇到问题",
+      },
     },
   },
   "en-US": {
@@ -249,6 +255,12 @@ export const resources = {
       },
       errors: {
         sshOperation: "SSH operation failed",
+      },
+      feedback: {
+        loading: "Loading",
+        reload: "Reload",
+        reloadDescription: "This view cannot continue. Reload the application.",
+        unexpectedError: "The application encountered a problem",
       },
     },
   },

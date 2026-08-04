@@ -2,16 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { TFunction } from "i18next";
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Input,
-  InputNumber,
-  Modal,
-  Segmented,
-  Tooltip,
-} from "antd";
+import { Button, Checkbox, Input, InputNumber, Segmented, Tooltip } from "antd";
 import {
   Circle,
   Fingerprint,
@@ -27,6 +18,7 @@ import {
   type TerminalHandle,
   type TerminalViewport,
 } from "./components/TerminalPane";
+import { AppDialog, EmptyState, FeedbackNotice } from "./components/Feedback";
 import { SftpPane, type SftpTransferResult } from "./components/SftpPane";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { IpcError, ipc } from "./ipc/client";
@@ -803,7 +795,7 @@ export function App() {
           </div>
 
           {errorMessage && (
-            <Alert
+            <FeedbackNotice
               className="connection-error"
               type="error"
               showIcon
@@ -840,10 +832,11 @@ export function App() {
                 onResize={resizeTerminal}
               />
               {!connected && (
-                <div className="terminal-empty" aria-live="polite">
-                  <SquareTerminal size={36} strokeWidth={1.3} />
-                  <span>{connectionLabel(connectionState, t)}</span>
-                </div>
+                <EmptyState
+                  className="terminal-empty"
+                  icon={<SquareTerminal size={36} strokeWidth={1.3} />}
+                  title={connectionLabel(connectionState, t)}
+                />
               )}
             </div>
           </main>
@@ -889,17 +882,17 @@ export function App() {
         <span>UTF-8</span>
       </footer>
 
-      <Modal
+      <AppDialog
         open={exitImpact !== null}
         title={t("exit.title")}
         closable={false}
-        keyboard={!exitPending}
+        closeOnEscape={!exitPending}
         maskClosable={false}
-        afterOpenChange={(open) => {
-          if (open) {
-            exitCancelButtonRef.current?.focus();
-          }
-        }}
+        initialFocusRef={exitCancelButtonRef}
+        onClose={cancelAppExit}
+        description={
+          exitImpact ? exitImpactMessage(exitImpact, t, language) : undefined
+        }
         footer={
           <>
             <Button
@@ -919,18 +912,16 @@ export function App() {
             </Button>
           </>
         }
-        onCancel={cancelAppExit}
       >
-        {exitImpact && <p>{exitImpactMessage(exitImpact, t, language)}</p>}
         {exitError && (
-          <Alert
+          <FeedbackNotice
             type="error"
             showIcon
             message={t("exit.error")}
             description={exitError}
           />
         )}
-      </Modal>
+      </AppDialog>
     </div>
   );
 }
