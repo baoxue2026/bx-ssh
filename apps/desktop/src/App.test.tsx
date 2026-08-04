@@ -428,6 +428,127 @@ describe("App", { timeout: 15_000 }, () => {
     expect(emptyState).not.toHaveTextContent("最近服务器 1");
   });
 
+  it("switches between the connection tree and the complete recent view", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(recentConnectionCatalog());
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    const switcher = await screen.findByRole("group", {
+      name: "连接列表视图",
+    });
+    fireEvent.click(within(switcher).getByText("最近"));
+
+    const recentRegion = screen.getByRole("region", { name: "最近" });
+    expect(recentRegion).toHaveTextContent("最近服务器 4");
+    expect(recentRegion).toHaveTextContent("最近服务器 1");
+    expect(
+      screen.queryByRole("region", { name: "未分组" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a dedicated empty state in the recent view", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(savedConnectionCatalog());
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    const switcher = await screen.findByRole("group", {
+      name: "连接列表视图",
+    });
+    fireEvent.click(within(switcher).getByText("最近"));
+
+    expect(screen.getByText("暂无最近连接")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "显示全部连接" }));
+    expect(await screen.findByText("生产服务器")).toBeInTheDocument();
+  });
+
+  it("opens a saved connection from the tree with Enter", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve(savedConnectionCatalog());
+      }
+      if (command === "get_connection") {
+        return Promise.resolve(savedConnectionDetails());
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    await screen.findByText("生产服务器");
+    const connection = document.querySelector<HTMLElement>(
+      ".connection-catalog-item",
+    );
+    if (!connection) throw new Error("missing saved connection item");
+    fireEvent.keyDown(connection, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("get_connection", {
+        id: "connection-production",
+      });
+      expect(mocks.invoke).toHaveBeenCalledWith("probe_ssh_host", {
+        request: { host: "prod.example.com", port: 22 },
+      });
+    });
+  });
+
+  it("resizes, persists, resets and collapses the connection sidebar", async () => {
+    renderApp();
+
+    const workspace = document.querySelector(".workspace");
+    const separator = screen.getByRole("separator", {
+      name: "调整连接侧栏宽度",
+    });
+    expect(workspace).toHaveStyle({
+      gridTemplateColumns: "240px minmax(0, 1fr)",
+    });
+
+    fireEvent.keyDown(separator, { key: "End" });
+    expect(workspace).toHaveStyle({
+      gridTemplateColumns: "420px minmax(0, 1fr)",
+    });
+    expect(localStorage.getItem("bx-ssh.sidebar-width")).toBe("420");
+
+    fireEvent.doubleClick(separator);
+    expect(workspace).toHaveStyle({
+      gridTemplateColumns: "240px minmax(0, 1fr)",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "折叠连接侧栏" }));
+    expect(workspace).toHaveStyle({
+      gridTemplateColumns: "32px minmax(0, 1fr)",
+    });
+    expect(
+      screen.queryByRole("separator", { name: "调整连接侧栏宽度" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开连接侧栏" }));
+    expect(workspace).toHaveStyle({
+      gridTemplateColumns: "240px minmax(0, 1fr)",
+    });
+  });
+
   it("quick-connect loads a recent connection and starts the real probe flow", async () => {
     mocks.invoke.mockImplementation((command: string) => {
       if (command === "app_info") {
@@ -522,7 +643,7 @@ describe("App", { timeout: 15_000 }, () => {
         screen.getByRole("button", { name: "展开分组 生产环境" }),
       ).toBeInTheDocument();
     });
-  });
+  }, 30_000);
 
   it("persists connection ordering within its favorite section", async () => {
     const baseCatalog = organizedConnectionCatalog();

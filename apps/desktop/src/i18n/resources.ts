@@ -179,6 +179,21 @@ export const resources = {
         resultCount: "{{count}} 项",
         title: "搜索结果",
       },
+      connectionListView: {
+        connections: "连接",
+        emptyDescription: "成功连接后，最近使用的连接会显示在这里。",
+        emptyTitle: "暂无最近连接",
+        label: "连接列表视图",
+        openNamed: "打开 {{name}}",
+        recent: "最近",
+        showConnections: "显示全部连接",
+      },
+      connectionSidebar: {
+        collapse: "折叠连接侧栏",
+        expand: "展开连接侧栏",
+        resize: "调整连接侧栏宽度",
+        widthValue: "侧栏宽度 {{width}} 像素",
+      },
       connectionWorkspace: {
         firstStartDescription: "创建第一个 SSH 连接，连接配置只保存在本机。",
         firstStartTitle: "开始使用 BX SSH",
@@ -477,6 +492,22 @@ export const resources = {
         placeholder: "Search name, host, user, group, or notes",
         resultCount: "{{count}} results",
         title: "Search Results",
+      },
+      connectionListView: {
+        connections: "Connections",
+        emptyDescription:
+          "Recently used connections appear here after a successful connection.",
+        emptyTitle: "No Recent Connections",
+        label: "Connection list view",
+        openNamed: "Open {{name}}",
+        recent: "Recent",
+        showConnections: "Show All Connections",
+      },
+      connectionSidebar: {
+        collapse: "Collapse connection sidebar",
+        expand: "Expand connection sidebar",
+        resize: "Resize connection sidebar",
+        widthValue: "Sidebar width {{width}} pixels",
       },
       connectionWorkspace: {
         firstStartDescription:
