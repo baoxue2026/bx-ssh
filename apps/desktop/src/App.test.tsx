@@ -995,14 +995,15 @@ describe("App", { timeout: 15_000 }, () => {
       expect(mocks.invoke).toHaveBeenCalledWith(
         "start_password_shell",
         expect.objectContaining({
-          onEvent: mocks.channels[0],
-          onOutput: mocks.channels[1],
+          onState: mocks.channels[0],
+          onEvent: mocks.channels[1],
+          onOutput: mocks.channels[2],
         }),
       );
     });
 
     const output = Uint8Array.from([0x62, 0x78]).buffer;
-    act(() => mocks.channels[1].onmessage(output));
+    act(() => mocks.channels[2].onmessage(output));
     const processed = mocks.terminalWrite.mock.calls[0][1] as () => void;
     act(processed);
     expect(mocks.invoke).not.toHaveBeenCalledWith(
@@ -1028,6 +1029,64 @@ describe("App", { timeout: 15_000 }, () => {
         "set_webview_memory_usage",
         { low: false },
       );
+    });
+  });
+
+  it("shows native SSH stages and cancels an active connection attempt", async () => {
+    const pendingStart = new Promise(() => undefined);
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_shell") {
+        return pendingStart;
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+
+    await waitFor(() =>
+      expect(commandCalls("start_password_shell")).toHaveLength(1),
+    );
+    const startCall = commandCalls("start_password_shell")[0][1] as {
+      request: { attemptId: string };
+      onState: { onmessage(message: unknown): void };
+    };
+    act(() =>
+      startCall.onState.onmessage({
+        attemptId: startCall.request.attemptId,
+        stage: "handshaking",
+      }),
+    );
+    expect(await screen.findAllByText("正在进行 SSH 握手")).not.toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "取消连接" }));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("cancel_ssh_connection", {
+        attemptId: startCall.request.attemptId,
+      });
+      expect(screen.getAllByText("等待连接")).not.toHaveLength(0);
+      expect(
+        screen.queryByRole("button", { name: "取消连接" }),
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -1090,6 +1149,7 @@ describe("App", { timeout: 15_000 }, () => {
         password: "secret",
         initialPath: ".",
       }),
+      onState: expect.anything(),
     });
   });
 

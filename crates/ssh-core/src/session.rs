@@ -1,13 +1,48 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use bx_contracts::HostKeyInfo;
+use bx_contracts::{HostKeyInfo, SshConnectionStage};
 use russh::client;
 use russh::keys::{self, ssh_key, HashAlg, PrivateKeyWithHashAlg};
-use tokio::sync::Mutex;
+use tokio::net::{lookup_host, TcpStream};
+use tokio::sync::{watch, Mutex};
 use tokio::time;
 
 use crate::{HostFingerprint, SftpClient, SshEndpoint, SshError, SshShell, TerminalSize};
+
+#[derive(Clone)]
+pub struct ConnectionCancellation {
+    sender: watch::Sender<bool>,
+}
+
+impl Default for ConnectionCancellation {
+    fn default() -> Self {
+        let (sender, _) = watch::channel(false);
+        Self { sender }
+    }
+}
+
+impl ConnectionCancellation {
+    pub fn cancel(&self) {
+        self.sender.send_replace(true);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.sender.borrow()
+    }
+
+    pub async fn cancelled(&self) {
+        let mut receiver = self.sender.subscribe();
+        if *receiver.borrow_and_update() {
+            return;
+        }
+        while receiver.changed().await.is_ok() {
+            if *receiver.borrow_and_update() {
+                return;
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 struct HostKeyVerifier {
@@ -47,13 +82,24 @@ impl ClientSession {
     }
 
     pub async fn open_shell(&self, size: TerminalSize) -> Result<SshShell, SshError> {
-        let channel = self.handle.channel_open_session().await?;
+        let channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(SshError::ChannelOpenFailed)?;
         SshShell::open(channel, size).await
     }
 
     pub async fn open_sftp(&self) -> Result<SftpClient, SshError> {
-        let channel = self.handle.channel_open_session().await?;
-        channel.request_subsystem(true, "sftp").await?;
+        let channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(SshError::ChannelOpenFailed)?;
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(SshError::ChannelOpenFailed)?;
         SftpClient::open(channel.into_stream()).await
     }
 
@@ -66,7 +112,8 @@ impl ClientSession {
 }
 
 pub async fn probe_host_key(endpoint: &SshEndpoint) -> Result<HostKeyInfo, SshError> {
-    let (handle, host_key) = connect(endpoint, None).await?;
+    let cancellation = ConnectionCancellation::default();
+    let (handle, host_key) = connect(endpoint, None, &cancellation, &mut |_| {}).await?;
     handle
         .disconnect(russh::Disconnect::ByApplication, "", "")
         .await?;
@@ -79,16 +126,61 @@ pub async fn authenticate_password(
     expected_fingerprint: &str,
     password: &str,
 ) -> Result<ClientSession, SshError> {
-    validate_username(username)?;
-    let fingerprint = HostFingerprint::parse(expected_fingerprint)?;
-    let (mut handle, host_key) = connect(endpoint, Some(fingerprint)).await?;
-
-    let result = time::timeout(
-        endpoint.operation_timeout(),
-        handle.authenticate_password(username, password),
+    authenticate_password_with_progress(
+        endpoint,
+        username,
+        expected_fingerprint,
+        password,
+        &ConnectionCancellation::default(),
+        |_| {},
     )
     .await
-    .map_err(|_| SshError::AuthenticationTimeout)??;
+}
+
+pub async fn authenticate_password_with_progress<F>(
+    endpoint: &SshEndpoint,
+    username: &str,
+    expected_fingerprint: &str,
+    password: &str,
+    cancellation: &ConnectionCancellation,
+    mut on_stage: F,
+) -> Result<ClientSession, SshError>
+where
+    F: FnMut(SshConnectionStage),
+{
+    validate_username(username)?;
+    let fingerprint = HostFingerprint::parse(expected_fingerprint)?;
+    let (mut handle, host_key) =
+        connect(endpoint, Some(fingerprint), cancellation, &mut on_stage).await?;
+
+    on_stage(SshConnectionStage::Authenticating);
+
+    let authentication = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => {
+            let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
+            return Err(SshError::ConnectionCancelled);
+        }
+        result = time::timeout(
+            endpoint.operation_timeout(),
+            handle.authenticate_password(username, password),
+        ) => result,
+    };
+    let result = match authentication {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => {
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            return Err(SshError::AuthenticationFailed(error));
+        }
+        Err(_) => {
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            return Err(SshError::AuthenticationTimeout);
+        }
+    };
 
     if !result.success() {
         let _ = handle
@@ -110,7 +202,9 @@ pub async fn authenticate_private_key(
     validate_username(username)?;
     let fingerprint = HostFingerprint::parse(expected_fingerprint)?;
     let private_key = keys::load_secret_key(private_key_path, passphrase)?;
-    let (mut handle, host_key) = connect(endpoint, Some(fingerprint)).await?;
+    let cancellation = ConnectionCancellation::default();
+    let (mut handle, host_key) =
+        connect(endpoint, Some(fingerprint), &cancellation, &mut |_| {}).await?;
 
     let result = time::timeout(endpoint.operation_timeout(), async {
         let hash_algorithm = if private_key.algorithm().is_rsa() {
@@ -149,7 +243,43 @@ pub async fn authenticate_private_key(
 async fn connect(
     endpoint: &SshEndpoint,
     expected: Option<HostFingerprint>,
+    cancellation: &ConnectionCancellation,
+    on_stage: &mut impl FnMut(SshConnectionStage),
 ) -> Result<(client::Handle<HostKeyVerifier>, HostKeyInfo), SshError> {
+    on_stage(SshConnectionStage::ResolvingDns);
+    let lookup = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(SshError::ConnectionCancelled),
+        result = time::timeout(
+            endpoint.connect_timeout(),
+            lookup_host((endpoint.host(), endpoint.port())),
+        ) => result,
+    };
+    let addresses = lookup
+        .map_err(|_| SshError::DnsLookupTimeout)?
+        .map_err(SshError::DnsLookupFailed)?
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Err(SshError::DnsLookupFailed(std::io::Error::new(
+            std::io::ErrorKind::AddrNotAvailable,
+            "DNS lookup returned no addresses",
+        )));
+    }
+
+    on_stage(SshConnectionStage::ConnectingTcp);
+    let socket = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(SshError::ConnectionCancelled),
+        result = time::timeout(
+            endpoint.connect_timeout(),
+            TcpStream::connect(addresses.as_slice()),
+        ) => result,
+    }
+    .map_err(|_| SshError::TcpConnectTimeout)?
+    .map_err(SshError::TcpConnectFailed)?;
+    let _ = socket.set_nodelay(true);
+
+    on_stage(SshConnectionStage::Handshaking);
     let observed = Arc::new(Mutex::new(None));
     let handler = HostKeyVerifier {
         expected: expected.clone(),
@@ -157,12 +287,15 @@ async fn connect(
     };
     let config = Arc::new(client_config(endpoint));
 
-    let result = time::timeout(
-        endpoint.connect_timeout(),
-        client::connect(config, (endpoint.host(), endpoint.port()), handler),
-    )
-    .await
-    .map_err(|_| SshError::ConnectTimeout)?;
+    let result = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(SshError::ConnectionCancelled),
+        result = time::timeout(
+            endpoint.connect_timeout(),
+            client::connect_stream(config, socket, handler),
+        ) => result,
+    }
+    .map_err(|_| SshError::HandshakeTimeout)?;
 
     let handle = match result {
         Ok(handle) => handle,
@@ -178,9 +311,9 @@ async fn connect(
                     actual: actual.fingerprint_sha256,
                 });
             }
-            return Err(SshError::Transport(russh::Error::UnknownKey));
+            return Err(SshError::HandshakeFailed(russh::Error::UnknownKey));
         }
-        Err(error) => return Err(SshError::Transport(error)),
+        Err(error) => return Err(SshError::HandshakeFailed(error)),
     };
 
     let host_key = observed
@@ -213,8 +346,41 @@ fn validate_username(username: &str) -> Result<(), SshError> {
 mod tests {
     use std::time::Duration;
 
-    use super::client_config;
+    use super::{client_config, ConnectionCancellation};
     use crate::SshEndpoint;
+    use tokio::time;
+
+    #[tokio::test]
+    async fn observes_cancellation_requested_before_waiting() {
+        let cancellation = ConnectionCancellation::default();
+        cancellation.cancel();
+
+        time::timeout(Duration::from_millis(50), cancellation.cancelled())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn wakes_all_connection_cancellation_waiters() {
+        let cancellation = ConnectionCancellation::default();
+        let first = tokio::spawn({
+            let cancellation = cancellation.clone();
+            async move { cancellation.cancelled().await }
+        });
+        let second = tokio::spawn({
+            let cancellation = cancellation.clone();
+            async move { cancellation.cancelled().await }
+        });
+
+        tokio::task::yield_now().await;
+        cancellation.cancel();
+        time::timeout(Duration::from_millis(50), async {
+            first.await.unwrap();
+            second.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
 
     #[test]
     fn keeps_idle_sessions_alive_and_detects_unresponsive_servers() {

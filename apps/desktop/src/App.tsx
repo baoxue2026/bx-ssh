@@ -14,6 +14,7 @@ import type { TFunction } from "i18next";
 import { Button, Checkbox, Input, InputNumber, Segmented, Tooltip } from "antd";
 import {
   Circle,
+  CircleX,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -80,6 +81,8 @@ import type {
   OpenSshImportPreview,
   OpenSshImportRequest,
   RemoteDirectoryListing,
+  SshConnectionEvent,
+  SshConnectionStage,
   TerminalEvent,
 } from "./ipc/bindings";
 import { useUiPreferences } from "./ui/preferenceContext";
@@ -143,6 +146,8 @@ export function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("idle");
+  const [connectionStage, setConnectionStage] =
+    useState<SshConnectionStage | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("terminal");
   const [connectionListMode, setConnectionListMode] =
@@ -240,6 +245,7 @@ export function App() {
   const resizeTimerRef = useRef<number | null>(null);
   const memoryUsageTimerRef = useRef<number | null>(null);
   const connectionAttemptRef = useRef(0);
+  const activeConnectionAttemptIdRef = useRef<string | null>(null);
   const connectionFlowPendingRef = useRef(false);
   const sessionTabSequenceRef = useRef(0);
   const sftpOperationGenerationRef = useRef(0);
@@ -531,6 +537,10 @@ export function App() {
   useEffect(
     () => () => {
       connectionAttemptRef.current += 1;
+      const activeAttemptId = activeConnectionAttemptIdRef.current;
+      if (activeAttemptId) {
+        void ipc.cancelSshConnection(activeAttemptId);
+      }
       if (resizeTimerRef.current !== null) {
         window.clearTimeout(resizeTimerRef.current);
       }
@@ -554,6 +564,7 @@ export function App() {
     setTrusted(false);
     setErrorMessage(null);
     setConnectionState("idle");
+    setConnectionStage(null);
   }, []);
 
   const probeHost = async (
@@ -937,6 +948,43 @@ export function App() {
     }
   };
 
+  const beginSshConnectionAttempt = () => {
+    const attemptId = createConnectionAttemptId();
+    activeConnectionAttemptIdRef.current = attemptId;
+    setConnectionStage("created");
+    return attemptId;
+  };
+
+  const handleSshConnectionEvent = (
+    attemptId: string,
+    event: SshConnectionEvent,
+  ) => {
+    if (
+      activeConnectionAttemptIdRef.current !== attemptId ||
+      event.attemptId !== attemptId
+    ) {
+      return;
+    }
+    setConnectionStage(event.stage);
+  };
+
+  const requestConnectionCancellation = () => {
+    const attemptId = activeConnectionAttemptIdRef.current;
+    activeConnectionAttemptIdRef.current = null;
+    if (attemptId) {
+      void ipc.cancelSshConnection(attemptId).catch(() => undefined);
+    }
+  };
+
+  const cancelDirectConnection = () => {
+    connectionAttemptRef.current += 1;
+    requestConnectionCancellation();
+    setPassword("");
+    setErrorMessage(null);
+    setConnectionStage(null);
+    setConnectionState(hostKeyRef.current ? "ready" : "idle");
+  };
+
   const connectTerminal = async (
     passwordOverride?: string,
   ): Promise<boolean> => {
@@ -950,6 +998,7 @@ export function App() {
     terminalRef.current?.reset();
 
     const attempt = ++connectionAttemptRef.current;
+    const connectionAttemptId = beginSshConnectionAttempt();
     let ended = false;
     let acknowledgementSessionId: string | null = null;
     let receivedSequence = 0;
@@ -1024,6 +1073,7 @@ export function App() {
       await enableLowMemoryUsage();
       const response = await ipc.startPasswordShell(
         {
+          attemptId: connectionAttemptId,
           host,
           port,
           username,
@@ -1032,6 +1082,8 @@ export function App() {
           ...viewport,
         },
         {
+          onState: (event) =>
+            handleSshConnectionEvent(connectionAttemptId, event),
           onEvent: handleTerminalEvent,
           onOutput: handleTerminalOutput,
         },
@@ -1070,6 +1122,10 @@ export function App() {
       setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
       return false;
+    } finally {
+      if (activeConnectionAttemptIdRef.current === connectionAttemptId) {
+        activeConnectionAttemptIdRef.current = null;
+      }
     }
   };
 
@@ -1083,17 +1139,22 @@ export function App() {
     setSftpTransferResult(null);
     terminalRef.current?.reset();
     const attempt = ++connectionAttemptRef.current;
+    const connectionAttemptId = beginSshConnectionAttempt();
 
     try {
       await enableLowMemoryUsage();
-      const response = await ipc.startPasswordSftp({
-        host,
-        port,
-        username,
-        password,
-        expectedFingerprint: hostKey.fingerprintSha256,
-        initialPath: ".",
-      });
+      const response = await ipc.startPasswordSftp(
+        {
+          attemptId: connectionAttemptId,
+          host,
+          port,
+          username,
+          password,
+          expectedFingerprint: hostKey.fingerprintSha256,
+          initialPath: ".",
+        },
+        (event) => handleSshConnectionEvent(connectionAttemptId, event),
+      );
       if (connectionAttemptRef.current !== attempt) {
         void ipc.closeSftpSession(response.sessionId).catch(() => undefined);
         return;
@@ -1114,6 +1175,10 @@ export function App() {
       setPassword("");
       setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
+    } finally {
+      if (activeConnectionAttemptIdRef.current === connectionAttemptId) {
+        activeConnectionAttemptIdRef.current = null;
+      }
     }
   };
 
@@ -1132,12 +1197,14 @@ export function App() {
 
   const cancelConnectionFlow = () => {
     connectionAttemptRef.current += 1;
+    requestConnectionCancellation();
     connectionFlowPendingRef.current = false;
     setConnectionLaunchStep(undefined);
     setPassword("");
     setTrusted(false);
     setHostKey(null);
     setConnectionState("idle");
+    setConnectionStage(null);
     setActiveSessionTab(null);
     setLoadedConnectionId(null);
     loadedConnectionIdRef.current = null;
@@ -1158,6 +1225,7 @@ export function App() {
     sftpOperationGenerationRef.current += 1;
     setConnectionLaunchStep(undefined);
     setConnectionState("idle");
+    setConnectionStage(null);
     sessionIdRef.current = null;
     setSessionId(null);
     sftpSessionIdRef.current = null;
@@ -1453,7 +1521,7 @@ export function App() {
     <div className="app-shell">
       <WindowTitleBar
         appName={appInfo.name}
-        connectionLabel={connectionLabel(connectionState, t)}
+        connectionLabel={connectionLabel(connectionState, connectionStage, t)}
         connectionState={connectionState}
         onCheckForUpdates={() => setUpdateRequestId((current) => current + 1)}
         onWorkspaceModeChange={selectWorkspaceMode}
@@ -2201,11 +2269,19 @@ export function App() {
               />
             </label>
 
-            {!activeSessionId ? (
+            {!activeSessionId && connectionState === "connecting" ? (
+              <Button
+                danger
+                icon={<CircleX size={15} />}
+                onClick={cancelDirectConnection}
+                block
+              >
+                {t("connection.cancel")}
+              </Button>
+            ) : !activeSessionId ? (
               <Button
                 type="primary"
                 icon={<PlugZap size={15} />}
-                loading={connectionState === "connecting"}
                 disabled={
                   busy || !hostKey || !trusted || !username || !password
                 }
@@ -2272,7 +2348,7 @@ export function App() {
               closing={connectionState === "closing"}
               connectionState={connectionState}
               disabled={busy || connectionLaunchStep !== undefined}
-              statusLabel={connectionLabel(connectionState, t)}
+              statusLabel={connectionLabel(connectionState, connectionStage, t)}
               tab={activeSessionTab}
               onClose={requestSessionClose}
             />
@@ -2315,7 +2391,11 @@ export function App() {
                       <EmptyState
                         className="terminal-empty"
                         icon={<SquareTerminal size={36} strokeWidth={1.3} />}
-                        title={connectionLabel(connectionState, t)}
+                        title={connectionLabel(
+                          connectionState,
+                          connectionStage,
+                          t,
+                        )}
                       />
                     ))}
                 </div>
@@ -2357,7 +2437,7 @@ export function App() {
             size={7}
             fill="currentColor"
           />
-          {connectionLabel(connectionState, t)}
+          {connectionLabel(connectionState, connectionStage, t)}
         </span>
         <span className="status-spacer" />
         <Tooltip
@@ -2897,7 +2977,11 @@ function sessionCloseImpactMessage(
   });
 }
 
-function connectionLabel(state: ConnectionState, t: TFunction): string {
+function connectionLabel(
+  state: ConnectionState,
+  stage: SshConnectionStage | null,
+  t: TFunction,
+): string {
   const labels: Record<ConnectionState, string> = {
     idle: t("status.idle"),
     probing: t("status.probing"),
@@ -2909,7 +2993,19 @@ function connectionLabel(state: ConnectionState, t: TFunction): string {
     failed: t("status.failed"),
   };
 
-  return labels[state];
+  if (state !== "connecting" || !stage) {
+    return labels[state];
+  }
+
+  const stageLabels: Partial<Record<SshConnectionStage, string>> = {
+    created: t("status.stage.created"),
+    resolvingDns: t("status.stage.resolvingDns"),
+    connectingTcp: t("status.stage.connectingTcp"),
+    handshaking: t("status.stage.handshaking"),
+    authenticating: t("status.stage.authenticating"),
+    openingChannel: t("status.stage.openingChannel"),
+  };
+  return stageLabels[stage] ?? labels[state];
 }
 
 function errorText(error: unknown, fallback: string): string {
@@ -2938,6 +3034,20 @@ function isClosedSessionError(error: unknown): boolean {
     error instanceof IpcError &&
     (error.code === "session_not_found" || error.code === "session_closed")
   );
+}
+
+function createConnectionAttemptId(): string {
+  if (typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex
+    .slice(6, 8)
+    .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
 }
 
 async function setWebviewMemoryUsage(low: boolean): Promise<void> {

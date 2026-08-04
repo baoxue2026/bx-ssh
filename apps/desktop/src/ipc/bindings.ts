@@ -49,14 +49,6 @@ async closeTerminalSession(sessionId: string) : Promise<Result<null, CommandErro
     else return { status: "error", error: e  as any };
 }
 },
-async startPasswordSftp(request: StartSftpRequest) : Promise<Result<StartSftpResponse, CommandError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("start_password_sftp", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async listSftpDirectory(sessionId: string, path: string) : Promise<Result<RemoteDirectoryListing, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_sftp_directory", { sessionId, path }) };
@@ -224,6 +216,14 @@ async importOpensshConnections(request: OpenSshImportRequest) : Promise<Result<O
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async cancelSshConnection(attemptId: string) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_ssh_connection", { attemptId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -240,8 +240,8 @@ async importOpensshConnections(request: OpenSshImportRequest) : Promise<Result<O
 export type AppInfo = { name: string; version: string }
 export type AppMenuAction = "show-terminal" | "show-sftp" | "check-for-updates"
 export type AuthMethod = "password" | "privateKey" | "keyboardInteractive"
-export type CommandError = { code: CommandErrorCode; message: string }
-export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
+export type CommandError = { code: CommandErrorCode; message: string; stage: SshConnectionStage | null }
+export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "dns_lookup_failed" | "tcp_connect_failed" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
 export type ConnectionCatalog = { groups: ConnectionGroup[]; connections: ConnectionListItem[] }
 export type ConnectionConfig = { id: string; groupId: string | null; name: string; host: string; port: number; username: string; notes: string | null; color: string | null; authMethod: AuthMethod; credentialRef: string | null; keyReferenceId: string | null }
 export type ConnectionDetails = { connection: ConnectionListItem; settings: ConnectionSettingsSnapshot }
@@ -265,9 +265,11 @@ export type ProbeHostRequest = { host: string; port: number }
 export type RemoteDirectoryListing = { path: string; entries: RemoteFileEntry[] }
 export type RemoteFileEntry = { name: string; path: string; kind: RemoteFileKind; size: number; modifiedAt: number | null; permissions: number | null }
 export type RemoteFileKind = "directory" | "file" | "symlink" | "other"
-export type StartSftpRequest = { host: string; port: number; username: string; password: string; expectedFingerprint: string; initialPath: string | null }
+export type SshConnectionEvent = { attemptId: string; stage: SshConnectionStage }
+export type SshConnectionStage = "created" | "resolvingDns" | "connectingTcp" | "handshaking" | "authenticating" | "openingChannel" | "connected" | "closing" | "closed" | "cancelled" | "failed"
+export type StartSftpRequest = { attemptId: string; host: string; port: number; username: string; password: string; expectedFingerprint: string; initialPath: string | null }
 export type StartSftpResponse = { sessionId: string; hostKey: HostKeyInfo; directory: RemoteDirectoryListing }
-export type StartShellRequest = { host: string; port: number; username: string; password: string; expectedFingerprint: string; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
+export type StartShellRequest = { attemptId: string; host: string; port: number; username: string; password: string; expectedFingerprint: string; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
 export type StartShellResponse = { sessionId: string; hostKey: HostKeyInfo }
 export type TerminalEvent = { type: "exited"; code: number | null; signal: string | null } | { type: "error"; code: CommandErrorCode; message: string }
 export type TransferSummary = { bytes: number; elapsedMs: number; bytesPerSecond: number; sha256: string }

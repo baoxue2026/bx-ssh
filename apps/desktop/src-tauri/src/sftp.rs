@@ -2,17 +2,20 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bx_contracts::{HostKeyInfo, RemoteDirectoryListing, TransferSummary};
-use bx_ssh_core::{authenticate_password, ClientSession, SftpClient, SshEndpoint};
+use bx_contracts::{HostKeyInfo, RemoteDirectoryListing, SshConnectionStage, TransferSummary};
+use bx_ssh_core::{
+    authenticate_password_with_progress, ClientSession, SftpClient, SshEndpoint, SshError,
+};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager, State};
+use tauri::ipc::Channel;
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use crate::command_error::CommandError;
 use crate::lifecycle::{ActivityGuard, AppActivity};
+use crate::session_manager::{SessionKind, SshConnectionEvent, SshSessionManager};
 
 #[derive(Clone, Default)]
 pub(crate) struct SftpSessionManager {
@@ -29,6 +32,7 @@ struct ManagedSftpSession {
 #[derive(Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StartSftpRequest {
+    attempt_id: String,
     host: String,
     port: u16,
     username: String,
@@ -46,37 +50,113 @@ pub(crate) struct StartSftpResponse {
 }
 
 #[tauri::command]
-#[specta::specta]
 pub(crate) async fn start_password_sftp(
+    window: WebviewWindow,
     manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     request: StartSftpRequest,
+    on_state: Channel<SshConnectionEvent>,
 ) -> Result<StartSftpResponse, CommandError> {
-    let endpoint = SshEndpoint::new(request.host, request.port)?;
-    let ssh = authenticate_password(
+    let owner = window.label().to_owned();
+    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?;
+    let cancellation =
+        session_manager.begin_attempt(&owner, &request.attempt_id, SessionKind::Sftp)?;
+    let _ = on_state.send(SshConnectionEvent {
+        attempt_id: request.attempt_id.clone(),
+        stage: SshConnectionStage::Created,
+    });
+    let ssh = authenticate_password_with_progress(
         &endpoint,
         &request.username,
         &request.expected_fingerprint,
         &request.password,
+        &cancellation,
+        |stage| {
+            if let Ok(event) =
+                session_manager.transition_attempt(&owner, &request.attempt_id, stage)
+            {
+                let _ = on_state.send(event);
+            }
+        },
     )
-    .await?;
-    let host_key = ssh.host_key().clone();
-    let sftp = match ssh.open_sftp().await {
-        Ok(sftp) => sftp,
+    .await;
+    let ssh = match ssh {
+        Ok(ssh) => ssh,
         Err(error) => {
-            let _ = ssh.disconnect().await;
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
             return Err(error.into());
         }
     };
+    let host_key = ssh.host_key().clone();
+    let opening = session_manager.transition_attempt(
+        &owner,
+        &request.attempt_id,
+        SshConnectionStage::OpeningChannel,
+    )?;
+    let _ = on_state.send(opening);
+    let sftp = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+        result = ssh.open_sftp() => result,
+    };
+    let sftp = match sftp {
+        Ok(sftp) => sftp,
+        Err(error) => {
+            let _ = ssh.disconnect().await;
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(connection_error(error, SshConnectionStage::OpeningChannel));
+        }
+    };
     let initial_path = request.initial_path.as_deref().unwrap_or(".");
-    let directory = match sftp.list_directory(initial_path).await {
+    let directory = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+        result = sftp.list_directory(initial_path) => result,
+    };
+    let directory = match directory {
         Ok(directory) => directory,
         Err(error) => {
             let _ = sftp.close().await;
             let _ = ssh.disconnect().await;
-            return Err(error.into());
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(connection_error(error, SshConnectionStage::OpeningChannel));
         }
     };
-    let session_id = Uuid::new_v4().to_string();
+    let (session_id, connected) =
+        match session_manager.complete_attempt(&owner, &request.attempt_id) {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = sftp.close().await;
+                let _ = ssh.disconnect().await;
+                if let Some(event) = session_manager.finish_attempt(
+                    &owner,
+                    &request.attempt_id,
+                    SshConnectionStage::Failed,
+                ) {
+                    let _ = on_state.send(event);
+                }
+                return Err(error);
+            }
+        };
+    let _ = on_state.send(connected);
     let activity_guard = manager.activity.track_session();
 
     manager.sessions.lock().await.insert(
@@ -98,10 +178,13 @@ pub(crate) async fn start_password_sftp(
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn list_sftp_directory(
+    window: WebviewWindow,
     manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     session_id: String,
     path: String,
 ) -> Result<RemoteDirectoryListing, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
     let session = manager.get(&session_id).await?;
     let session = session.lock().await;
     Ok(session.sftp.list_directory(&path).await?)
@@ -109,14 +192,18 @@ pub(crate) async fn list_sftp_directory(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn upload_sftp_file(
+    window: WebviewWindow,
     app: AppHandle,
     manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     session_id: String,
     local_path: String,
     remote_path: String,
     language: String,
 ) -> Result<TransferSummary, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
     let session = manager.get(&session_id).await?;
     let _transfer_guard = manager.activity.track_transfer();
     let session = session.lock().await;
@@ -135,14 +222,18 @@ pub(crate) async fn upload_sftp_file(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn download_sftp_file(
+    window: WebviewWindow,
     app: AppHandle,
     manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     session_id: String,
     remote_path: String,
     local_path: String,
     language: String,
 ) -> Result<TransferSummary, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
     let session = manager.get(&session_id).await?;
     let _transfer_guard = manager.activity.track_transfer();
     let session = session.lock().await;
@@ -182,10 +273,13 @@ fn localized_transfer_title<'a>(language: &str, chinese: &'a str, english: &'a s
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn hash_remote_sftp_file(
+    window: WebviewWindow,
     manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     session_id: String,
     remote_path: String,
 ) -> Result<TransferSummary, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
     let session = manager.get(&session_id).await?;
     let session = session.lock().await;
     Ok(session.sftp.hash_remote_file(&remote_path).await?)
@@ -194,9 +288,12 @@ pub(crate) async fn hash_remote_sftp_file(
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn close_sftp_session(
+    window: WebviewWindow,
     manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     session_id: String,
 ) -> Result<(), CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
     let session = manager
         .sessions
         .lock()
@@ -209,9 +306,35 @@ pub(crate) async fn close_sftp_session(
         Some(ssh) => ssh.disconnect().await,
         None => Ok(()),
     };
+    session_manager.remove_session(&session_id, SessionKind::Sftp);
     sftp_result?;
     ssh_result?;
     Ok(())
+}
+
+fn finish_connection_attempt(
+    manager: &SshSessionManager,
+    owner: &str,
+    attempt_id: &str,
+    channel: &Channel<SshConnectionEvent>,
+    error: &SshError,
+) {
+    let stage = if matches!(error, SshError::ConnectionCancelled) {
+        SshConnectionStage::Cancelled
+    } else {
+        SshConnectionStage::Failed
+    };
+    if let Some(event) = manager.finish_attempt(owner, attempt_id, stage) {
+        let _ = channel.send(event);
+    }
+}
+
+fn connection_error(error: SshError, fallback_stage: SshConnectionStage) -> CommandError {
+    let mut error = CommandError::from(error);
+    if error.stage.is_none() {
+        error.stage = Some(fallback_stage);
+    }
+    error
 }
 
 impl SftpSessionManager {

@@ -40,6 +40,7 @@ export const resources = {
         restoreWindow: "还原窗口",
       },
       connection: {
+        cancel: "取消连接",
         connect: "连接",
         disconnect: "断开",
         errorConnected: "操作失败",
@@ -317,6 +318,14 @@ export const resources = {
         idle: "就绪",
         probing: "正在检测指纹",
         ready: "等待连接",
+        stage: {
+          authenticating: "正在认证",
+          connectingTcp: "正在建立 TCP 连接",
+          created: "正在准备连接",
+          handshaking: "正在进行 SSH 握手",
+          openingChannel: "正在打开会话通道",
+          resolvingDns: "正在解析主机地址",
+        },
       },
       terminal: {
         aria: "SSH 终端",
@@ -425,6 +434,7 @@ export const resources = {
         restoreWindow: "Restore window",
       },
       connection: {
+        cancel: "Cancel Connection",
         connect: "Connect",
         disconnect: "Disconnect",
         errorConnected: "Operation Failed",
@@ -719,6 +729,14 @@ export const resources = {
         idle: "Ready",
         probing: "Checking fingerprint",
         ready: "Ready to connect",
+        stage: {
+          authenticating: "Authenticating",
+          connectingTcp: "Opening TCP connection",
+          created: "Preparing connection",
+          handshaking: "Performing SSH handshake",
+          openingChannel: "Opening session channel",
+          resolvingDns: "Resolving host address",
+        },
       },
       terminal: {
         aria: "SSH terminal",

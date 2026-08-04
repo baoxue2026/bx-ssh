@@ -3,21 +3,21 @@ use std::future::pending;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bx_contracts::HostKeyInfo;
+use bx_contracts::{HostKeyInfo, SshConnectionStage};
 use bx_ssh_core::{
-    authenticate_password, probe_host_key, ClientSession, ShellEvent, SshEndpoint, SshError,
-    SshShell, TerminalSize,
+    authenticate_password_with_progress, probe_host_key, ClientSession, ShellEvent, SshEndpoint,
+    SshError, SshShell, TerminalSize,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::ipc::{Channel, InvokeResponseBody, IpcResponse};
-use tauri::State;
+use tauri::{State, WebviewWindow};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::Instant;
-use uuid::Uuid;
 
 use crate::command_error::{CommandError, CommandErrorCode};
 use crate::lifecycle::AppActivity;
+use crate::session_manager::{SessionKind, SshConnectionEvent, SshSessionManager};
 
 const COMMAND_QUEUE_CAPACITY: usize = 128;
 const OUTPUT_BATCH_MAX_BYTES: usize = 64 * 1024;
@@ -54,6 +54,7 @@ pub(crate) struct ProbeHostRequest {
 #[derive(Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StartShellRequest {
+    attempt_id: String,
     host: String,
     port: u16,
     username: String,
@@ -102,28 +103,99 @@ pub(crate) async fn probe_ssh_host(request: ProbeHostRequest) -> Result<HostKeyI
 
 #[tauri::command]
 pub(crate) async fn start_password_shell(
+    window: WebviewWindow,
     manager: State<'_, TerminalSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     request: StartShellRequest,
+    on_state: Channel<SshConnectionEvent>,
     on_event: Channel<TerminalEvent>,
     on_output: Channel<TerminalOutput>,
 ) -> Result<StartShellResponse, CommandError> {
-    let endpoint = SshEndpoint::new(request.host, request.port)?;
+    let owner = window.label().to_owned();
+    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?;
     let size = TerminalSize::with_pixels(
         request.columns,
         request.rows,
         request.pixel_width,
         request.pixel_height,
     )?;
-    let session = authenticate_password(
+    let cancellation =
+        session_manager.begin_attempt(&owner, &request.attempt_id, SessionKind::Terminal)?;
+    let _ = on_state.send(SshConnectionEvent {
+        attempt_id: request.attempt_id.clone(),
+        stage: SshConnectionStage::Created,
+    });
+    let session = authenticate_password_with_progress(
         &endpoint,
         &request.username,
         &request.expected_fingerprint,
         &request.password,
+        &cancellation,
+        |stage| {
+            if let Ok(event) =
+                session_manager.transition_attempt(&owner, &request.attempt_id, stage)
+            {
+                let _ = on_state.send(event);
+            }
+        },
     )
-    .await?;
+    .await;
+    let session = match session {
+        Ok(session) => session,
+        Err(error) => {
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(error.into());
+        }
+    };
     let host_key = session.host_key().clone();
-    let shell = session.open_shell(size).await?;
-    let session_id = Uuid::new_v4().to_string();
+    let opening = session_manager.transition_attempt(
+        &owner,
+        &request.attempt_id,
+        SshConnectionStage::OpeningChannel,
+    )?;
+    let _ = on_state.send(opening);
+    let shell = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+        result = session.open_shell(size) => result,
+    };
+    let shell = match shell {
+        Ok(shell) => shell,
+        Err(error) => {
+            let _ = session.disconnect().await;
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(error.into());
+        }
+    };
+    let (session_id, connected) =
+        match session_manager.complete_attempt(&owner, &request.attempt_id) {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = shell.close().await;
+                let _ = session.disconnect().await;
+                if let Some(event) = session_manager.finish_attempt(
+                    &owner,
+                    &request.attempt_id,
+                    SshConnectionStage::Failed,
+                ) {
+                    let _ = on_state.send(event);
+                }
+                return Err(error);
+            }
+        };
+    let _ = on_state.send(connected);
     let (command_tx, command_rx) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
     let activity_guard = manager.activity.track_session();
 
@@ -134,11 +206,13 @@ pub(crate) async fn start_password_shell(
         .insert(session_id.clone(), command_tx);
 
     let task_manager = manager.inner().clone();
+    let task_session_manager = session_manager.inner().clone();
     let task_session_id = session_id.clone();
     tauri::async_runtime::spawn(async move {
         let _activity_guard = activity_guard;
         run_session(
             task_manager,
+            task_session_manager,
             task_session_id,
             session,
             shell,
@@ -158,10 +232,13 @@ pub(crate) async fn start_password_shell(
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn write_terminal(
+    window: WebviewWindow,
     manager: State<'_, TerminalSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     session_id: String,
     data: String,
 ) -> Result<(), CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Terminal)?;
     manager
         .send(&session_id, SessionCommand::Write(data.into_bytes()))
         .await
@@ -169,14 +246,18 @@ pub(crate) async fn write_terminal(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn resize_terminal(
+    window: WebviewWindow,
     manager: State<'_, TerminalSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     session_id: String,
     columns: u32,
     rows: u32,
     pixel_width: u32,
     pixel_height: u32,
 ) -> Result<(), CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Terminal)?;
     let size = TerminalSize::with_pixels(columns, rows, pixel_width, pixel_height)?;
     manager
         .send(&session_id, SessionCommand::Resize(size))
@@ -186,10 +267,13 @@ pub(crate) async fn resize_terminal(
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn acknowledge_terminal_output(
+    window: WebviewWindow,
     manager: State<'_, TerminalSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     session_id: String,
     sequence: u64,
 ) -> Result<(), CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Terminal)?;
     manager
         .send(&session_id, SessionCommand::AcknowledgeOutput(sequence))
         .await
@@ -198,10 +282,15 @@ pub(crate) async fn acknowledge_terminal_output(
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn close_terminal_session(
+    window: WebviewWindow,
     manager: State<'_, TerminalSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
     session_id: String,
 ) -> Result<(), CommandError> {
-    manager.close(&session_id).await
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Terminal)?;
+    let result = manager.close(&session_id).await;
+    session_manager.remove_session(&session_id, SessionKind::Terminal);
+    result
 }
 
 impl TerminalSessionManager {
@@ -269,8 +358,10 @@ impl TerminalSessionManager {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_session(
     manager: TerminalSessionManager,
+    session_manager: SshSessionManager,
     session_id: String,
     session: ClientSession,
     mut shell: SshShell,
@@ -353,10 +444,28 @@ async fn run_session(
         signal: exit_signal,
     });
     manager.sessions.lock().await.remove(&session_id);
+    session_manager.remove_session(&session_id, SessionKind::Terminal);
     drop(shell);
     let _ = session.disconnect().await;
     if let Some(complete) = close_completion {
         let _ = complete.send(());
+    }
+}
+
+fn finish_connection_attempt(
+    manager: &SshSessionManager,
+    owner: &str,
+    attempt_id: &str,
+    channel: &Channel<SshConnectionEvent>,
+    error: &SshError,
+) {
+    let stage = if matches!(error, SshError::ConnectionCancelled) {
+        SshConnectionStage::Cancelled
+    } else {
+        SshConnectionStage::Failed
+    };
+    if let Some(event) = manager.finish_attempt(owner, attempt_id, stage) {
+        let _ = channel.send(event);
     }
 }
 
