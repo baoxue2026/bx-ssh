@@ -55,6 +55,28 @@ export const resources = {
         trustFingerprint: "信任此主机指纹",
         username: "用户名",
       },
+      connectionAuthentication: {
+        connect: "连接",
+        description: "为“{{name}}”输入本次 SSH 会话使用的凭据。",
+        failed: "认证或 Shell 启动失败",
+        password: "密码",
+        sessionOnly: "密码仅用于本次连接，不会写入连接配置或本地数据库。",
+        title: "输入连接密码",
+        unsupported:
+          "当前连接使用“{{method}}”，对应认证能力尚未接入。连接已停止，未模拟成功状态。",
+      },
+      hostFingerprint: {
+        description: "连接“{{name}}”前，请核对服务器提供的主机指纹。",
+        title: "确认主机身份",
+        trustAndContinue: "信任并继续",
+        unknownAlgorithm: "未知算法",
+        warning:
+          "请通过可信渠道核对该指纹。继续后，认证请求仍会校验同一指纹，防止连接期间被替换。",
+      },
+      sessionTabs: {
+        closeNamed: "关闭会话 {{name}}",
+        label: "SSH 会话",
+      },
       connectionEditor: {
         actions: {
           clearColor: "清除颜色",
@@ -403,6 +425,31 @@ export const resources = {
         title: "Connection Verification",
         trustFingerprint: "Trust this host fingerprint",
         username: "Username",
+      },
+      connectionAuthentication: {
+        connect: "Connect",
+        description:
+          'Enter the credential used only for the SSH session "{{name}}".',
+        failed: "Authentication or shell startup failed",
+        password: "Password",
+        sessionOnly:
+          "The password is used only for this connection and is not written to the connection configuration or local database.",
+        title: "Enter Connection Password",
+        unsupported:
+          'This connection uses "{{method}}", which is not connected to the authentication engine yet. The connection was stopped without simulating success.',
+      },
+      hostFingerprint: {
+        description:
+          'Verify the host fingerprint supplied by the server before connecting to "{{name}}".',
+        title: "Verify Host Identity",
+        trustAndContinue: "Trust and Continue",
+        unknownAlgorithm: "Unknown algorithm",
+        warning:
+          "Verify this fingerprint through a trusted channel. Authentication will enforce the same fingerprint to prevent replacement during connection setup.",
+      },
+      sessionTabs: {
+        closeNamed: "Close session {{name}}",
+        label: "SSH sessions",
       },
       connectionEditor: {
         actions: {

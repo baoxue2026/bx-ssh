@@ -1199,6 +1199,116 @@ select {
   font-size: 12px;
 }
 
+.session-workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.session-workspace.has-session-tab {
+  grid-template-rows: 35px minmax(0, 1fr);
+}
+
+.session-workspace-content {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.session-workspace-content > * {
+  width: 100%;
+  height: 100%;
+}
+
+.session-tabbar {
+  display: flex;
+  align-items: end;
+  min-width: 0;
+  overflow-x: auto;
+  background: var(--terminal-toolbar-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.session-tab {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: min(240px, 42vw);
+  height: 34px;
+  min-width: 150px;
+  padding: 0 5px 0 10px;
+  color: var(--text-secondary);
+  outline: none;
+  border-right: 1px solid var(--border);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.session-tab:focus-visible {
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    inset 0 -2px 0 var(--accent);
+}
+
+.session-tab.is-active {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.session-tab-status {
+  width: 7px;
+  height: 7px;
+  background: #77818e;
+  border-radius: 50%;
+}
+
+.session-tab-status.state-connected {
+  background: #37b26c;
+}
+
+.session-tab-status.state-probing,
+.session-tab-status.state-connecting,
+.session-tab-status.state-closing {
+  background: #e1a83b;
+}
+
+.session-tab-status.state-failed {
+  background: #df5d62;
+}
+
+.session-tab-summary {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.05;
+}
+
+.session-tab-summary strong,
+.session-tab-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-tab-summary strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.session-tab-summary span {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.session-tab-close.ant-btn {
+  width: 21px;
+  min-width: 21px;
+  height: 21px;
+  padding: 0;
+}
+
 .terminal-workspace {
   display: grid;
   min-width: 0;
@@ -1240,6 +1350,67 @@ select {
   min-width: 0;
   min-height: 0;
   background: var(--terminal-bg);
+}
+
+.connection-launch-dialog .ant-modal-body {
+  display: grid;
+  gap: 14px;
+}
+
+.connection-auth-endpoint,
+.host-fingerprint-endpoint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.connection-auth-endpoint span,
+.host-fingerprint-endpoint span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-auth-hint,
+.host-fingerprint-warning {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.host-fingerprint-value {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.host-fingerprint-value span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.host-fingerprint-value code {
+  overflow-wrap: anywhere;
+  padding: 10px;
+  color: var(--text-secondary);
+  background: var(--terminal-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .terminal-container {
