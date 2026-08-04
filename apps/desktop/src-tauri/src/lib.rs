@@ -1,5 +1,7 @@
 use bx_contracts::AppInfo;
 #[cfg(any(debug_assertions, test))]
+use bx_contracts::{ConnectionConfig, ConnectionSettings, ConnectionSettingsLayers};
+#[cfg(any(debug_assertions, test))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::StateFlags;
@@ -63,6 +65,9 @@ fn command_builder() -> Builder<tauri::Wry> {
         .typ::<update::UpdateEvent>()
         .typ::<AppMenuAction>()
         .typ::<ExitImpact>()
+        .typ::<ConnectionConfig>()
+        .typ::<ConnectionSettings>()
+        .typ::<ConnectionSettingsLayers>()
 }
 
 fn window_state_flags() -> StateFlags {
