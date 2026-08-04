@@ -189,7 +189,7 @@ pub(crate) async fn record_successful_connection(
     .await
 }
 
-fn app_data_directory(app: &AppHandle) -> Result<PathBuf, CommandError> {
+pub(crate) fn app_data_directory(app: &AppHandle) -> Result<PathBuf, CommandError> {
     app.path().app_data_dir().map_err(|_| {
         CommandError::new(
             CommandErrorCode::DatabaseUnavailable,
@@ -198,7 +198,7 @@ fn app_data_directory(app: &AppHandle) -> Result<PathBuf, CommandError> {
     })
 }
 
-fn current_timestamp_ms() -> Result<u64, CommandError> {
+pub(crate) fn current_timestamp_ms() -> Result<u64, CommandError> {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| {
         CommandError::new(
             CommandErrorCode::DatabaseQueryFailed,
@@ -213,7 +213,7 @@ fn current_timestamp_ms() -> Result<u64, CommandError> {
     })
 }
 
-async fn run_query<T, F>(
+pub(crate) async fn run_query<T, F>(
     state: ConnectionRepositoryState,
     data_directory: PathBuf,
     query: F,

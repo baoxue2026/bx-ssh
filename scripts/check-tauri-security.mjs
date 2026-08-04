@@ -37,6 +37,8 @@ const reviewedApplicationCommands = [
   "confirm_app_exit",
   "list_connections",
   "get_connection",
+  "preview_openssh_config",
+  "import_openssh_connections",
 ];
 const productionPermissions = new Set([
   "allow-main-commands",
@@ -47,6 +49,7 @@ const productionPermissions = new Set([
   "core:window:allow-minimize",
   "core:window:allow-start-dragging",
   "core:window:allow-toggle-maximize",
+  "dialog:allow-open",
 ]);
 const e2ePermissions = new Set([
   "allow-main-commands",
@@ -58,6 +61,7 @@ const e2ePermissions = new Set([
   "core:window:allow-minimize",
   "core:window:allow-start-dragging",
   "core:window:allow-toggle-maximize",
+  "dialog:allow-open",
   "wdio:default",
   "wdio-webdriver:default",
 ]);

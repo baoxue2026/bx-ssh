@@ -207,62 +207,34 @@ impl ConnectionRepository {
             .database
             .transaction()
             .map_err(|source| database_operation("start a connection transaction", source))?;
-        transaction
-            .execute(
-                "INSERT INTO connections
-                 (id, group_id, key_reference_id, name, host, port, username, notes, color,
-                  auth_method, credential_ref, sort_order, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                    COALESCE((
-                        SELECT MAX(sort_order) + 1 FROM connections
-                        WHERE deleted_at IS NULL AND group_id IS ?2
-                    ), 0), ?12, ?12)
-                 ON CONFLICT(id) DO UPDATE SET
-                    group_id = excluded.group_id,
-                    key_reference_id = excluded.key_reference_id,
-                    name = excluded.name,
-                    host = excluded.host,
-                    port = excluded.port,
-                    username = excluded.username,
-                    notes = excluded.notes,
-                    color = excluded.color,
-                    auth_method = excluded.auth_method,
-                    credential_ref = excluded.credential_ref,
-                    sort_order = CASE
-                        WHEN connections.group_id IS excluded.group_id
-                             AND connections.deleted_at IS NULL
-                        THEN connections.sort_order
-                        ELSE excluded.sort_order
-                    END,
-                    updated_at = excluded.updated_at,
-                    deleted_at = NULL,
-                    revision = connections.revision + 1",
-                params![
-                    config.id,
-                    config.group_id,
-                    config.key_reference_id,
-                    config.name,
-                    config.host,
-                    config.port,
-                    config.username,
-                    config.notes,
-                    config.color,
-                    config.auth_method.database_value(),
-                    config.credential_ref,
-                    now,
-                ],
-            )
-            .map_err(|source| database_operation("save a connection", source))?;
-        apply_settings(
-            &transaction,
-            SettingOwner::Connection(&config.id),
-            settings,
-            now,
-        )
-        .map_err(|source| database_operation("save connection settings", source))?;
+        save_connection_record(&transaction, config, settings, now)?;
         transaction
             .commit()
             .map_err(|source| database_operation("commit a connection transaction", source))
+    }
+
+    pub fn import_connections(&mut self, configs: &[ConnectionConfig], now_ms: u64) -> Result<()> {
+        for config in configs {
+            config
+                .validate()
+                .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
+        }
+        let now = timestamp_to_i64(now_ms)?;
+        let transaction = self
+            .database
+            .transaction()
+            .map_err(|source| database_operation("start an OpenSSH import transaction", source))?;
+        for config in configs {
+            save_connection_record(
+                &transaction,
+                config,
+                ConnectionSettingsOverride::default(),
+                now,
+            )?;
+        }
+        transaction
+            .commit()
+            .map_err(|source| database_operation("commit an OpenSSH import transaction", source))
     }
 
     pub fn save_settings(
@@ -609,6 +581,67 @@ impl RawConnection {
             revision: stored_u64(self.revision, "connection")?,
         })
     }
+}
+
+fn save_connection_record(
+    transaction: &Transaction<'_>,
+    config: &ConnectionConfig,
+    settings: ConnectionSettingsOverride,
+    now: i64,
+) -> Result<()> {
+    transaction
+        .execute(
+            "INSERT INTO connections
+             (id, group_id, key_reference_id, name, host, port, username, notes, color,
+              auth_method, credential_ref, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                COALESCE((
+                    SELECT MAX(sort_order) + 1 FROM connections
+                    WHERE deleted_at IS NULL AND group_id IS ?2
+                ), 0), ?12, ?12)
+             ON CONFLICT(id) DO UPDATE SET
+                group_id = excluded.group_id,
+                key_reference_id = excluded.key_reference_id,
+                name = excluded.name,
+                host = excluded.host,
+                port = excluded.port,
+                username = excluded.username,
+                notes = excluded.notes,
+                color = excluded.color,
+                auth_method = excluded.auth_method,
+                credential_ref = excluded.credential_ref,
+                sort_order = CASE
+                    WHEN connections.group_id IS excluded.group_id
+                         AND connections.deleted_at IS NULL
+                    THEN connections.sort_order
+                    ELSE excluded.sort_order
+                END,
+                updated_at = excluded.updated_at,
+                deleted_at = NULL,
+                revision = connections.revision + 1",
+            params![
+                config.id,
+                config.group_id,
+                config.key_reference_id,
+                config.name,
+                config.host,
+                config.port,
+                config.username,
+                config.notes,
+                config.color,
+                config.auth_method.database_value(),
+                config.credential_ref,
+                now,
+            ],
+        )
+        .map_err(|source| database_operation("save a connection", source))?;
+    apply_settings(
+        transaction,
+        SettingOwner::Connection(&config.id),
+        settings,
+        now,
+    )
+    .map_err(|source| database_operation("save connection settings", source))
 }
 
 fn apply_settings(

@@ -23,4 +23,6 @@ commands.allow = [
   "confirm_app_exit",
   "list_connections",
   "get_connection",
+  "preview_openssh_config",
+  "import_openssh_connections",
 ]

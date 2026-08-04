@@ -8,6 +8,7 @@ interface ConnectionWorkspaceEmptyStateProps {
   loadingConnectionId?: string | null;
   recentConnections: ConnectionListItem[];
   totalConnections: number;
+  onImportConfig(): void;
   onNewConnection(): void;
   onQuickConnect(item: ConnectionListItem): void;
 }
@@ -17,6 +18,7 @@ export function ConnectionWorkspaceEmptyState({
   loadingConnectionId,
   recentConnections,
   totalConnections,
+  onImportConfig,
   onNewConnection,
   onQuickConnect,
 }: ConnectionWorkspaceEmptyStateProps) {
@@ -42,16 +44,12 @@ export function ConnectionWorkspaceEmptyState({
           >
             {t("connectionEditor.actions.newConnection")}
           </Button>
-          <Button
-            icon={<FileInput size={15} />}
-            disabled
-            title={t("connectionWorkspace.importPlanned")}
-          >
+          <Button icon={<FileInput size={15} />} onClick={onImportConfig}>
             {t("connectionWorkspace.importConfig")}
           </Button>
         </div>
         <span className="connection-workspace-empty-hint">
-          {t("connectionWorkspace.importPlanned")}
+          {t("connectionWorkspace.importHelp")}
         </span>
       </section>
     );
@@ -117,6 +115,9 @@ export function ConnectionWorkspaceEmptyState({
         onClick={onNewConnection}
       >
         {t("connectionEditor.actions.newConnection")}
+      </Button>
+      <Button icon={<FileInput size={15} />} onClick={onImportConfig}>
+        {t("connectionWorkspace.importConfig")}
       </Button>
     </section>
   );

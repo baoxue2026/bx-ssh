@@ -208,6 +208,22 @@ async reorderConnections(groupId: string | null, ids: string[]) : Promise<Result
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async previewOpensshConfig(path: string | null) : Promise<Result<OpenSshImportPreview, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_openssh_config", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async importOpensshConnections(request: OpenSshImportRequest) : Promise<Result<OpenSshImportResult, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_openssh_connections", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -225,7 +241,7 @@ export type AppInfo = { name: string; version: string }
 export type AppMenuAction = "show-terminal" | "show-sftp" | "check-for-updates"
 export type AuthMethod = "password" | "privateKey" | "keyboardInteractive"
 export type CommandError = { code: CommandErrorCode; message: string }
-export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed"
+export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
 export type ConnectionCatalog = { groups: ConnectionGroup[]; connections: ConnectionListItem[] }
 export type ConnectionConfig = { id: string; groupId: string | null; name: string; host: string; port: number; username: string; notes: string | null; color: string | null; authMethod: AuthMethod; credentialRef: string | null; keyReferenceId: string | null }
 export type ConnectionDetails = { connection: ConnectionListItem; settings: ConnectionSettingsSnapshot }
@@ -238,6 +254,13 @@ export type ConnectionSettingsScope = { kind: "global" } | { kind: "group"; grou
 export type ConnectionSettingsSnapshot = { layers: ConnectionSettingsLayers; resolved: ConnectionSettings }
 export type ExitImpact = { activeSessions: number; activeTransfers: number }
 export type HostKeyInfo = { algorithm: string; fingerprintSha256: string }
+export type OpenSshDuplicateStrategy = "skip" | "overwrite"
+export type OpenSshImportError = "invalidPort" | "missingHost" | "missingUsername"
+export type OpenSshImportItem = { sourceId: string; alias: string; host: string; port: number; username: string; identityFile: string | null; duplicateConnectionId: string | null; duplicateConnectionName: string | null; errors: OpenSshImportError[]; warnings: OpenSshImportWarning[] }
+export type OpenSshImportPreview = { sourcePath: string; sourceFingerprint: string; items: OpenSshImportItem[]; ignoredHostPatterns: number }
+export type OpenSshImportRequest = { sourcePath: string; sourceFingerprint: string; selectedSourceIds: string[]; duplicateStrategy: OpenSshDuplicateStrategy }
+export type OpenSshImportResult = { imported: number; overwritten: number; skipped: number }
+export type OpenSshImportWarning = "duplicate" | "identityFileRequiresKeySetup"
 export type ProbeHostRequest = { host: string; port: number }
 export type RemoteDirectoryListing = { path: string; entries: RemoteFileEntry[] }
 export type RemoteFileEntry = { name: string; path: string; kind: RemoteFileKind; size: number; modifiedAt: number | null; permissions: number | null }

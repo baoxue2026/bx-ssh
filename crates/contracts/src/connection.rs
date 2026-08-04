@@ -257,6 +257,75 @@ pub struct ConnectionCatalog {
     pub connections: Vec<ConnectionListItem>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum OpenSshImportError {
+    InvalidPort,
+    MissingHost,
+    MissingUsername,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum OpenSshImportWarning {
+    Duplicate,
+    IdentityFileRequiresKeySetup,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSshImportItem {
+    pub source_id: String,
+    pub alias: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub identity_file: Option<String>,
+    pub duplicate_connection_id: Option<String>,
+    pub duplicate_connection_name: Option<String>,
+    pub errors: Vec<OpenSshImportError>,
+    pub warnings: Vec<OpenSshImportWarning>,
+}
+
+impl OpenSshImportItem {
+    pub fn is_importable(&self) -> bool {
+        self.errors.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSshImportPreview {
+    pub source_path: String,
+    pub source_fingerprint: String,
+    pub items: Vec<OpenSshImportItem>,
+    pub ignored_host_patterns: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum OpenSshDuplicateStrategy {
+    Skip,
+    Overwrite,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSshImportRequest {
+    pub source_path: String,
+    pub source_fingerprint: String,
+    pub selected_source_ids: Vec<String>,
+    pub duplicate_strategy: OpenSshDuplicateStrategy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSshImportResult {
+    pub imported: u32,
+    pub overwritten: u32,
+    pub skipped: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionDetails {

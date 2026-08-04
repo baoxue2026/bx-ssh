@@ -58,6 +58,17 @@ try {
 const allowed = new Set(
   production ? policy.productionAllowed : policy.developmentAllowed,
 );
+const isAllowedLicense = (license) => {
+  if (allowed.has(license)) return true;
+
+  const alternatives = license
+    .replace(/^\((.*)\)$/, "$1")
+    .split(/\s+OR\s+/)
+    .map((item) => item.trim());
+  return (
+    alternatives.length > 1 && alternatives.every((item) => allowed.has(item))
+  );
+};
 const exceptions = new Map(
   policy.knownExceptions
     .filter(
@@ -70,7 +81,7 @@ const violations = [];
 for (const [license, packages] of Object.entries(report)) {
   for (const pkg of packages) {
     const versions = pkg.versions ?? [];
-    if (allowed.has(license)) continue;
+    if (isAllowedLicense(license)) continue;
     const matching = exceptions.get(`${pkg.name}@${versions.join(",")}`);
     if (
       matching &&
