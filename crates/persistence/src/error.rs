@@ -30,6 +30,20 @@ pub enum PersistenceError {
     },
     #[error("database migrations must be strictly ordered by version")]
     InvalidMigrationOrder,
+    #[error("database schema version {actual} is newer than supported version {supported}")]
+    DatabaseVersionTooNew { actual: u32, supported: u32 },
+    #[error("database operation failed while attempting to {operation}")]
+    DatabaseOperation {
+        operation: &'static str,
+        #[source]
+        source: rusqlite::Error,
+    },
+    #[error("the connection configuration is invalid")]
+    InvalidConnectionConfiguration,
+    #[error("the database contains an invalid {entity} record")]
+    InvalidStoredRecord { entity: &'static str },
+    #[error("a timestamp is outside the supported database range")]
+    InvalidTimestamp,
     #[error("the encrypted key envelope is malformed")]
     InvalidEnvelope,
     #[error("the encrypted key envelope uses an unsupported version or KDF configuration")]

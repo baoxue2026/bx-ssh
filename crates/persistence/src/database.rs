@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::Path;
 
-use rusqlite::{ffi, Connection};
+use rusqlite::{ffi, Connection, Transaction};
 use secrecy::ExposeSecret;
 
 use crate::key::DATA_KEY_LEN;
@@ -16,6 +16,10 @@ pub struct Migration {
 impl Migration {
     pub const fn new(version: u32, sql: &'static str) -> Self {
         Self { version, sql }
+    }
+
+    pub const fn version(self) -> u32 {
+        self.version
     }
 }
 
@@ -97,6 +101,14 @@ impl EncryptedDatabase {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(PersistenceError::DatabaseOpen)?;
+        if let Some(latest) = migrations.last() {
+            if current_version > latest.version {
+                return Err(PersistenceError::DatabaseVersionTooNew {
+                    actual: current_version,
+                    supported: latest.version,
+                });
+            }
+        }
         let pending = migrations
             .iter()
             .copied()
@@ -135,6 +147,14 @@ impl EncryptedDatabase {
         self.connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(PersistenceError::DatabaseOpen)
+    }
+
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
+    pub(crate) fn transaction(&mut self) -> rusqlite::Result<Transaction<'_>> {
+        self.connection.transaction()
     }
 }
 
@@ -322,6 +342,28 @@ mod tests {
             ])
             .unwrap_err();
         assert!(matches!(error, PersistenceError::InvalidMigrationOrder));
+    }
+
+    #[test]
+    fn refuses_to_open_a_schema_created_by_a_newer_application() {
+        let directory = tempdir().unwrap();
+        let key = DataKey::generate().unwrap();
+        let mut database = EncryptedDatabase::open(directory.path().join("data.db"), &key).unwrap();
+        database
+            .connection
+            .pragma_update(None, "user_version", 2)
+            .unwrap();
+
+        let error = database
+            .apply_migrations(&[Migration::new(1, "SELECT 1;")])
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PersistenceError::DatabaseVersionTooNew {
+                actual: 2,
+                supported: 1
+            }
+        ));
     }
 
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {

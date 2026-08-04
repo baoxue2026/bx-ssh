@@ -1,6 +1,8 @@
 use bx_contracts::AppInfo;
 #[cfg(any(debug_assertions, test))]
-use bx_contracts::{ConnectionConfig, ConnectionSettings, ConnectionSettingsLayers};
+use bx_contracts::{
+    ConnectionConfig, ConnectionSettings, ConnectionSettingsLayers, ConnectionSettingsScope,
+};
 #[cfg(any(debug_assertions, test))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri::{Emitter, Manager};
@@ -9,6 +11,7 @@ use tauri_plugin_window_state::StateFlags;
 use tauri_specta::{collect_commands, Builder};
 
 mod command_error;
+mod connections;
 mod desktop_shell;
 mod lifecycle;
 mod platform;
@@ -16,6 +19,7 @@ mod sftp;
 mod terminal;
 mod update;
 
+use connections::{get_connection, list_connections, ConnectionRepositoryState};
 #[cfg(any(debug_assertions, test))]
 use desktop_shell::AppMenuAction;
 use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
@@ -57,7 +61,9 @@ fn command_builder() -> Builder<tauri::Wry> {
             sftp::close_sftp_session,
             platform::set_webview_memory_usage,
             update::check_for_update,
-            lifecycle::confirm_app_exit
+            lifecycle::confirm_app_exit,
+            connections::list_connections,
+            connections::get_connection
         ])
         .typ::<terminal::StartShellRequest>()
         .typ::<terminal::StartShellResponse>()
@@ -68,6 +74,7 @@ fn command_builder() -> Builder<tauri::Wry> {
         .typ::<ConnectionConfig>()
         .typ::<ConnectionSettings>()
         .typ::<ConnectionSettingsLayers>()
+        .typ::<ConnectionSettingsScope>()
 }
 
 fn window_state_flags() -> StateFlags {
@@ -136,6 +143,7 @@ pub fn run() {
         .manage(ExitCoordinator::default())
         .manage(terminal_manager)
         .manage(sftp_manager)
+        .manage(ConnectionRepositoryState::default())
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
@@ -165,7 +173,9 @@ pub fn run() {
             set_webview_memory_usage,
             check_for_update,
             install_update,
-            confirm_app_exit
+            confirm_app_exit,
+            list_connections,
+            get_connection
         ])
         .build(tauri::generate_context!())
         .expect("failed to build BX SSH")

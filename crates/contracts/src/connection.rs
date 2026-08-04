@@ -181,6 +181,63 @@ pub struct ConnectionSettingsLayers {
     pub connection: Option<ConnectionSettingsOverride>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConnectionSettingsScope {
+    Global,
+    Group {
+        #[serde(rename = "groupId")]
+        group_id: String,
+    },
+    Connection {
+        #[serde(rename = "connectionId")]
+        connection_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionSettingsSnapshot {
+    pub layers: ConnectionSettingsLayers,
+    pub resolved: ConnectionSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionGroup {
+    pub id: String,
+    pub name: String,
+    pub color: Option<String>,
+    pub sort_order: u32,
+    pub is_collapsed: bool,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionListItem {
+    pub config: ConnectionConfig,
+    pub is_favorite: bool,
+    pub sort_order: u32,
+    pub last_connected_at: Option<u64>,
+    pub successful_connection_count: u64,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionCatalog {
+    pub groups: Vec<ConnectionGroup>,
+    pub connections: Vec<ConnectionListItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionDetails {
+    pub connection: ConnectionListItem,
+    pub settings: ConnectionSettingsSnapshot,
+}
+
 impl ConnectionSettingsLayers {
     pub fn resolve(&self) -> ConnectionSettings {
         let mut resolved = ConnectionSettings::default();
@@ -331,5 +388,11 @@ mod tests {
         assert_eq!(value["authMethod"], json!("password"));
         assert_eq!(value["keyReferenceId"], json!(null));
         assert_eq!(value["credentialRef"], json!(null));
+
+        let scope = serde_json::to_value(ConnectionSettingsScope::Group {
+            group_id: "group-1".to_owned(),
+        })
+        .unwrap();
+        assert_eq!(scope, json!({ "kind": "group", "groupId": "group-1" }));
     }
 }

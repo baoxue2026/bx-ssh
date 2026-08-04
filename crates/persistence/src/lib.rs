@@ -4,6 +4,7 @@ mod envelope;
 mod error;
 mod key;
 mod private_key;
+mod repository;
 mod schema;
 
 pub use credential::{CredentialStore, SystemCredentialStore};
@@ -12,6 +13,7 @@ pub use envelope::MasterPasswordEnvelope;
 pub use error::PersistenceError;
 pub use key::DataKey;
 pub use private_key::EncryptedPrivateKey;
+pub use repository::ConnectionRepository;
 pub use schema::{APPLICATION_MIGRATIONS, LATEST_SCHEMA_VERSION};
 pub use secrecy::{ExposeSecret, SecretSlice, SecretString};
 

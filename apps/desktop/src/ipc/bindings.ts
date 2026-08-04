@@ -120,6 +120,22 @@ async confirmAppExit() : Promise<Result<null, CommandError>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async listConnections() : Promise<Result<ConnectionCatalog, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_connections") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getConnection(id: string) : Promise<Result<ConnectionDetails | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_connection", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -137,11 +153,17 @@ export type AppInfo = { name: string; version: string }
 export type AppMenuAction = "show-terminal" | "show-sftp" | "check-for-updates"
 export type AuthMethod = "password" | "privateKey" | "keyboardInteractive"
 export type CommandError = { code: CommandErrorCode; message: string }
-export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed"
+export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed"
+export type ConnectionCatalog = { groups: ConnectionGroup[]; connections: ConnectionListItem[] }
 export type ConnectionConfig = { id: string; groupId: string | null; name: string; host: string; port: number; username: string; notes: string | null; color: string | null; authMethod: AuthMethod; credentialRef: string | null; keyReferenceId: string | null }
+export type ConnectionDetails = { connection: ConnectionListItem; settings: ConnectionSettingsSnapshot }
+export type ConnectionGroup = { id: string; name: string; color: string | null; sortOrder: number; isCollapsed: boolean; revision: number }
+export type ConnectionListItem = { config: ConnectionConfig; isFavorite: boolean; sortOrder: number; lastConnectedAt: number | null; successfulConnectionCount: number; revision: number }
 export type ConnectionSettings = { connectTimeoutSecs: number; keepAliveSecs: number }
 export type ConnectionSettingsLayers = { global: ConnectionSettingsOverride | null; group: ConnectionSettingsOverride | null; connection: ConnectionSettingsOverride | null }
 export type ConnectionSettingsOverride = { connectTimeoutSecs: number | null; keepAliveSecs: number | null }
+export type ConnectionSettingsScope = { kind: "global" } | { kind: "group"; groupId: string } | { kind: "connection"; connectionId: string }
+export type ConnectionSettingsSnapshot = { layers: ConnectionSettingsLayers; resolved: ConnectionSettings }
 export type ExitImpact = { activeSessions: number; activeTransfers: number }
 export type HostKeyInfo = { algorithm: string; fingerprintSha256: string }
 export type ProbeHostRequest = { host: string; port: number }

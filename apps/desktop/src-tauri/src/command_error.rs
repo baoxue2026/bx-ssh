@@ -1,3 +1,4 @@
+use bx_persistence::PersistenceError;
 use bx_ssh_core::SshError;
 use serde::Serialize;
 use specta::Type;
@@ -36,6 +37,8 @@ pub(crate) enum CommandErrorCode {
     UpdateUnavailable,
     UpdateFailed,
     WebviewMemoryUsageFailed,
+    DatabaseUnavailable,
+    DatabaseQueryFailed,
 }
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -105,6 +108,19 @@ impl From<SshError> for CommandError {
     }
 }
 
+impl From<PersistenceError> for CommandError {
+    fn from(error: PersistenceError) -> Self {
+        let code = match &error {
+            PersistenceError::DatabaseOperation { .. }
+            | PersistenceError::InvalidConnectionConfiguration
+            | PersistenceError::InvalidStoredRecord { .. }
+            | PersistenceError::InvalidTimestamp => CommandErrorCode::DatabaseQueryFailed,
+            _ => CommandErrorCode::DatabaseUnavailable,
+        };
+        Self::new(code, error.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CommandError, CommandErrorCode};
@@ -127,5 +143,17 @@ mod tests {
             serialized["message"],
             "server host key changed: expected SHA256:expected, received SHA256:actual"
         );
+    }
+
+    #[test]
+    fn maps_database_errors_without_exposing_internal_sql() {
+        let query = CommandError::from(bx_persistence::PersistenceError::InvalidStoredRecord {
+            entity: "connection",
+        });
+        let unavailable = CommandError::from(bx_persistence::PersistenceError::DatabaseKeyMissing);
+
+        assert_eq!(query.code, CommandErrorCode::DatabaseQueryFailed);
+        assert_eq!(unavailable.code, CommandErrorCode::DatabaseUnavailable);
+        assert!(!query.message.contains("SELECT"));
     }
 }

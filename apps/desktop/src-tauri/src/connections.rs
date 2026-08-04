@@ -1,0 +1,109 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use bx_contracts::{ConnectionCatalog, ConnectionDetails};
+use bx_persistence::{
+    ConnectionRepository, EncryptedDatabase, PersistenceError, SystemCredentialStore,
+};
+use tauri::{AppHandle, Manager, State};
+
+use crate::command_error::{CommandError, CommandErrorCode};
+
+const DATABASE_FILE_NAME: &str = "bx-ssh.db";
+const CREDENTIAL_SERVICE: &str = "io.github.baoxue2026.bx-ssh";
+const DATABASE_KEY_ACCOUNT: &str = "database-data-key-v1";
+
+#[derive(Clone, Default)]
+pub(crate) struct ConnectionRepositoryState {
+    repository: Arc<Mutex<Option<ConnectionRepository>>>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn list_connections(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+) -> Result<ConnectionCatalog, CommandError> {
+    let data_directory = app_data_directory(&app)?;
+    run_query(state.inner().clone(), data_directory, |repository| {
+        repository.list_catalog()
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn get_connection(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    id: String,
+) -> Result<Option<ConnectionDetails>, CommandError> {
+    let data_directory = app_data_directory(&app)?;
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        repository.get_connection(&id)
+    })
+    .await
+}
+
+fn app_data_directory(app: &AppHandle) -> Result<PathBuf, CommandError> {
+    app.path().app_data_dir().map_err(|_| {
+        CommandError::new(
+            CommandErrorCode::DatabaseUnavailable,
+            "application data directory is unavailable",
+        )
+    })
+}
+
+async fn run_query<T, F>(
+    state: ConnectionRepositoryState,
+    data_directory: PathBuf,
+    query: F,
+) -> Result<T, CommandError>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut ConnectionRepository) -> Result<T, PersistenceError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || state.execute(&data_directory, query))
+        .await
+        .map_err(|_| {
+            CommandError::new(
+                CommandErrorCode::DatabaseQueryFailed,
+                "database query task failed",
+            )
+        })?
+}
+
+impl ConnectionRepositoryState {
+    fn execute<T>(
+        &self,
+        data_directory: &Path,
+        query: impl FnOnce(&mut ConnectionRepository) -> Result<T, PersistenceError>,
+    ) -> Result<T, CommandError> {
+        let mut repository = self.repository.lock().map_err(|_| {
+            CommandError::new(
+                CommandErrorCode::DatabaseUnavailable,
+                "connection repository state is unavailable",
+            )
+        })?;
+        if repository.is_none() {
+            *repository = Some(initialize_repository(data_directory)?);
+        }
+        query(repository.as_mut().expect("repository was initialized")).map_err(Into::into)
+    }
+}
+
+fn initialize_repository(data_directory: &Path) -> Result<ConnectionRepository, CommandError> {
+    fs::create_dir_all(data_directory).map_err(|_| {
+        CommandError::new(
+            CommandErrorCode::DatabaseUnavailable,
+            "application data directory could not be created",
+        )
+    })?;
+    let credential_store = SystemCredentialStore::new(CREDENTIAL_SERVICE, DATABASE_KEY_ACCOUNT)?;
+    let database = EncryptedDatabase::open_or_initialize(
+        data_directory.join(DATABASE_FILE_NAME),
+        &credential_store,
+    )?;
+    ConnectionRepository::new(database).map_err(Into::into)
+}

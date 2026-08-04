@@ -83,6 +83,8 @@ function createChannel<T>(onMessage: (message: T) => void): Channel<T> {
 
 export const ipc = {
   appInfo: () => call(() => commands.appInfo()),
+  listConnections: () => unwrap(() => commands.listConnections()),
+  getConnection: (id: string) => unwrap(() => commands.getConnection(id)),
   probeSshHost: (request: ProbeHostRequest) =>
     unwrap(() => commands.probeSshHost(request)),
   writeTerminal: (sessionId: string, data: string) =>

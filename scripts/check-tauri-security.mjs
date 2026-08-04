@@ -35,6 +35,8 @@ const reviewedApplicationCommands = [
   "check_for_update",
   "install_update",
   "confirm_app_exit",
+  "list_connections",
+  "get_connection",
 ];
 const productionPermissions = new Set([
   "allow-main-commands",
