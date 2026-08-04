@@ -12,6 +12,7 @@ import {
   Upload,
 } from "lucide-react";
 import type { RemoteDirectoryListing, TransferSummary } from "../ipc/bindings";
+import { EmptyState, LoadingState } from "./Feedback";
 
 export interface SftpTransferResult {
   direction: "upload" | "download";
@@ -150,16 +151,24 @@ export function SftpPane({
         </table>
 
         {connected && directory?.entries.length === 0 && (
-          <div className="sftp-empty">
-            <FolderOpen size={34} strokeWidth={1.3} />
-            <span>{t("sftp.empty")}</span>
-          </div>
+          <EmptyState
+            className="sftp-empty"
+            icon={<FolderOpen size={34} strokeWidth={1.3} />}
+            title={t("sftp.empty")}
+          />
         )}
         {!connected && (
-          <div className="sftp-empty">
-            <FolderOpen size={34} strokeWidth={1.3} />
-            <span>{t("sftp.notConnected")}</span>
-          </div>
+          <EmptyState
+            className="sftp-empty"
+            icon={<FolderOpen size={34} strokeWidth={1.3} />}
+            title={t("sftp.notConnected")}
+          />
+        )}
+        {busy && (
+          <LoadingState
+            className="sftp-loading-overlay"
+            label={t("feedback.loading")}
+          />
         )}
       </div>
 
@@ -219,7 +228,11 @@ export function SftpPane({
         </div>
 
         {transferResult && (
-          <div className="sftp-transfer-result" role="status">
+          <div
+            className="sftp-transfer-result"
+            role="status"
+            aria-live="polite"
+          >
             <CheckCircle2 size={15} />
             <span>
               {transferResult.direction === "upload"

@@ -20,6 +20,7 @@
   --status-bg: #e8ecf0;
   --status-border: #d1d7de;
   --status-divider: #c6ccd4;
+  --loading-overlay: rgba(255, 255, 255, 0.82);
   color: var(--text);
   color-scheme: light;
   background: var(--app-bg);
@@ -44,6 +45,7 @@
   --status-bg: #242930;
   --status-border: #363d46;
   --status-divider: #464d57;
+  --loading-overlay: rgba(31, 35, 41, 0.82);
   color-scheme: dark;
 }
 
@@ -429,6 +431,68 @@ select {
   font-size: 11px;
 }
 
+.feedback-loading-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.app-dialog-description {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.feedback-empty-state {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.feedback-empty-icon {
+  display: inline-flex;
+}
+
+.feedback-empty-title,
+.feedback-empty-description {
+  font-size: 11px;
+}
+
+.feedback-empty-description {
+  max-width: 280px;
+}
+
+.app-error-fallback {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  min-height: 100vh;
+  gap: 10px;
+  padding: 24px;
+  color: var(--text);
+  background: var(--app-bg);
+  text-align: center;
+}
+
+.app-error-fallback h1,
+.app-error-fallback p {
+  margin: 0;
+}
+
+.app-error-fallback h1 {
+  font-size: 18px;
+}
+
+.app-error-fallback p {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .terminal-workspace {
   display: grid;
   min-width: 0;
@@ -620,6 +684,16 @@ select {
 
 .sftp-empty span {
   font-size: 11px;
+}
+
+.sftp-loading-overlay {
+  position: absolute;
+  z-index: 2;
+  inset: 30px 0 0;
+  display: grid;
+  place-content: center;
+  background: var(--loading-overlay);
+  pointer-events: auto;
 }
 
 .sftp-transfer-panel {
