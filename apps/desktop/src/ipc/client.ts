@@ -3,6 +3,8 @@ import {
   commands,
   type CommandError,
   type CommandErrorCode,
+  type ConnectionConfig,
+  type ConnectionSettingsOverride,
   type ProbeHostRequest,
   type Result,
   type StartShellRequest,
@@ -85,6 +87,11 @@ export const ipc = {
   appInfo: () => call(() => commands.appInfo()),
   listConnections: () => unwrap(() => commands.listConnections()),
   getConnection: (id: string) => unwrap(() => commands.getConnection(id)),
+  saveConnection: (
+    config: ConnectionConfig,
+    settings: ConnectionSettingsOverride,
+  ) => unwrapVoid(() => commands.saveConnection(config, settings)),
+  deleteConnection: (id: string) => unwrap(() => commands.deleteConnection(id)),
   probeSshHost: (request: ProbeHostRequest) =>
     unwrap(() => commands.probeSshHost(request)),
   writeTerminal: (sessionId: string, data: string) =>

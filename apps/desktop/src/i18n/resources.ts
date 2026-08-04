@@ -57,10 +57,10 @@ export const resources = {
       },
       connectionEditor: {
         actions: {
-          applyDraft: "应用草稿",
           clearColor: "清除颜色",
-          editDraft: "编辑连接草稿",
           newConnection: "新建连接",
+          save: "保存",
+          saveAndConnect: "保存并连接",
         },
         auth: {
           keyboardInteractive: "Keyboard Interactive",
@@ -68,8 +68,9 @@ export const resources = {
           privateKey: "私钥",
         },
         description:
-          "在此检查连接配置。应用后仅生成本地草稿，下一阶段接入安全持久化。",
-        draftReady: "连接草稿已生成，尚未写入本地数据库。",
+          "连接配置保存在本机数据库中。密码和私钥内容不会写入连接配置。",
+        saveAndConnectUnavailable: "存在活动会话或连接操作时不可保存并连接。",
+        saveFailed: "保存连接失败",
         fields: {
           authMethod: "认证方式",
           color: "标识颜色",
@@ -127,6 +128,32 @@ export const resources = {
           timeout: "连接超时必须是大于 0 的整数",
           wholeNumber: "请输入整数",
         },
+      },
+      connectionCatalog: {
+        confirmDelete: "删除本机配置",
+        copy: "复制",
+        copyName: "{{name}} 副本",
+        copyNamed: "复制 {{name}}",
+        delete: "删除",
+        deleted: "已删除连接“{{name}}”",
+        deleteDescription: "确定删除本机保存的连接“{{name}}”吗？",
+        deleteFailed: "删除连接失败",
+        deleteNamed: "删除 {{name}}",
+        deleteTitle: "删除连接？",
+        edit: "编辑",
+        editActiveNotice: "修改仅对下次连接生效，当前会话不会重启。",
+        editNamed: "编辑 {{name}}",
+        empty: "暂无已保存连接",
+        emptyDescription: "新建连接并保存后会显示在这里。",
+        loadFailed: "加载已保存连接失败",
+        loading: "正在加载已保存连接",
+        notFound: "该连接已不存在，请刷新列表后重试。",
+        refresh: "刷新已保存连接",
+        remoteDataSafe:
+          "此操作只移除本机连接配置，不删除或修改远程数据，也不会关闭当前会话。",
+        retry: "重试",
+        saved: "已保存连接“{{name}}”",
+        title: "已保存连接",
       },
       status: {
         closing: "正在断开",
@@ -262,10 +289,10 @@ export const resources = {
       },
       connectionEditor: {
         actions: {
-          applyDraft: "Apply Draft",
           clearColor: "Clear color",
-          editDraft: "Edit connection draft",
           newConnection: "New Connection",
+          save: "Save",
+          saveAndConnect: "Save and Connect",
         },
         auth: {
           keyboardInteractive: "Keyboard Interactive",
@@ -273,9 +300,10 @@ export const resources = {
           privateKey: "Private key",
         },
         description:
-          "Review the connection configuration here. Applying creates an in-memory draft; secure persistence is added in the next stage.",
-        draftReady:
-          "The connection draft is ready and has not been written to the local database.",
+          "Connection settings are stored in the local database. Passwords and private-key contents are not written to the connection configuration.",
+        saveAndConnectUnavailable:
+          "Save and Connect is unavailable while a session or connection operation is active.",
+        saveFailed: "Failed to save connection",
         fields: {
           authMethod: "Authentication method",
           color: "Identity color",
@@ -335,6 +363,34 @@ export const resources = {
           timeout: "Connection timeout must be a positive integer",
           wholeNumber: "Enter a whole number",
         },
+      },
+      connectionCatalog: {
+        confirmDelete: "Delete Local Configuration",
+        copy: "Copy",
+        copyName: "{{name}} Copy",
+        copyNamed: "Copy {{name}}",
+        delete: "Delete",
+        deleted: 'Deleted connection "{{name}}"',
+        deleteDescription: 'Delete the locally saved connection "{{name}}"?',
+        deleteFailed: "Failed to delete connection",
+        deleteNamed: "Delete {{name}}",
+        deleteTitle: "Delete Connection?",
+        edit: "Edit",
+        editActiveNotice:
+          "Changes apply to the next connection. The current session will not restart.",
+        editNamed: "Edit {{name}}",
+        empty: "No saved connections",
+        emptyDescription:
+          "Create and save a connection to make it available here.",
+        loadFailed: "Failed to load saved connections",
+        loading: "Loading saved connections",
+        notFound: "This connection no longer exists. Refresh and try again.",
+        refresh: "Refresh saved connections",
+        remoteDataSafe:
+          "This only removes the local connection configuration. It does not delete or change remote data, and it does not close the current session.",
+        retry: "Retry",
+        saved: 'Saved connection "{{name}}"',
+        title: "Saved Connections",
       },
       status: {
         closing: "Disconnecting",

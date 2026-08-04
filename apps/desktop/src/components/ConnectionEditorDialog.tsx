@@ -22,7 +22,7 @@ import type {
   ConnectionConfig,
   ConnectionSettingsOverride,
 } from "../ipc/bindings";
-import { AppDialog } from "./Feedback";
+import { AppDialog, FeedbackNotice } from "./Feedback";
 import { isValidSshHost } from "./hostValidation";
 
 type ConnectionEditorTab = "basic" | "authentication" | "settings";
@@ -38,12 +38,18 @@ export interface ConnectionEditorValue {
 }
 
 export interface ConnectionEditorDialogProps {
+  errorMessage?: string;
   groupOptions?: ConnectionGroupOption[];
   initialValue?: ConnectionEditorValue;
+  notice?: string;
+  pending?: boolean;
+  saveAndConnectDisabled?: boolean;
   onClose(): void;
-  onSubmit(value: ConnectionEditorValue): void;
+  onSubmit(value: ConnectionEditorValue, intent: ConnectionEditorIntent): void;
   open: boolean;
 }
+
+export type ConnectionEditorIntent = "save" | "saveAndConnect";
 
 interface FormValues {
   authMethod: AuthMethod;
@@ -80,8 +86,12 @@ const SETTINGS_FIELDS: Array<keyof FormValues> = [
 ];
 
 export function ConnectionEditorDialog({
+  errorMessage,
   groupOptions = [],
   initialValue,
+  notice,
+  pending = false,
+  saveAndConnectDisabled = false,
   onClose,
   onSubmit,
   open,
@@ -198,21 +208,22 @@ export function ConnectionEditorDialog({
     settings: hasFieldError(errors, SETTINGS_FIELDS),
   };
 
-  const submit = handleSubmit(
-    (values) => {
-      onSubmit(toEditorValue(values, editingSource, draftId));
-    },
-    (fieldErrors) => {
-      const firstTab = firstErrorTab(fieldErrors);
-      setActiveTab(firstTab);
-      const firstField = firstErrorField(fieldErrors, firstTab);
-      if (firstField) {
-        requestAnimationFrame(() =>
-          document.getElementById(fieldId(firstField))?.focus(),
-        );
-      }
-    },
-  );
+  const submit = (intent: ConnectionEditorIntent) =>
+    handleSubmit(
+      (values) => {
+        onSubmit(toEditorValue(values, editingSource, draftId), intent);
+      },
+      (fieldErrors) => {
+        const firstTab = firstErrorTab(fieldErrors);
+        setActiveTab(firstTab);
+        const firstField = firstErrorField(fieldErrors, firstTab);
+        if (firstField) {
+          requestAnimationFrame(() =>
+            document.getElementById(fieldId(firstField))?.focus(),
+          );
+        }
+      },
+    );
 
   const tabs = [
     {
@@ -640,12 +651,38 @@ export function ConnectionEditorDialog({
       description={t("connectionEditor.description")}
       footer={
         <>
-          <Button onClick={onClose}>{t("common.cancel")}</Button>
-          <Button form={formId} htmlType="submit" type="primary">
-            {t("connectionEditor.actions.applyDraft")}
+          <Button
+            aria-label={t("common.cancel")}
+            disabled={pending}
+            onClick={onClose}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            aria-label={t("connectionEditor.actions.saveAndConnect")}
+            disabled={pending || saveAndConnectDisabled}
+            title={
+              saveAndConnectDisabled
+                ? t("connectionEditor.saveAndConnectUnavailable")
+                : undefined
+            }
+            onClick={() => void submit("saveAndConnect")()}
+          >
+            {t("connectionEditor.actions.saveAndConnect")}
+          </Button>
+          <Button
+            aria-label={t("connectionEditor.actions.save")}
+            disabled={pending}
+            loading={pending}
+            type="primary"
+            onClick={() => void submit("save")()}
+          >
+            {t("connectionEditor.actions.save")}
           </Button>
         </>
       }
+      closable={!pending}
+      closeOnEscape={!pending}
       maskClosable={false}
       open={open}
       title={t(
@@ -654,7 +691,31 @@ export function ConnectionEditorDialog({
       width={660}
       onClose={onClose}
     >
-      <form id={formId} noValidate onSubmit={(event) => void submit(event)}>
+      {notice && (
+        <FeedbackNotice
+          className="connection-editor-notice"
+          message={notice}
+          showIcon
+          type="info"
+        />
+      )}
+      {errorMessage && (
+        <FeedbackNotice
+          className="connection-editor-notice"
+          message={t("connectionEditor.saveFailed")}
+          description={errorMessage}
+          showIcon
+          type="error"
+        />
+      )}
+      <form
+        id={formId}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit("save")();
+        }}
+      >
         <Tabs
           activeKey={activeTab}
           aria-label={t("connectionEditor.tabs.label")}
