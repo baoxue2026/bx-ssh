@@ -93,6 +93,29 @@ describe("IPC client", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("trust_host_fingerprint", {
       request: { host: "example.com", port: 2222, hostKey },
     });
+
+    mocks.invoke.mockResolvedValue("secret");
+    await expect(ipc.getPasswordCredential("credential-root")).resolves.toBe(
+      "secret",
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("get_password_credential", {
+      credentialRef: "credential-root",
+    });
+
+    mocks.invoke.mockResolvedValue(null);
+    await expect(
+      ipc.savePasswordCredential("credential-root", "secret"),
+    ).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("save_password_credential", {
+      credentialRef: "credential-root",
+      password: "secret",
+    });
+    await expect(ipc.deletePasswordCredential("credential-root")).resolves.toBe(
+      undefined,
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("delete_password_credential", {
+      credentialRef: "credential-root",
+    });
   });
 
   it("uses generated connection mutation commands", async () => {

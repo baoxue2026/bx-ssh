@@ -154,7 +154,7 @@ describe("ConnectionEditorDialog", () => {
     expect(result).toMatchObject({
       config: {
         authMethod: "password",
-        credentialRef: "credential-root",
+        credentialRef: null,
         groupId: null,
         host: "server.example.com",
         keyReferenceId: null,
@@ -170,6 +170,28 @@ describe("ConnectionEditorDialog", () => {
     });
     expect(result.config.id).toMatch(/^connection-/);
     expect(hasPropertyNamed(result, "password")).toBe(false);
+  });
+
+  it("requires a password only for the selected session or vault mode", async () => {
+    const onSubmit = vi.fn();
+    renderEditor({ onSubmit });
+    fillRequiredBasicFields({ host: "server.example.com", port: "22" });
+    clickTab("authentication");
+    fireEvent.click(screen.getByRole("radio", { name: "保存到系统凭据库" }));
+    fireEvent.change(field("connection-credential-ref"), {
+      target: { value: "credential-root" },
+    });
+    fireEvent.change(field("connection-password"), {
+      target: { value: "secret" },
+    });
+    submitForm();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      credentialMode: "vault",
+      password: "secret",
+      config: { credentialRef: "credential-root" },
+    });
   });
 
   it("distinguishes save and save-and-connect actions", async () => {

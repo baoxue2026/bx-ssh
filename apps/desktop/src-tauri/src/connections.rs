@@ -8,8 +8,10 @@ use bx_contracts::{
     ConnectionSettingsOverride,
 };
 use bx_persistence::{
-    ConnectionRepository, EncryptedDatabase, PersistenceError, SystemCredentialStore,
+    ConnectionRepository, EncryptedDatabase, PersistenceError, SecretCredentialStore,
+    SystemCredentialStore,
 };
+use secrecy::{ExposeSecret, SecretString};
 use tauri::{AppHandle, Manager, State};
 
 use crate::command_error::{CommandError, CommandErrorCode};
@@ -17,6 +19,7 @@ use crate::command_error::{CommandError, CommandErrorCode};
 const DATABASE_FILE_NAME: &str = "bx-ssh.db";
 const CREDENTIAL_SERVICE: &str = "io.github.baoxue2026.bx-ssh";
 const DATABASE_KEY_ACCOUNT: &str = "database-data-key-v1";
+const PASSWORD_CREDENTIAL_SERVICE: &str = "io.github.baoxue2026.bx-ssh.password";
 
 #[derive(Clone, Default)]
 pub(crate) struct ConnectionRepositoryState {
@@ -64,6 +67,39 @@ pub(crate) async fn save_connection(
         repository.save_connection(&config, settings, now_ms)
     })
     .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn get_password_credential(
+    credential_ref: String,
+) -> Result<Option<String>, CommandError> {
+    let store = password_store(&credential_ref)?;
+    Ok(store
+        .load_secret()?
+        .map(|secret| secret.expose_secret().to_owned()))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn save_password_credential(
+    credential_ref: String,
+    password: String,
+) -> Result<(), CommandError> {
+    if password.is_empty() {
+        return Err(PersistenceError::InvalidCredential.into());
+    }
+    let store = password_store(&credential_ref)?;
+    store.save_secret(&SecretString::from(password))?;
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn delete_password_credential(credential_ref: String) -> Result<(), CommandError> {
+    let store = password_store(&credential_ref)?;
+    store.delete_secret()?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -264,4 +300,12 @@ fn initialize_repository(data_directory: &Path) -> Result<ConnectionRepository, 
         &credential_store,
     )?;
     ConnectionRepository::new(database).map_err(Into::into)
+}
+
+fn password_store(credential_ref: &str) -> Result<SystemCredentialStore, CommandError> {
+    let account = credential_ref.trim();
+    if account.is_empty() {
+        return Err(PersistenceError::InvalidCredential.into());
+    }
+    SystemCredentialStore::new(PASSWORD_CREDENTIAL_SERVICE, account).map_err(Into::into)
 }

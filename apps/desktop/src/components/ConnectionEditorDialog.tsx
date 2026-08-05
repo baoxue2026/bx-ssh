@@ -35,6 +35,8 @@ export interface ConnectionGroupOption {
 export interface ConnectionEditorValue {
   config: ConnectionConfig;
   settings: ConnectionSettingsOverride;
+  credentialMode?: CredentialMode;
+  password?: string;
 }
 
 export interface ConnectionEditorDialogProps {
@@ -51,10 +53,13 @@ export interface ConnectionEditorDialogProps {
 
 export type ConnectionEditorIntent = "save" | "saveAndConnect";
 
+export type CredentialMode = "ask" | "session" | "vault";
+
 interface FormValues {
   authMethod: AuthMethod;
   color: string;
   connectTimeoutSecs: number | null;
+  credentialMode: CredentialMode;
   credentialRef: string;
   groupId: string;
   host: string;
@@ -62,6 +67,7 @@ interface FormValues {
   keyReferenceId: string;
   name: string;
   notes: string;
+  password: string;
   port: number;
   username: string;
 }
@@ -77,8 +83,10 @@ const BASIC_FIELDS: Array<keyof FormValues> = [
 ];
 const AUTHENTICATION_FIELDS: Array<keyof FormValues> = [
   "authMethod",
+  "credentialMode",
   "credentialRef",
   "keyReferenceId",
+  "password",
 ];
 const SETTINGS_FIELDS: Array<keyof FormValues> = [
   "connectTimeoutSecs",
@@ -125,6 +133,7 @@ export function ConnectionEditorDialog({
             .min(1, t("connectionEditor.validation.timeout"))
             .max(4_294_967_295, t("connectionEditor.validation.timeout"))
             .nullable(),
+          credentialMode: z.enum(["ask", "session", "vault"]),
           credentialRef: z.string(),
           groupId: z.string(),
           host: z
@@ -151,6 +160,7 @@ export function ConnectionEditorDialog({
               t("connectionEditor.validation.required"),
             ),
           notes: z.string(),
+          password: z.string(),
           port: z
             .number()
             .int(t("connectionEditor.validation.port"))
@@ -172,6 +182,28 @@ export function ConnectionEditorDialog({
               code: "custom",
               message: t("connectionEditor.validation.required"),
               path: ["keyReferenceId"],
+            });
+          }
+          if (
+            values.authMethod === "password" &&
+            values.credentialMode !== "ask" &&
+            !values.password
+          ) {
+            context.addIssue({
+              code: "custom",
+              message: t("connectionEditor.validation.required"),
+              path: ["password"],
+            });
+          }
+          if (
+            values.authMethod === "password" &&
+            values.credentialMode === "vault" &&
+            !values.credentialRef.trim()
+          ) {
+            context.addIssue({
+              code: "custom",
+              message: t("connectionEditor.validation.required"),
+              path: ["credentialRef"],
             });
           }
         }),
@@ -202,6 +234,7 @@ export function ConnectionEditorDialog({
   }, [initialValue, open, reset]);
 
   const authMethod = useWatch({ control, name: "authMethod" });
+  const credentialMode = useWatch({ control, name: "credentialMode" });
   const tabErrors: Record<ConnectionEditorTab, boolean> = {
     basic: hasFieldError(errors, BASIC_FIELDS),
     authentication: hasFieldError(errors, AUTHENTICATION_FIELDS),
@@ -503,6 +536,73 @@ export function ConnectionEditorDialog({
 
           <div hidden={authMethod !== "password"}>
             <Field
+              error={errors.credentialMode?.message}
+              help={t("connectionEditor.help.credentialMode")}
+              id="connection-credential-mode"
+              label={t("connectionEditor.fields.credentialMode")}
+              required
+            >
+              {(describedBy, invalid) => (
+                <Controller
+                  control={control}
+                  name="credentialMode"
+                  render={({ field }) => (
+                    <Radio.Group
+                      id="connection-credential-mode"
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid}
+                      aria-required="true"
+                      className="connection-auth-options"
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    >
+                      <Radio value="ask">
+                        {t("connectionEditor.credentialMode.ask")}
+                      </Radio>
+                      <Radio value="session">
+                        {t("connectionEditor.credentialMode.session")}
+                      </Radio>
+                      <Radio value="vault">
+                        {t("connectionEditor.credentialMode.vault")}
+                      </Radio>
+                    </Radio.Group>
+                  )}
+                />
+              )}
+            </Field>
+          </div>
+
+          <div hidden={authMethod !== "password" || credentialMode === "ask"}>
+            <Field
+              error={errors.password?.message}
+              help={t("connectionEditor.help.password")}
+              id="connection-password"
+              label={t("connectionEditor.fields.password")}
+            >
+              {(describedBy, invalid) => (
+                <Controller
+                  control={control}
+                  name="password"
+                  render={({ field }) => (
+                    <Input.Password
+                      id="connection-password"
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid}
+                      autoComplete="new-password"
+                      placeholder={t("connectionEditor.placeholders.password")}
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    />
+                  )}
+                />
+              )}
+            </Field>
+          </div>
+
+          <div hidden={authMethod !== "password"}>
+            <Field
               error={errors.credentialRef?.message}
               help={t("connectionEditor.help.credentialRef")}
               id="connection-credential-ref"
@@ -796,6 +896,8 @@ function toFormValues(value: ConnectionEditorValue | undefined): FormValues {
     authMethod: value?.config.authMethod ?? "password",
     color: value?.config.color ?? "",
     connectTimeoutSecs: value?.settings.connectTimeoutSecs ?? null,
+    credentialMode:
+      value?.credentialMode ?? (value?.config.credentialRef ? "vault" : "ask"),
     credentialRef: value?.config.credentialRef ?? "",
     groupId: value?.config.groupId ?? "",
     host: value?.config.host ?? "",
@@ -803,6 +905,7 @@ function toFormValues(value: ConnectionEditorValue | undefined): FormValues {
     keyReferenceId: value?.config.keyReferenceId ?? "",
     name: value?.config.name ?? "",
     notes: value?.config.notes ?? "",
+    password: "",
     port: value?.config.port ?? 22,
     username: value?.config.username ?? "",
   };
@@ -825,7 +928,7 @@ function toEditorValue(
       color: emptyToNull(values.color),
       authMethod: values.authMethod,
       credentialRef:
-        values.authMethod === "password"
+        values.authMethod === "password" && values.credentialMode === "vault"
           ? emptyToNull(values.credentialRef)
           : null,
       keyReferenceId:
@@ -837,6 +940,12 @@ function toEditorValue(
       connectTimeoutSecs: values.connectTimeoutSecs,
       keepAliveSecs: values.keepAliveSecs,
     },
+    credentialMode: values.credentialMode,
+    ...(values.authMethod === "password" &&
+    values.credentialMode !== "ask" &&
+    values.password
+      ? { password: values.password }
+      : {}),
   };
 }
 
@@ -877,12 +986,14 @@ function fieldId(field: keyof FormValues): string {
     color: "connection-color",
     connectTimeoutSecs: "connection-timeout",
     credentialRef: "connection-credential-ref",
+    credentialMode: "connection-credential-mode",
     groupId: "connection-group",
     host: "connection-host",
     keepAliveSecs: "connection-keep-alive",
     keyReferenceId: "connection-key-reference",
     name: "connection-name",
     notes: "connection-notes",
+    password: "connection-password",
     port: "connection-port",
     username: "connection-username",
   };

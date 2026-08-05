@@ -22,9 +22,10 @@ mod terminal;
 mod update;
 
 use connections::{
-    delete_connection, delete_connection_group, get_connection, list_connections,
-    record_successful_connection, reorder_connection_groups, reorder_connections, save_connection,
-    save_connection_group, set_connection_favorite, set_connection_group_collapsed,
+    delete_connection, delete_connection_group, delete_password_credential, get_connection,
+    get_password_credential, list_connections, record_successful_connection,
+    reorder_connection_groups, reorder_connections, save_connection, save_connection_group,
+    save_password_credential, set_connection_favorite, set_connection_group_collapsed,
     ConnectionRepositoryState,
 };
 #[cfg(any(debug_assertions, test))]
@@ -76,6 +77,9 @@ fn command_builder() -> Builder<tauri::Wry> {
             connections::list_connections,
             connections::get_connection,
             connections::save_connection,
+            connections::get_password_credential,
+            connections::save_password_credential,
+            connections::delete_password_credential,
             connections::delete_connection,
             connections::record_successful_connection,
             connections::save_connection_group,
@@ -209,6 +213,9 @@ pub fn run() {
             list_connections,
             get_connection,
             save_connection,
+            get_password_credential,
+            save_password_credential,
+            delete_password_credential,
             delete_connection,
             record_successful_connection,
             save_connection_group,
