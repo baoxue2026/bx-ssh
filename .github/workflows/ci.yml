@@ -163,6 +163,7 @@ jobs:
           libwebkit2gtk-4.1-dev
           libayatana-appindicator3-dev
           librsvg2-dev
+          dbus-daemon
           openbox
           xvfb
           perl
@@ -197,7 +198,7 @@ jobs:
       - name: Run Tauri E2E tests on Linux
         if: runner.os == 'Linux'
         run: |
-          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bash -c '
+          dbus-run-session -- xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bash -c '
             openbox --sm-disable >/tmp/bx-ssh-openbox.log 2>&1 &
             wm_pid=$!
             trap "kill $wm_pid 2>/dev/null || true" EXIT
