@@ -383,7 +383,17 @@ export const resources = {
         title: "退出 BX SSH？",
       },
       errors: {
+        connectionRefused:
+          "目标主机拒绝了 SSH 连接，请检查地址、端口和 SSH 服务状态。",
+        dnsLookupFailed: "无法解析主机名，请检查主机地址和 DNS 设置。",
+        dnsLookupTimeout: "解析主机名超时，请检查网络和 DNS 设置。",
+        handshakeFailed: "SSH 握手失败，服务器可能不兼容或连接已中断。",
+        handshakeTimeout: "SSH 握手超时，请检查服务器状态和网络质量。",
+        keepAliveFailed: "服务器未响应 KeepAlive，SSH 连接已断开。",
+        networkUnreachable: "网络或目标主机不可达，请检查网络和路由设置。",
         sshOperation: "SSH 操作失败",
+        tcpConnectFailed: "无法建立 SSH 网络连接，请检查网络和服务器状态。",
+        tcpConnectTimeout: "连接 SSH 服务器超时，请检查地址、端口和网络状态。",
       },
       feedback: {
         loading: "正在加载",
@@ -795,7 +805,25 @@ export const resources = {
         title: "Exit BX SSH?",
       },
       errors: {
+        connectionRefused:
+          "The target refused the SSH connection. Check the address, port, and SSH service.",
+        dnsLookupFailed:
+          "The host name could not be resolved. Check the address and DNS settings.",
+        dnsLookupTimeout:
+          "Host name resolution timed out. Check the network and DNS settings.",
+        handshakeFailed:
+          "The SSH handshake failed. The server may be incompatible or the connection was interrupted.",
+        handshakeTimeout:
+          "The SSH handshake timed out. Check the server and network quality.",
+        keepAliveFailed:
+          "The server stopped responding to KeepAlive requests, so the SSH connection was closed.",
+        networkUnreachable:
+          "The network or target host is unreachable. Check the network and routing settings.",
         sshOperation: "SSH operation failed",
+        tcpConnectFailed:
+          "The SSH network connection could not be established. Check the network and server.",
+        tcpConnectTimeout:
+          "The SSH connection timed out. Check the address, port, and network.",
       },
       feedback: {
         loading: "Loading",

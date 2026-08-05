@@ -20,6 +20,10 @@ pub enum SshError {
     DnsLookupFailed(#[source] std::io::Error),
     #[error("SSH TCP connection timed out")]
     TcpConnectTimeout,
+    #[error("SSH connection was refused: {0}")]
+    ConnectionRefused(#[source] std::io::Error),
+    #[error("SSH network or host is unreachable: {0}")]
+    NetworkUnreachable(#[source] std::io::Error),
     #[error("SSH TCP connection failed: {0}")]
     TcpConnectFailed(#[source] std::io::Error),
     #[error("SSH handshake timed out")]
@@ -60,6 +64,8 @@ pub enum SshError {
     ChannelClosed { request: &'static str },
     #[error("SSH channel could not be opened: {0}")]
     ChannelOpenFailed(#[source] russh::Error),
+    #[error("SSH KeepAlive failed because the server stopped responding")]
+    KeepAliveFailed,
     #[error("failed to load private key: {0}")]
     PrivateKey(#[from] russh::keys::Error),
     #[error("SFTP operation failed: {0}")]
@@ -67,7 +73,16 @@ pub enum SshError {
     #[error("file transfer I/O failed: {0}")]
     TransferIo(#[from] std::io::Error),
     #[error("SSH transport failed: {0}")]
-    Transport(#[from] russh::Error),
+    Transport(#[source] russh::Error),
+}
+
+impl From<russh::Error> for SshError {
+    fn from(error: russh::Error) -> Self {
+        match error {
+            russh::Error::KeepaliveTimeout => Self::KeepAliveFailed,
+            error => Self::Transport(error),
+        }
+    }
 }
 
 impl SshError {
@@ -78,9 +93,11 @@ impl SshError {
 
         match self {
             Self::DnsLookupTimeout | Self::DnsLookupFailed(_) => Some(ResolvingDns),
-            Self::ConnectTimeout | Self::TcpConnectTimeout | Self::TcpConnectFailed(_) => {
-                Some(ConnectingTcp)
-            }
+            Self::ConnectTimeout
+            | Self::TcpConnectTimeout
+            | Self::ConnectionRefused(_)
+            | Self::NetworkUnreachable(_)
+            | Self::TcpConnectFailed(_) => Some(ConnectingTcp),
             Self::HandshakeTimeout
             | Self::HandshakeFailed(_)
             | Self::NegotiatedAlgorithmsUnavailable
@@ -107,6 +124,7 @@ impl SshError {
             | Self::TransferIntegrityMismatch { .. }
             | Self::Sftp(_)
             | Self::TransferIo(_)
+            | Self::KeepAliveFailed
             | Self::Transport(_) => None,
         }
     }
@@ -133,5 +151,17 @@ mod tests {
             channel.connection_stage(),
             Some(SshConnectionStage::OpeningChannel)
         );
+    }
+
+    #[test]
+    fn classifies_keep_alive_transport_failures() {
+        assert!(matches!(
+            SshError::from(russh::Error::KeepaliveTimeout),
+            SshError::KeepAliveFailed
+        ));
+        assert!(matches!(
+            SshError::from(russh::Error::SendError),
+            SshError::Transport(russh::Error::SendError)
+        ));
     }
 }

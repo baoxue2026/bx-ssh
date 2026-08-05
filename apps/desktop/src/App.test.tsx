@@ -216,7 +216,8 @@ describe("App", { timeout: 15_000 }, () => {
 
   it("saves before probing when using save and connect", async () => {
     const commandOrder: string[] = [];
-    mocks.invoke.mockImplementation((command: string) => {
+    let savedConfig: Record<string, unknown> | undefined;
+    mocks.invoke.mockImplementation((command: string, payload?: unknown) => {
       commandOrder.push(command);
       if (command === "app_info") {
         return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
@@ -225,7 +226,24 @@ describe("App", { timeout: 15_000 }, () => {
         return Promise.resolve({ groups: [], connections: [] });
       }
       if (command === "save_connection") {
+        savedConfig = (payload as { config: Record<string, unknown> }).config;
         return Promise.resolve(null);
+      }
+      if (command === "get_connection") {
+        return Promise.resolve({
+          connection: {
+            config: savedConfig,
+            isFavorite: false,
+            sortOrder: 0,
+            lastConnectedAt: null,
+            successfulConnectionCount: 0,
+            revision: 0,
+          },
+          settings: {
+            layers: { global: null, group: null, connection: null },
+            resolved: { connectTimeoutSecs: 10, keepAliveSecs: 30 },
+          },
+        });
       }
       if (command === "probe_ssh_host") {
         return Promise.resolve({
@@ -244,7 +262,11 @@ describe("App", { timeout: 15_000 }, () => {
 
     await waitFor(() => {
       expect(mocks.invoke).toHaveBeenCalledWith("probe_ssh_host", {
-        request: { host: "server.example.com", port: 22 },
+        request: {
+          host: "server.example.com",
+          port: 22,
+          settings: { connectTimeoutSecs: 10, keepAliveSecs: 30 },
+        },
       });
       expect(screen.getByText("信任此主机指纹")).toBeInTheDocument();
     });
@@ -523,7 +545,11 @@ describe("App", { timeout: 15_000 }, () => {
         id: "connection-production",
       });
       expect(mocks.invoke).toHaveBeenCalledWith("probe_ssh_host", {
-        request: { host: "prod.example.com", port: 22 },
+        request: {
+          host: "prod.example.com",
+          port: 22,
+          settings: { connectTimeoutSecs: 15, keepAliveSecs: 45 },
+        },
       });
     });
   });
@@ -596,7 +622,11 @@ describe("App", { timeout: 15_000 }, () => {
         id: "connection-recent-4",
       });
       expect(mocks.invoke).toHaveBeenCalledWith("probe_ssh_host", {
-        request: { host: "recent-4.example.com", port: 22 },
+        request: {
+          host: "recent-4.example.com",
+          port: 22,
+          settings: { connectTimeoutSecs: 15, keepAliveSecs: 45 },
+        },
       });
     });
     expect(screen.getByText("信任此主机指纹")).toBeInTheDocument();
@@ -880,7 +910,11 @@ describe("App", { timeout: 15_000 }, () => {
 
     await waitFor(() => {
       expect(mocks.invoke).toHaveBeenCalledWith("probe_ssh_host", {
-        request: { host: "127.0.0.1", port: 22 },
+        request: {
+          host: "127.0.0.1",
+          port: 22,
+          settings: { connectTimeoutSecs: 10, keepAliveSecs: 30 },
+        },
       });
       expect(screen.getByText("ssh-ed25519")).toBeInTheDocument();
       expect(screen.getByText("信任此主机指纹")).toBeInTheDocument();
@@ -893,7 +927,11 @@ describe("App", { timeout: 15_000 }, () => {
         return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
       }
       if (command === "probe_ssh_host") {
-        return Promise.reject(new Error("Network unavailable"));
+        return Promise.reject({
+          code: "connection_refused",
+          message: "Connection refused",
+          stage: "connectingTcp",
+        });
       }
       return Promise.resolve();
     });
@@ -903,7 +941,9 @@ describe("App", { timeout: 15_000 }, () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveAttribute("aria-live", "assertive");
-    expect(alert).toHaveTextContent("Network unavailable");
+    expect(alert).toHaveTextContent(
+      "目标主机拒绝了 SSH 连接，请检查地址、端口和 SSH 服务状态。",
+    );
   });
 
   it("requires confirmation before exiting with active work", async () => {
@@ -1147,6 +1187,7 @@ describe("App", { timeout: 15_000 }, () => {
       request: expect.objectContaining({
         username: "bxssh",
         password: "secret",
+        settings: { connectTimeoutSecs: 10, keepAliveSecs: 30 },
         initialPath: ".",
       }),
       onState: expect.anything(),
@@ -1316,6 +1357,7 @@ describe("App", { timeout: 15_000 }, () => {
             password: "secret",
             expectedFingerprint:
               "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            settings: { connectTimeoutSecs: 15, keepAliveSecs: 45 },
           }),
         }),
       );

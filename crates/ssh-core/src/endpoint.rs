@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use bx_contracts::ConnectionSettings;
+
 use crate::SshError;
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -11,6 +13,7 @@ pub struct SshEndpoint {
     port: u16,
     connect_timeout: Duration,
     operation_timeout: Duration,
+    keep_alive_interval: Option<Duration>,
 }
 
 impl SshEndpoint {
@@ -29,6 +32,7 @@ impl SshEndpoint {
             port,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            keep_alive_interval: Some(DEFAULT_OPERATION_TIMEOUT),
         })
     }
 
@@ -48,6 +52,10 @@ impl SshEndpoint {
         self.operation_timeout
     }
 
+    pub fn keep_alive_interval(&self) -> Option<Duration> {
+        self.keep_alive_interval
+    }
+
     pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
         self
@@ -56,6 +64,21 @@ impl SshEndpoint {
     pub fn with_operation_timeout(mut self, timeout: Duration) -> Self {
         self.operation_timeout = timeout;
         self
+    }
+
+    pub fn with_keep_alive_interval(mut self, interval: Option<Duration>) -> Self {
+        self.keep_alive_interval = interval;
+        self
+    }
+
+    pub fn with_connection_settings(self, settings: ConnectionSettings) -> Self {
+        self.with_connect_timeout(Duration::from_secs(u64::from(
+            settings.connect_timeout_secs,
+        )))
+        .with_keep_alive_interval(
+            (settings.keep_alive_secs > 0)
+                .then(|| Duration::from_secs(u64::from(settings.keep_alive_secs))),
+        )
     }
 }
 
@@ -77,6 +100,10 @@ mod tests {
         assert_eq!(endpoint.port(), 2222);
         assert_eq!(endpoint.connect_timeout(), Duration::from_secs(4));
         assert_eq!(endpoint.operation_timeout(), Duration::from_secs(8));
+        assert_eq!(
+            endpoint.keep_alive_interval(),
+            Some(Duration::from_secs(30))
+        );
     }
 
     #[test]
@@ -89,5 +116,18 @@ mod tests {
             SshEndpoint::new("localhost", 0),
             Err(SshError::InvalidPort)
         ));
+    }
+
+    #[test]
+    fn applies_resolved_connection_settings_and_can_disable_keep_alive() {
+        let endpoint = SshEndpoint::new("ssh.example.com", 22)
+            .unwrap()
+            .with_connection_settings(bx_contracts::ConnectionSettings {
+                connect_timeout_secs: 12,
+                keep_alive_secs: 0,
+            });
+
+        assert_eq!(endpoint.connect_timeout(), Duration::from_secs(12));
+        assert_eq!(endpoint.keep_alive_interval(), None);
     }
 }

@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bx_contracts::{HostKeyInfo, RemoteDirectoryListing, SshConnectionStage, TransferSummary};
+use bx_contracts::{
+    ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, SshConnectionStage, TransferSummary,
+};
 use bx_ssh_core::{
     authenticate_password_with_progress, ClientSession, SftpClient, SshEndpoint, SshError,
 };
@@ -38,6 +40,7 @@ pub(crate) struct StartSftpRequest {
     username: String,
     password: String,
     expected_fingerprint: String,
+    settings: ConnectionSettings,
     initial_path: Option<String>,
 }
 
@@ -58,7 +61,8 @@ pub(crate) async fn start_password_sftp(
     on_state: Channel<SshConnectionEvent>,
 ) -> Result<StartSftpResponse, CommandError> {
     let owner = window.label().to_owned();
-    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?;
+    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?
+        .with_connection_settings(request.settings);
     let cancellation =
         session_manager.begin_attempt(&owner, &request.attempt_id, SessionKind::Sftp)?;
     let _ = on_state.send(SshConnectionEvent {

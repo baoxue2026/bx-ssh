@@ -3,7 +3,7 @@ use std::future::pending;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bx_contracts::{HostKeyInfo, SshConnectionStage};
+use bx_contracts::{ConnectionSettings, HostKeyInfo, SshConnectionStage};
 use bx_ssh_core::{
     authenticate_password_with_progress, probe_host_key, ClientSession, ShellEvent, SshEndpoint,
     SshError, SshShell, TerminalSize,
@@ -49,6 +49,7 @@ struct TerminalOutputFlow {
 pub(crate) struct ProbeHostRequest {
     host: String,
     port: u16,
+    settings: ConnectionSettings,
 }
 
 #[derive(Deserialize, Type)]
@@ -60,6 +61,7 @@ pub(crate) struct StartShellRequest {
     username: String,
     password: String,
     expected_fingerprint: String,
+    settings: ConnectionSettings,
     columns: u32,
     rows: u32,
     pixel_width: u32,
@@ -97,7 +99,8 @@ impl IpcResponse for TerminalOutput {
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn probe_ssh_host(request: ProbeHostRequest) -> Result<HostKeyInfo, CommandError> {
-    let endpoint = SshEndpoint::new(request.host, request.port)?;
+    let endpoint =
+        SshEndpoint::new(request.host, request.port)?.with_connection_settings(request.settings);
     Ok(probe_host_key(&endpoint).await?)
 }
 
@@ -112,7 +115,8 @@ pub(crate) async fn start_password_shell(
     on_output: Channel<TerminalOutput>,
 ) -> Result<StartShellResponse, CommandError> {
     let owner = window.label().to_owned();
-    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?;
+    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?
+        .with_connection_settings(request.settings);
     let size = TerminalSize::with_pixels(
         request.columns,
         request.rows,
@@ -363,7 +367,7 @@ async fn run_session(
     manager: TerminalSessionManager,
     session_manager: SshSessionManager,
     session_id: String,
-    session: ClientSession,
+    mut session: ClientSession,
     mut shell: SshShell,
     mut commands: mpsc::Receiver<SessionCommand>,
     on_event: Channel<TerminalEvent>,
@@ -373,21 +377,32 @@ async fn run_session(
     let mut exit_signal = None;
     let mut close_completion = None;
     let mut output = TerminalOutputFlow::new();
+    let mut failed = false;
 
     loop {
         let flush_deadline = output.flush_deadline();
         tokio::select! {
+            biased;
+            transport = session.wait_for_transport() => {
+                if let Err(error) = transport {
+                    send_error(&on_event, error);
+                    failed = true;
+                }
+                break;
+            }
             command = commands.recv() => {
                 match command {
                     Some(SessionCommand::Write(data)) => {
                         if let Err(error) = shell.write(data).await {
                             send_error(&on_event, error);
+                            failed = true;
                             break;
                         }
                     }
                     Some(SessionCommand::Resize(size)) => {
                         if let Err(error) = shell.resize(size).await {
                             send_error(&on_event, error);
+                            failed = true;
                             break;
                         }
                     }
@@ -398,12 +413,14 @@ async fn run_session(
                         close_completion = completion;
                         if let Err(error) = shell.close().await {
                             send_error(&on_event, error);
+                            failed = true;
                         }
                         break;
                     }
                     None => {
                         if let Err(error) = shell.close().await {
                             send_error(&on_event, error);
+                            failed = true;
                         }
                         break;
                     }
@@ -426,6 +443,7 @@ async fn run_session(
                     Ok(ShellEvent::Closed) => break,
                     Err(error) => {
                         send_error(&on_event, error);
+                        failed = true;
                         break;
                     }
                 }
@@ -439,10 +457,12 @@ async fn run_session(
     }
 
     let _ = output.flush(&on_output);
-    let _ = on_event.send(TerminalEvent::Exited {
-        code: exit_code,
-        signal: exit_signal,
-    });
+    if !failed {
+        let _ = on_event.send(TerminalEvent::Exited {
+            code: exit_code,
+            signal: exit_signal,
+        });
+    }
     manager.sessions.lock().await.remove(&session_id);
     session_manager.remove_session(&session_id, SessionKind::Terminal);
     drop(shell);

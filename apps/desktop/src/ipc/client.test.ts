@@ -31,7 +31,11 @@ describe("IPC client", () => {
     });
 
     const error = await ipc
-      .probeSshHost({ host: "example.com", port: 22 })
+      .probeSshHost({
+        host: "example.com",
+        port: 22,
+        settings: { connectTimeoutSecs: 10, keepAliveSecs: 30 },
+      })
       .catch((reason: unknown) => reason);
 
     expect(error).toBeInstanceOf(IpcError);
@@ -188,6 +192,7 @@ describe("IPC client", () => {
         password: "secret",
         expectedFingerprint:
           "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        settings: { connectTimeoutSecs: 12, keepAliveSecs: 0 },
         columns: 80,
         rows: 24,
         pixelWidth: 800,
@@ -197,7 +202,11 @@ describe("IPC client", () => {
     );
 
     expect(mocks.invoke).toHaveBeenCalledWith("start_password_shell", {
-      request: expect.objectContaining({ username: "bxssh", columns: 80 }),
+      request: expect.objectContaining({
+        username: "bxssh",
+        settings: { connectTimeoutSecs: 12, keepAliveSecs: 0 },
+        columns: 80,
+      }),
       onState: mocks.channels[0],
       onEvent: mocks.channels[1],
       onOutput: mocks.channels[2],

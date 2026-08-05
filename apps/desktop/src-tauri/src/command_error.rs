@@ -18,8 +18,13 @@ pub(crate) enum CommandErrorCode {
     RemoteTargetExists,
     TransferIntegrityMismatch,
     ConnectTimeout,
+    DnsLookupTimeout,
     DnsLookupFailed,
+    TcpConnectTimeout,
+    ConnectionRefused,
+    NetworkUnreachable,
     TcpConnectFailed,
+    HandshakeTimeout,
     HandshakeFailed,
     ConnectionCancelled,
     InvalidConnectionAttempt,
@@ -32,6 +37,7 @@ pub(crate) enum CommandErrorCode {
     LegacyRsaSignatureOnly,
     ChannelRequestRejected,
     ChannelClosed,
+    KeepAliveFailed,
     PrivateKeyError,
     SftpError,
     TransferIoError,
@@ -109,11 +115,13 @@ impl From<SshError> for CommandError {
                 CommandErrorCode::TransferIntegrityMismatch
             }
             SshError::ConnectTimeout => CommandErrorCode::ConnectTimeout,
-            SshError::DnsLookupTimeout => CommandErrorCode::ConnectTimeout,
+            SshError::DnsLookupTimeout => CommandErrorCode::DnsLookupTimeout,
             SshError::DnsLookupFailed(_) => CommandErrorCode::DnsLookupFailed,
-            SshError::TcpConnectTimeout => CommandErrorCode::ConnectTimeout,
+            SshError::TcpConnectTimeout => CommandErrorCode::TcpConnectTimeout,
+            SshError::ConnectionRefused(_) => CommandErrorCode::ConnectionRefused,
+            SshError::NetworkUnreachable(_) => CommandErrorCode::NetworkUnreachable,
             SshError::TcpConnectFailed(_) => CommandErrorCode::TcpConnectFailed,
-            SshError::HandshakeTimeout => CommandErrorCode::ConnectTimeout,
+            SshError::HandshakeTimeout => CommandErrorCode::HandshakeTimeout,
             SshError::HandshakeFailed(_) => CommandErrorCode::HandshakeFailed,
             SshError::NegotiatedAlgorithmsUnavailable => CommandErrorCode::HandshakeFailed,
             SshError::ConnectionCancelled => CommandErrorCode::ConnectionCancelled,
@@ -126,6 +134,7 @@ impl From<SshError> for CommandError {
             SshError::ChannelRequestRejected { .. } => CommandErrorCode::ChannelRequestRejected,
             SshError::ChannelClosed { .. } => CommandErrorCode::ChannelClosed,
             SshError::ChannelOpenFailed(_) => CommandErrorCode::TransportError,
+            SshError::KeepAliveFailed => CommandErrorCode::KeepAliveFailed,
             SshError::PrivateKey(_) => CommandErrorCode::PrivateKeyError,
             SshError::Sftp(_) => CommandErrorCode::SftpError,
             SshError::TransferIo(_) => CommandErrorCode::TransferIoError,
@@ -169,6 +178,27 @@ mod tests {
             Some(bx_contracts::SshConnectionStage::Handshaking)
         );
         assert_eq!(remote_path.code, CommandErrorCode::InvalidRemotePath);
+
+        let refused = CommandError::from(SshError::ConnectionRefused(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        )));
+        let keep_alive = CommandError::from(SshError::KeepAliveFailed);
+        let dns_timeout = CommandError::from(SshError::DnsLookupTimeout);
+        let tcp_timeout = CommandError::from(SshError::TcpConnectTimeout);
+        let unreachable = CommandError::from(SshError::NetworkUnreachable(std::io::Error::from(
+            std::io::ErrorKind::HostUnreachable,
+        )));
+        let handshake_timeout = CommandError::from(SshError::HandshakeTimeout);
+        assert_eq!(refused.code, CommandErrorCode::ConnectionRefused);
+        assert_eq!(
+            refused.stage,
+            Some(bx_contracts::SshConnectionStage::ConnectingTcp)
+        );
+        assert_eq!(keep_alive.code, CommandErrorCode::KeepAliveFailed);
+        assert_eq!(dns_timeout.code, CommandErrorCode::DnsLookupTimeout);
+        assert_eq!(tcp_timeout.code, CommandErrorCode::TcpConnectTimeout);
+        assert_eq!(unreachable.code, CommandErrorCode::NetworkUnreachable);
+        assert_eq!(handshake_timeout.code, CommandErrorCode::HandshakeTimeout);
 
         let serialized = serde_json::to_value(host_key).expect("command error must serialize");
         assert_eq!(serialized["code"], "host_key_mismatch");
