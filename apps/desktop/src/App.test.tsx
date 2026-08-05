@@ -1445,8 +1445,7 @@ describe("App", { timeout: 15_000 }, () => {
     const saved = savedConnectionDetails();
     const hostKey = {
       algorithm: "ssh-ed25519",
-      fingerprintSha256:
-        "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      fingerprintSha256: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     };
     const details = {
       ...saved,
