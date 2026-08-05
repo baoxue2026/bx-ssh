@@ -42,6 +42,8 @@ pub enum PersistenceError {
     InvalidConnectionConfiguration,
     #[error("the database contains an invalid {entity} record")]
     InvalidStoredRecord { entity: &'static str },
+    #[error("the stored host fingerprint conflicts with the observed host key")]
+    HostFingerprintConflict,
     #[error("a timestamp is outside the supported database range")]
     InvalidTimestamp,
     #[error("the encrypted key envelope is malformed")]

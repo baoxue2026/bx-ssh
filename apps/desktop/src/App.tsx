@@ -150,7 +150,9 @@ export function App() {
   const [connectionSettings, setConnectionSettings] =
     useState<ConnectionSettings>(DEFAULT_CONNECTION_SETTINGS);
   const [hostKey, setHostKey] = useState<HostKeyInfo | null>(null);
+  const [hostFingerprintKnown, setHostFingerprintKnown] = useState(false);
   const [trusted, setTrusted] = useState(false);
+  const [fingerprintTrustPending, setFingerprintTrustPending] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("idle");
@@ -569,7 +571,9 @@ export function App() {
 
   const resetHostTrust = useCallback(() => {
     setHostKey(null);
+    setHostFingerprintKnown(false);
     setTrusted(false);
+    setFingerprintTrustPending(false);
     setErrorMessage(null);
     setConnectionState("idle");
     setConnectionStage(null);
@@ -579,21 +583,29 @@ export function App() {
     targetHost = host,
     targetPort = port,
     settings = connectionSettings,
-  ): Promise<HostKeyInfo | null> => {
+  ): Promise<{ hostKey: HostKeyInfo; known: boolean } | null> => {
     setConnectionState("probing");
     setErrorMessage(null);
     setHostKey(null);
+    setHostFingerprintKnown(false);
     setTrusted(false);
+    setFingerprintTrustPending(false);
 
     try {
-      const result = await ipc.probeSshHost({
+      const hostKey = await ipc.probeSshHost({
         host: targetHost,
         port: targetPort,
         settings,
       });
-      setHostKey(result);
+      const knownHost = await ipc.getKnownHost(targetHost, targetPort);
+      const known =
+        knownHost?.algorithm === hostKey.algorithm &&
+        knownHost.fingerprintSha256 === hostKey.fingerprintSha256;
+      setHostKey(hostKey);
+      setHostFingerprintKnown(known);
+      setTrusted(known);
       setConnectionState("ready");
-      return result;
+      return { hostKey, known };
     } catch (error) {
       setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
@@ -656,7 +668,7 @@ export function App() {
 
     const result = await probeHost(config.host, config.port, settings);
     if (connectionAttemptRef.current === request && result) {
-      setConnectionLaunchStep("fingerprint");
+      setConnectionLaunchStep(result.known ? "password" : "fingerprint");
     } else {
       connectionFlowPendingRef.current = false;
     }
@@ -1020,6 +1032,10 @@ export function App() {
       return false;
     }
 
+    if (!(await ensureHostFingerprintTrusted())) {
+      return false;
+    }
+
     setConnectionState("connecting");
     setErrorMessage(null);
     terminalRef.current?.reset();
@@ -1162,6 +1178,10 @@ export function App() {
       return;
     }
 
+    if (!(await ensureHostFingerprintTrusted())) {
+      return;
+    }
+
     setConnectionState("connecting");
     setErrorMessage(null);
     setSftpTransferResult(null);
@@ -1219,9 +1239,48 @@ export function App() {
     }
   };
 
-  const confirmConnectionFingerprint = () => {
+  const persistHostFingerprint = async (): Promise<boolean> => {
+    if (!hostKey) {
+      return false;
+    }
+    if (hostFingerprintKnown) {
+      return true;
+    }
+
+    await ipc.trustHostFingerprint({
+      host,
+      port,
+      hostKey,
+    });
+    setHostFingerprintKnown(true);
     setTrusted(true);
-    setConnectionLaunchStep("password");
+    return true;
+  };
+
+  const ensureHostFingerprintTrusted = async (): Promise<boolean> => {
+    try {
+      return await persistHostFingerprint();
+    } catch (error) {
+      setErrorMessage(localizedErrorText(error));
+      setConnectionState("failed");
+      return false;
+    }
+  };
+
+  const confirmConnectionFingerprint = () => {
+    if (!hostKey || fingerprintTrustPending) {
+      return;
+    }
+    setFingerprintTrustPending(true);
+    void persistHostFingerprint()
+      .then(() => {
+        setConnectionLaunchStep("password");
+      })
+      .catch((error: unknown) => {
+        setErrorMessage(localizedErrorText(error));
+        setConnectionState("failed");
+      })
+      .finally(() => setFingerprintTrustPending(false));
   };
 
   const cancelConnectionFlow = () => {
@@ -1231,6 +1290,8 @@ export function App() {
     setConnectionLaunchStep(undefined);
     setPassword("");
     setTrusted(false);
+    setHostFingerprintKnown(false);
+    setFingerprintTrustPending(false);
     setHostKey(null);
     setConnectionState("idle");
     setConnectionStage(null);
@@ -2496,7 +2557,7 @@ export function App() {
           connectionState === "failed" ? (errorMessage ?? undefined) : undefined
         }
         hostKey={hostKey ?? undefined}
-        pending={connectionState === "connecting"}
+        pending={connectionState === "connecting" || fingerprintTrustPending}
         step={activeSessionTab ? connectionLaunchStep : undefined}
         onCancel={cancelConnectionFlow}
         onConfirmFingerprint={confirmConnectionFingerprint}
@@ -3077,6 +3138,10 @@ function commandErrorText(
       return t("errors.handshakeTimeout");
     case "handshake_failed":
       return t("errors.handshakeFailed");
+    case "host_key_mismatch":
+      return t("errors.hostKeyMismatch");
+    case "host_key_unavailable":
+      return t("errors.hostKeyUnavailable");
     case "keep_alive_failed":
       return t("errors.keepAliveFailed");
     default:

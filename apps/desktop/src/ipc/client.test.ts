@@ -72,6 +72,27 @@ describe("IPC client", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("get_connection", {
       id: "connection-1",
     });
+
+    const hostKey = {
+      algorithm: "ssh-ed25519",
+      fingerprintSha256: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    };
+    mocks.invoke.mockResolvedValue(hostKey);
+    await expect(ipc.getKnownHost("example.com", 2222)).resolves.toEqual(
+      hostKey,
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("get_known_host", {
+      host: "example.com",
+      port: 2222,
+    });
+
+    mocks.invoke.mockResolvedValue(null);
+    await expect(
+      ipc.trustHostFingerprint({ host: "example.com", port: 2222, hostKey }),
+    ).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("trust_host_fingerprint", {
+      request: { host: "example.com", port: 2222, hostKey },
+    });
   });
 
   it("uses generated connection mutation commands", async () => {

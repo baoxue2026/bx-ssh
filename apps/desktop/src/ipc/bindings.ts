@@ -17,6 +17,22 @@ async probeSshHost(request: ProbeHostRequest) : Promise<Result<HostKeyInfo, Comm
     else return { status: "error", error: e  as any };
 }
 },
+async getKnownHost(host: string, port: number) : Promise<Result<HostKeyInfo | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_known_host", { host, port }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async trustHostFingerprint(request: TrustHostFingerprintRequest) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("trust_host_fingerprint", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async writeTerminal(sessionId: string, data: string) : Promise<Result<null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("write_terminal", { sessionId, data }) };
@@ -273,6 +289,7 @@ export type StartShellRequest = { attemptId: string; host: string; port: number;
 export type StartShellResponse = { sessionId: string; hostKey: HostKeyInfo }
 export type TerminalEvent = { type: "exited"; code: number | null; signal: string | null } | { type: "error"; code: CommandErrorCode; message: string }
 export type TransferSummary = { bytes: number; elapsedMs: number; bytesPerSecond: number; sha256: string }
+export type TrustHostFingerprintRequest = { host: string; port: number; hostKey: HostKeyInfo }
 export type UpdateEvent = { type: "started"; contentLength: number | null } | { type: "progress"; chunkLength: number } | { type: "verified" }
 export type UpdateInfo = { currentVersion: string; version: string; notes: string | null; publishedAt: string | null }
 

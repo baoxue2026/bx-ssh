@@ -38,8 +38,9 @@ use sftp::{
     start_password_sftp, upload_sftp_file, SftpSessionManager,
 };
 use terminal::{
-    acknowledge_terminal_output, close_terminal_session, probe_ssh_host, resize_terminal,
-    start_password_shell, write_terminal, TerminalSessionManager,
+    acknowledge_terminal_output, close_terminal_session, get_known_host, probe_ssh_host,
+    resize_terminal, start_password_shell, trust_host_fingerprint, write_terminal,
+    TerminalSessionManager,
 };
 use update::{check_for_update, install_update};
 
@@ -58,6 +59,8 @@ fn command_builder() -> Builder<tauri::Wry> {
         .commands(collect_commands![
             app_info,
             terminal::probe_ssh_host,
+            terminal::get_known_host,
+            terminal::trust_host_fingerprint,
             terminal::write_terminal,
             terminal::resize_terminal,
             terminal::acknowledge_terminal_output,
@@ -185,6 +188,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             probe_ssh_host,
+            get_known_host,
+            trust_host_fingerprint,
             start_password_shell,
             write_terminal,
             resize_terminal,
