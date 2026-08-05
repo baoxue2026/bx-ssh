@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
-import { Button, Input } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { Button, Input, Radio } from "antd";
 import { Fingerprint, KeyRound, Server } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { HostKeyInfo } from "../ipc/bindings";
 import { AppDialog, FeedbackNotice } from "./Feedback";
+import type { CredentialMode } from "./ConnectionEditorDialog";
 
 export type ConnectionLaunchStep = "fingerprint" | "password";
 
@@ -12,11 +13,13 @@ interface ConnectionLaunchDialogProps {
   endpoint: string;
   errorMessage?: string;
   hostKey?: HostKeyInfo;
+  initialPassword?: string;
   pending: boolean;
   step?: ConnectionLaunchStep;
   onCancel(): void;
   onConfirmFingerprint(): void;
-  onSubmitPassword(password: string): void;
+  onSubmitPassword(password: string, mode: CredentialMode): void;
+  initialCredentialMode?: CredentialMode;
 }
 
 export function ConnectionLaunchDialog({
@@ -24,22 +27,33 @@ export function ConnectionLaunchDialog({
   endpoint,
   errorMessage,
   hostKey,
+  initialPassword,
   pending,
   step,
   onCancel,
   onConfirmFingerprint,
   onSubmitPassword,
+  initialCredentialMode = "ask",
 }: ConnectionLaunchDialogProps) {
   const { t } = useTranslation();
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState(initialPassword ?? "");
+  const [credentialMode, setCredentialMode] = useState<CredentialMode>(
+    initialCredentialMode,
+  );
   const passwordStep = step === "password";
+
+  useEffect(() => {
+    if (passwordStep) {
+      setPassword(initialPassword ?? "");
+    }
+  }, [initialPassword, passwordStep]);
 
   const submitPassword = () => {
     if (!password || pending) return;
     const credential = password;
     setPassword("");
-    onSubmitPassword(credential);
+    onSubmitPassword(credential, credentialMode);
   };
 
   const cancel = () => {
@@ -114,6 +128,29 @@ export function ConnectionLaunchDialog({
               onPressEnter={submitPassword}
             />
           </label>
+          <fieldset className="field-group connection-credential-mode">
+            <legend className="field-label">
+              {t("connectionAuthentication.credentialMode")}
+            </legend>
+            <Radio.Group
+              aria-label={t("connectionAuthentication.credentialMode")}
+              buttonStyle="solid"
+              value={credentialMode}
+              onChange={(event) => {
+                const nextMode = event.target.value as CredentialMode;
+                setCredentialMode(nextMode);
+                if (nextMode === "ask") {
+                  setPassword("");
+                }
+              }}
+            >
+              {(["ask", "session", "vault"] as CredentialMode[]).map((mode) => (
+                <Radio.Button key={mode} value={mode} disabled={pending}>
+                  {t(`connectionAuthentication.modes.${mode}`)}
+                </Radio.Button>
+              ))}
+            </Radio.Group>
+          </fieldset>
           {errorMessage && (
             <FeedbackNotice
               type="error"

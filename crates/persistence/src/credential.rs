@@ -1,6 +1,6 @@
 use keyring::{Entry, Error as KeyringError};
 use secrecy::zeroize::{Zeroize, Zeroizing};
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::{DataKey, PersistenceError, Result};
 
@@ -8,6 +8,12 @@ pub trait CredentialStore {
     fn load_data_key(&self) -> Result<Option<DataKey>>;
     fn save_data_key(&self, key: &DataKey) -> Result<()>;
     fn delete_data_key(&self) -> Result<()>;
+}
+
+pub trait SecretCredentialStore {
+    fn load_secret(&self) -> Result<Option<SecretString>>;
+    fn save_secret(&self, secret: &SecretString) -> Result<()>;
+    fn delete_secret(&self) -> Result<()>;
 }
 
 pub struct SystemCredentialStore {
@@ -33,6 +39,32 @@ impl SystemCredentialStore {
                 clear_secret_from_error(&mut source);
                 PersistenceError::CredentialStoreFailure { operation }
             }
+        }
+    }
+}
+
+impl SecretCredentialStore for SystemCredentialStore {
+    fn load_secret(&self) -> Result<Option<SecretString>> {
+        match self.entry.get_password() {
+            Ok(secret) => {
+                let secret = Zeroizing::new(secret);
+                Ok(Some(SecretString::from(secret.as_str().to_owned())))
+            }
+            Err(KeyringError::NoEntry) => Ok(None),
+            Err(source) => Err(Self::operation_error("read a credential", source)),
+        }
+    }
+
+    fn save_secret(&self, secret: &SecretString) -> Result<()> {
+        self.entry
+            .set_password(secret.expose_secret())
+            .map_err(|source| Self::operation_error("save a credential", source))
+    }
+
+    fn delete_secret(&self) -> Result<()> {
+        match self.entry.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(source) => Err(Self::operation_error("delete a credential", source)),
         }
     }
 }

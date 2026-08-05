@@ -153,6 +153,30 @@ async saveConnection(config: ConnectionConfig, settings: ConnectionSettingsOverr
     else return { status: "error", error: e  as any };
 }
 },
+async getPasswordCredential(credentialRef: string) : Promise<Result<string | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_password_credential", { credentialRef }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async savePasswordCredential(credentialRef: string, password: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_password_credential", { credentialRef, password }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deletePasswordCredential(credentialRef: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_password_credential", { credentialRef }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async deleteConnection(id: string) : Promise<Result<boolean, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_connection", { id }) };
@@ -257,7 +281,7 @@ export type AppInfo = { name: string; version: string }
 export type AppMenuAction = "show-terminal" | "show-sftp" | "check-for-updates"
 export type AuthMethod = "password" | "privateKey" | "keyboardInteractive"
 export type CommandError = { code: CommandErrorCode; message: string; stage: SshConnectionStage | null }
-export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "dns_lookup_timeout" | "dns_lookup_failed" | "tcp_connect_timeout" | "connection_refused" | "network_unreachable" | "tcp_connect_failed" | "handshake_timeout" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "keep_alive_failed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
+export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "dns_lookup_timeout" | "dns_lookup_failed" | "tcp_connect_timeout" | "connection_refused" | "network_unreachable" | "tcp_connect_failed" | "handshake_timeout" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "keep_alive_failed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "credential_store_locked" | "credential_store_unavailable" | "credential_store_failed" | "invalid_credential" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
 export type ConnectionCatalog = { groups: ConnectionGroup[]; connections: ConnectionListItem[] }
 export type ConnectionConfig = { id: string; groupId: string | null; name: string; host: string; port: number; username: string; notes: string | null; color: string | null; authMethod: AuthMethod; credentialRef: string | null; keyReferenceId: string | null }
 export type ConnectionDetails = { connection: ConnectionListItem; settings: ConnectionSettingsSnapshot }

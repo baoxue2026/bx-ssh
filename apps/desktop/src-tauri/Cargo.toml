@@ -23,6 +23,7 @@ bx-persistence.workspace = true
 bx-ssh-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+secrecy.workspace = true
 sha2.workspace = true
 specta.workspace = true
 specta-typescript.workspace = true

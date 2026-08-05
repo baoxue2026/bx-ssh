@@ -44,6 +44,8 @@ pub enum PersistenceError {
     InvalidStoredRecord { entity: &'static str },
     #[error("the stored host fingerprint conflicts with the observed host key")]
     HostFingerprintConflict,
+    #[error("the credential reference or secret is invalid")]
+    InvalidCredential,
     #[error("a timestamp is outside the supported database range")]
     InvalidTimestamp,
     #[error("the encrypted key envelope is malformed")]

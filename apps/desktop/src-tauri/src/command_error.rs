@@ -53,6 +53,10 @@ pub(crate) enum CommandErrorCode {
     WebviewMemoryUsageFailed,
     DatabaseUnavailable,
     DatabaseQueryFailed,
+    CredentialStoreLocked,
+    CredentialStoreUnavailable,
+    CredentialStoreFailed,
+    InvalidCredential,
     OpenSshConfigNotFound,
     OpenSshConfigIoError,
     OpenSshConfigInvalid,
@@ -153,6 +157,14 @@ impl From<PersistenceError> for CommandError {
             | PersistenceError::InvalidConnectionConfiguration
             | PersistenceError::InvalidStoredRecord { .. }
             | PersistenceError::InvalidTimestamp => CommandErrorCode::DatabaseQueryFailed,
+            PersistenceError::InvalidCredential => CommandErrorCode::InvalidCredential,
+            PersistenceError::CredentialStoreLocked => CommandErrorCode::CredentialStoreLocked,
+            PersistenceError::CredentialStoreUnavailable => {
+                CommandErrorCode::CredentialStoreUnavailable
+            }
+            PersistenceError::CredentialStoreFailure { .. } => {
+                CommandErrorCode::CredentialStoreFailed
+            }
             _ => CommandErrorCode::DatabaseUnavailable,
         };
         Self::new(code, error.to_string())
@@ -219,5 +231,10 @@ mod tests {
         assert_eq!(query.code, CommandErrorCode::DatabaseQueryFailed);
         assert_eq!(unavailable.code, CommandErrorCode::DatabaseUnavailable);
         assert!(!query.message.contains("SELECT"));
+
+        let locked = CommandError::from(bx_persistence::PersistenceError::CredentialStoreLocked);
+        let invalid = CommandError::from(bx_persistence::PersistenceError::InvalidCredential);
+        assert_eq!(locked.code, CommandErrorCode::CredentialStoreLocked);
+        assert_eq!(invalid.code, CommandErrorCode::InvalidCredential);
     }
 }

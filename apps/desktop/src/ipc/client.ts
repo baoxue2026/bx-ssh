@@ -134,6 +134,12 @@ export const ipc = {
     unwrap(() => commands.probeSshHost(request)),
   getKnownHost: (host: string, port: number) =>
     unwrap(() => commands.getKnownHost(host, port)),
+  getPasswordCredential: (credentialRef: string) =>
+    unwrap(() => commands.getPasswordCredential(credentialRef)),
+  savePasswordCredential: (credentialRef: string, password: string) =>
+    unwrapVoid(() => commands.savePasswordCredential(credentialRef, password)),
+  deletePasswordCredential: (credentialRef: string) =>
+    unwrapVoid(() => commands.deletePasswordCredential(credentialRef)),
   trustHostFingerprint: (request: {
     host: string;
     port: number;

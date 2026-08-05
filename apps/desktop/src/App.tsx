@@ -44,6 +44,7 @@ import {
   ConnectionEditorDialog,
   type ConnectionEditorIntent,
   type ConnectionEditorValue,
+  type CredentialMode,
 } from "./components/ConnectionEditorDialog";
 import { ConnectionGroupDialog } from "./components/ConnectionGroupDialog";
 import {
@@ -220,6 +221,14 @@ export function App() {
   );
   const [connectionLaunchStep, setConnectionLaunchStep] =
     useState<ConnectionLaunchStep>();
+  const [launchCredentialRef, setLaunchCredentialRef] = useState<string | null>(
+    null,
+  );
+  const [launchCredentialPassword, setLaunchCredentialPassword] = useState<
+    string | undefined
+  >();
+  const [launchCredentialMode, setLaunchCredentialMode] =
+    useState<CredentialMode>("ask");
   const [connectionEditorInitialValue, setConnectionEditorInitialValue] =
     useState<ConnectionEditorValue>();
   const [connectionEditorOpen, setConnectionEditorOpen] = useState(false);
@@ -651,6 +660,9 @@ export function App() {
     setUsername(config.username);
     setConnectionSettings(settings);
     setPassword("");
+    setLaunchCredentialRef(config.credentialRef);
+    setLaunchCredentialMode(config.credentialRef ? "vault" : "ask");
+    setLaunchCredentialPassword(undefined);
     setLoadedConnectionId(config.id);
     loadedConnectionIdRef.current = config.id;
     resetHostTrust();
@@ -668,6 +680,22 @@ export function App() {
 
     const result = await probeHost(config.host, config.port, settings);
     if (connectionAttemptRef.current === request && result) {
+      if (config.credentialRef) {
+        try {
+          setLaunchCredentialPassword(
+            (await ipc.getPasswordCredential(config.credentialRef)) ??
+              undefined,
+          );
+        } catch (error) {
+          if (connectionAttemptRef.current === request) {
+            setErrorMessage(localizedErrorText(error));
+          }
+        }
+      }
+      if (connectionAttemptRef.current !== request) {
+        connectionFlowPendingRef.current = false;
+        return;
+      }
       setConnectionLaunchStep(result.known ? "password" : "fingerprint");
     } else {
       connectionFlowPendingRef.current = false;
@@ -939,6 +967,17 @@ export function App() {
     setConnectionEditorError(null);
     try {
       await ipc.saveConnection(value.config, value.settings);
+      if (
+        intent === "save" &&
+        value.credentialMode === "vault" &&
+        value.password &&
+        value.config.credentialRef
+      ) {
+        await ipc.savePasswordCredential(
+          value.config.credentialRef,
+          value.password,
+        );
+      }
       const connectionToLaunch =
         intent === "saveAndConnect"
           ? await ipc.getConnection(value.config.id)
@@ -1288,6 +1327,9 @@ export function App() {
     requestConnectionCancellation();
     connectionFlowPendingRef.current = false;
     setConnectionLaunchStep(undefined);
+    setLaunchCredentialRef(null);
+    setLaunchCredentialMode("ask");
+    setLaunchCredentialPassword(undefined);
     setPassword("");
     setTrusted(false);
     setHostFingerprintKnown(false);
@@ -1301,12 +1343,53 @@ export function App() {
     setConnectionSettings(DEFAULT_CONNECTION_SETTINGS);
   };
 
-  const authenticatePendingConnection = async (credential: string) => {
+  const saveAuthenticatedCredential = async (
+    credential: string,
+    mode: CredentialMode,
+  ) => {
+    if (mode !== "vault") {
+      return;
+    }
+    const connectionId = loadedConnectionIdRef.current;
+    const credentialRef =
+      launchCredentialRef ?? (connectionId ? `password:${connectionId}` : null);
+    if (!credentialRef) {
+      throw new Error(t("connectionAuthentication.credentialReferenceMissing"));
+    }
+    await ipc.savePasswordCredential(credentialRef, credential);
+    if (connectionId && !launchCredentialRef) {
+      const details = await ipc.getConnection(connectionId);
+      if (details && !details.connection.config.credentialRef) {
+        await ipc.saveConnection(
+          { ...details.connection.config, credentialRef },
+          details.settings.layers.connection ?? {
+            connectTimeoutSecs: null,
+            keepAliveSecs: null,
+          },
+        );
+        await loadConnectionCatalog();
+      }
+      setLaunchCredentialRef(credentialRef);
+    }
+  };
+
+  const authenticatePendingConnection = async (
+    credential: string,
+    mode: CredentialMode,
+  ) => {
     connectionFlowPendingRef.current = true;
     const connectedSuccessfully = await connectTerminal(credential);
     if (connectedSuccessfully) {
+      try {
+        await saveAuthenticatedCredential(credential, mode);
+      } catch (error) {
+        setErrorMessage(localizedErrorText(error));
+      }
       connectionFlowPendingRef.current = false;
       setConnectionLaunchStep(undefined);
+      setLaunchCredentialPassword(undefined);
+    } else {
+      connectionFlowPendingRef.current = false;
     }
   };
 
@@ -1315,6 +1398,7 @@ export function App() {
     connectionFlowPendingRef.current = false;
     sftpOperationGenerationRef.current += 1;
     setConnectionLaunchStep(undefined);
+    setLaunchCredentialPassword(undefined);
     setConnectionState("idle");
     setConnectionStage(null);
     sessionIdRef.current = null;
@@ -2557,12 +2641,14 @@ export function App() {
           connectionState === "failed" ? (errorMessage ?? undefined) : undefined
         }
         hostKey={hostKey ?? undefined}
+        initialPassword={launchCredentialPassword}
         pending={connectionState === "connecting" || fingerprintTrustPending}
         step={activeSessionTab ? connectionLaunchStep : undefined}
         onCancel={cancelConnectionFlow}
         onConfirmFingerprint={confirmConnectionFingerprint}
-        onSubmitPassword={(credential) =>
-          void authenticatePendingConnection(credential)
+        initialCredentialMode={launchCredentialMode}
+        onSubmitPassword={(credential, mode) =>
+          void authenticatePendingConnection(credential, mode)
         }
       />
 
@@ -2856,6 +2942,7 @@ function connectionDetailsToEditorValue(
       connectTimeoutSecs: null,
       keepAliveSecs: null,
     },
+    credentialMode: details.connection.config.credentialRef ? "vault" : "ask",
   };
 }
 
@@ -3142,6 +3229,14 @@ function commandErrorText(
       return t("errors.hostKeyMismatch");
     case "host_key_unavailable":
       return t("errors.hostKeyUnavailable");
+    case "credential_store_locked":
+      return t("errors.credentialStoreLocked");
+    case "credential_store_unavailable":
+      return t("errors.credentialStoreUnavailable");
+    case "credential_store_failed":
+      return t("errors.credentialStoreFailed");
+    case "invalid_credential":
+      return t("errors.invalidCredential");
     case "keep_alive_failed":
       return t("errors.keepAliveFailed");
     default:

@@ -58,10 +58,17 @@ export const resources = {
       },
       connectionAuthentication: {
         connect: "连接",
+        credentialMode: "密码保存方式",
+        credentialReferenceMissing: "当前连接没有可用的凭据引用，密码未保存。",
         description: "为“{{name}}”输入本次 SSH 会话使用的凭据。",
         failed: "认证或 Shell 启动失败",
         password: "密码",
         sessionOnly: "密码仅用于本次连接，不会写入连接配置或本地数据库。",
+        modes: {
+          ask: "每次询问",
+          session: "仅本次",
+          vault: "保存到凭据库",
+        },
         title: "输入连接密码",
         unsupported:
           "当前连接使用“{{method}}”，对应认证能力尚未接入。连接已停止，未模拟成功状态。",
@@ -102,6 +109,11 @@ export const resources = {
           password: "密码凭据",
           privateKey: "私钥",
         },
+        credentialMode: {
+          ask: "每次连接时询问，不保存",
+          session: "仅本次会话使用",
+          vault: "保存到系统凭据库",
+        },
         description:
           "连接配置保存在本机数据库中。密码和私钥内容不会写入连接配置。",
         saveAndConnectUnavailable: "存在活动会话或连接操作时不可保存并连接。",
@@ -110,6 +122,7 @@ export const resources = {
           authMethod: "认证方式",
           color: "标识颜色",
           connectTimeout: "连接超时（秒）",
+          credentialMode: "密码保存方式",
           credentialRef: "凭据引用",
           group: "分组",
           host: "主机地址",
@@ -118,6 +131,7 @@ export const resources = {
           name: "连接名称",
           noColor: "未设置",
           notes: "备注",
+          password: "密码",
           port: "端口",
           username: "用户名",
         },
@@ -126,7 +140,8 @@ export const resources = {
             "认证引用只保存标识，不在连接配置中保存密码或私钥明文。",
           color: "用于连接列表中的快速识别。",
           credentialRef:
-            "留空表示连接时询问。系统凭据服务将在后续安全任务中提供选择。",
+            "系统凭据库保存模式使用此引用定位安全存储，不保存密码明文。",
+          credentialMode: "三个选项互斥。取消认证或认证失败时不会保存密码。",
           host: "支持 IPv4、裸 IPv6 或域名，不要填写协议、路径和端口。",
           inheritKeepAlive: "留空继承上级设置；0 表示禁用 KeepAlive。",
           inheritTimeout: "留空继承上级设置。",
@@ -135,6 +150,7 @@ export const resources = {
           keyReference:
             "填写密钥记录 ID，不填写私钥路径或私钥内容。密钥选择器将在后续任务接入。",
           noGroups: "尚无可选分组，连接将归入未分组。",
+          password: "仅在选择会话或凭据库保存时填写。",
         },
         placeholders: {
           credentialRef: "例：credential-production-root",
@@ -143,6 +159,7 @@ export const resources = {
           keyReference: "例：key-ed25519-production",
           name: "例：生产环境 Web 服务器",
           notes: "用途、环境或维护信息",
+          password: "请输入密码",
           username: "例：root",
         },
         tabs: {
@@ -385,6 +402,9 @@ export const resources = {
       errors: {
         connectionRefused:
           "目标主机拒绝了 SSH 连接，请检查地址、端口和 SSH 服务状态。",
+        credentialStoreFailed: "系统凭据库写入失败，密码未保存。",
+        credentialStoreLocked: "系统凭据库已锁定或拒绝访问。",
+        credentialStoreUnavailable: "系统凭据库不可用，密码未保存。",
         dnsLookupFailed: "无法解析主机名，请检查主机地址和 DNS 设置。",
         dnsLookupTimeout: "解析主机名超时，请检查网络和 DNS 设置。",
         handshakeFailed: "SSH 握手失败，服务器可能不兼容或连接已中断。",
@@ -397,6 +417,7 @@ export const resources = {
         sshOperation: "SSH 操作失败",
         tcpConnectFailed: "无法建立 SSH 网络连接，请检查网络和服务器状态。",
         tcpConnectTimeout: "连接 SSH 服务器超时，请检查地址、端口和网络状态。",
+        invalidCredential: "凭据引用或密码无效。",
       },
       feedback: {
         loading: "正在加载",
@@ -465,12 +486,20 @@ export const resources = {
       },
       connectionAuthentication: {
         connect: "Connect",
+        credentialMode: "Password storage",
+        credentialReferenceMissing:
+          "This connection has no credential reference, so the password was not saved.",
         description:
           'Enter the credential used only for the SSH session "{{name}}".',
         failed: "Authentication or shell startup failed",
         password: "Password",
         sessionOnly:
           "The password is used only for this connection and is not written to the connection configuration or local database.",
+        modes: {
+          ask: "Ask every time",
+          session: "This session only",
+          vault: "Save to credential store",
+        },
         title: "Enter Connection Password",
         unsupported:
           'This connection uses "{{method}}", which is not connected to the authentication engine yet. The connection was stopped without simulating success.',
@@ -512,6 +541,11 @@ export const resources = {
           password: "Password credential",
           privateKey: "Private key",
         },
+        credentialMode: {
+          ask: "Ask every time; do not save",
+          session: "Use for this session only",
+          vault: "Save to system credential store",
+        },
         description:
           "Connection settings are stored in the local database. Passwords and private-key contents are not written to the connection configuration.",
         saveAndConnectUnavailable:
@@ -521,6 +555,7 @@ export const resources = {
           authMethod: "Authentication method",
           color: "Identity color",
           connectTimeout: "Connection timeout (seconds)",
+          credentialMode: "Password storage",
           credentialRef: "Credential reference",
           group: "Group",
           host: "Host address",
@@ -529,6 +564,7 @@ export const resources = {
           name: "Connection name",
           noColor: "Not set",
           notes: "Notes",
+          password: "Password",
           port: "Port",
           username: "Username",
         },
@@ -537,7 +573,9 @@ export const resources = {
             "Authentication references store identifiers only. Passwords and private keys are never stored in the connection configuration.",
           color: "Used to identify the connection quickly in lists.",
           credentialRef:
-            "Leave empty to ask when connecting. Credential-service selection is added in a later security task.",
+            "The system credential store uses this reference; the password is never stored in the database.",
+          credentialMode:
+            "These options are mutually exclusive. Cancelled or failed authentication never saves the password.",
           host: "Enter an IPv4 address, bare IPv6 address, or hostname without a scheme, path, or port.",
           inheritKeepAlive:
             "Leave empty to inherit from the parent scope; 0 disables KeepAlive.",
@@ -548,6 +586,7 @@ export const resources = {
             "Enter a key record ID, not a private-key path or contents. A key picker is added in a later task.",
           noGroups:
             "No groups are available yet. The connection will be ungrouped.",
+          password: "Fill this only for session or credential-store modes.",
         },
         placeholders: {
           credentialRef: "e.g. credential-production-root",
@@ -556,6 +595,7 @@ export const resources = {
           keyReference: "e.g. key-ed25519-production",
           name: "e.g. Production web server",
           notes: "Purpose, environment, or maintenance notes",
+          password: "Enter password",
           username: "e.g. root",
         },
         tabs: {
@@ -810,6 +850,12 @@ export const resources = {
       errors: {
         connectionRefused:
           "The target refused the SSH connection. Check the address, port, and SSH service.",
+        credentialStoreFailed:
+          "The system credential store could not save the password.",
+        credentialStoreLocked:
+          "The system credential store is locked or access was denied.",
+        credentialStoreUnavailable:
+          "The system credential store is unavailable; the password was not saved.",
         dnsLookupFailed:
           "The host name could not be resolved. Check the address and DNS settings.",
         dnsLookupTimeout:
@@ -831,6 +877,7 @@ export const resources = {
           "The SSH network connection could not be established. Check the network and server.",
         tcpConnectTimeout:
           "The SSH connection timed out. Check the address, port, and network.",
+        invalidCredential: "The credential reference or password is invalid.",
       },
       feedback: {
         loading: "Loading",

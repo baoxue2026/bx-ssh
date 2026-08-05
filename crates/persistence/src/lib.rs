@@ -7,7 +7,7 @@ mod private_key;
 mod repository;
 mod schema;
 
-pub use credential::{CredentialStore, SystemCredentialStore};
+pub use credential::{CredentialStore, SecretCredentialStore, SystemCredentialStore};
 pub use database::{EncryptedDatabase, Migration};
 pub use envelope::MasterPasswordEnvelope;
 pub use error::PersistenceError;

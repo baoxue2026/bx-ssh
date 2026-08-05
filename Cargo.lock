@@ -621,6 +621,7 @@ dependencies = [
  "bx-contracts",
  "bx-persistence",
  "bx-ssh-core",
+ "secrecy",
  "serde",
  "serde_json",
  "sha2 0.11.0",
