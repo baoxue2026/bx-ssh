@@ -25,8 +25,11 @@ describe("BX SSH desktop shell", () => {
     await expect($(".brand")).toHaveText(appInfo.name);
     await expect($(".version")).toHaveText(`v${appInfo.version}`);
     await expect($("h1=连接验证")).toBeDisplayed();
-    await expect($(".terminal-empty")).toHaveAttribute("role", "status");
-    await expect($(".terminal-empty")).toHaveAttribute("aria-live", "polite");
+    await expect($(".connection-workspace-empty")).toBeDisplayed();
+    await expect($(".connection-workspace-empty")).toHaveAttribute(
+      "aria-label",
+      "开始使用 BX SSH",
+    );
   });
 
   it("keeps form state consistent while switching workspace modes", async () => {
@@ -98,7 +101,7 @@ describe("BX SSH desktop shell", () => {
     };
 
     expect(geometry.devicePixelRatio).toBeGreaterThanOrEqual(1);
-    expect(geometry.topbarHeight).toBe(42);
+    expect(geometry.topbarHeight).toBe(38);
     expect(geometry.controls).toHaveLength(3);
     for (const control of geometry.controls) {
       expect(control.width).toBe(46);
