@@ -159,11 +159,10 @@ jobs:
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
         run: >-
-          sudo apt-get update && sudo apt-get install -y
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y
           libwebkit2gtk-4.1-dev
           libayatana-appindicator3-dev
           librsvg2-dev
-          dbus-daemon
           openbox
           xvfb
           perl
@@ -191,6 +190,15 @@ jobs:
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
+
+      - name: Ensure Linux D-Bus session helper
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v dbus-run-session >/dev/null 2>&1; then
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get update
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y dbus-daemon
+          fi
+          command -v dbus-run-session
 
       - name: Build debug-only E2E application
         run: pnpm --filter @bx-ssh/desktop build:e2e
