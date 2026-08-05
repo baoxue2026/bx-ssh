@@ -76,6 +76,7 @@ import type {
   ConnectionDetails,
   ConnectionGroup,
   ConnectionListItem,
+  ConnectionSettings,
   ExitImpact,
   HostKeyInfo,
   OpenSshImportPreview,
@@ -124,6 +125,11 @@ const fallbackViewport: TerminalViewport = {
   pixelHeight: 0,
 };
 
+const DEFAULT_CONNECTION_SETTINGS: ConnectionSettings = {
+  connectTimeoutSecs: 10,
+  keepAliveSecs: 30,
+};
+
 const MEMORY_USAGE_RECOVERY_DELAY_MS = 60_000;
 const EXIT_REQUESTED_EVENT = "app-exit-requested";
 const APP_MENU_ACTION_EVENT = "app-menu-action";
@@ -141,6 +147,8 @@ export function App() {
   const [port, setPort] = useState(22);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [connectionSettings, setConnectionSettings] =
+    useState<ConnectionSettings>(DEFAULT_CONNECTION_SETTINGS);
   const [hostKey, setHostKey] = useState<HostKeyInfo | null>(null);
   const [trusted, setTrusted] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -255,7 +263,7 @@ export function App() {
   const connectionStateRef = useRef<ConnectionState>("idle");
   const hostKeyRef = useRef<HostKeyInfo | null>(null);
   const localizedErrorText = useCallback(
-    (error: unknown) => errorText(error, t("errors.sshOperation")),
+    (error: unknown) => errorText(error, t),
     [t],
   );
 
@@ -570,6 +578,7 @@ export function App() {
   const probeHost = async (
     targetHost = host,
     targetPort = port,
+    settings = connectionSettings,
   ): Promise<HostKeyInfo | null> => {
     setConnectionState("probing");
     setErrorMessage(null);
@@ -580,6 +589,7 @@ export function App() {
       const result = await ipc.probeSshHost({
         host: targetHost,
         port: targetPort,
+        settings,
       });
       setHostKey(result);
       setConnectionState("ready");
@@ -606,7 +616,10 @@ export function App() {
     sessionIdRef.current !== null ||
     sftpSessionIdRef.current !== null;
 
-  const beginConnectionFlow = async (config: ConnectionConfig) => {
+  const beginConnectionFlow = async (
+    config: ConnectionConfig,
+    settings: ConnectionSettings,
+  ) => {
     if (connectionLaunchBlocked()) {
       return;
     }
@@ -624,6 +637,7 @@ export function App() {
     setHost(config.host);
     setPort(config.port);
     setUsername(config.username);
+    setConnectionSettings(settings);
     setPassword("");
     setLoadedConnectionId(config.id);
     loadedConnectionIdRef.current = config.id;
@@ -640,7 +654,7 @@ export function App() {
       return;
     }
 
-    const result = await probeHost(config.host, config.port);
+    const result = await probeHost(config.host, config.port, settings);
     if (connectionAttemptRef.current === request && result) {
       setConnectionLaunchStep("fingerprint");
     } else {
@@ -882,7 +896,10 @@ export function App() {
       if (!details) {
         throw new Error(t("connectionCatalog.notFound"));
       }
-      await beginConnectionFlow(details.connection.config);
+      await beginConnectionFlow(
+        details.connection.config,
+        details.settings.resolved,
+      );
     } catch (error) {
       setConnectionCatalogError(localizedErrorText(error));
     } finally {
@@ -910,6 +927,13 @@ export function App() {
     setConnectionEditorError(null);
     try {
       await ipc.saveConnection(value.config, value.settings);
+      const connectionToLaunch =
+        intent === "saveAndConnect"
+          ? await ipc.getConnection(value.config.id)
+          : undefined;
+      if (intent === "saveAndConnect" && !connectionToLaunch) {
+        throw new Error(t("connectionCatalog.notFound"));
+      }
       await loadConnectionCatalog();
       setConnectionCatalogNotice(
         t("connectionCatalog.saved", {
@@ -919,7 +943,10 @@ export function App() {
       setConnectionEditorOpen(false);
 
       if (intent === "saveAndConnect") {
-        await beginConnectionFlow(value.config);
+        await beginConnectionFlow(
+          connectionToLaunch!.connection.config,
+          connectionToLaunch!.settings.resolved,
+        );
       }
     } catch (error) {
       setConnectionEditorError(localizedErrorText(error));
@@ -1043,7 +1070,7 @@ export function App() {
       setSessionCloseOpen(false);
       setSessionCloseError(null);
       if (event.type === "error") {
-        setErrorMessage(event.message);
+        setErrorMessage(commandErrorText(event.code, event.message, t));
         setConnectionState("failed");
         return;
       }
@@ -1079,6 +1106,7 @@ export function App() {
           username,
           password: connectionPassword,
           expectedFingerprint: hostKey.fingerprintSha256,
+          settings: connectionSettings,
           ...viewport,
         },
         {
@@ -1151,6 +1179,7 @@ export function App() {
           username,
           password,
           expectedFingerprint: hostKey.fingerprintSha256,
+          settings: connectionSettings,
           initialPath: ".",
         },
         (event) => handleSshConnectionEvent(connectionAttemptId, event),
@@ -1208,6 +1237,7 @@ export function App() {
     setActiveSessionTab(null);
     setLoadedConnectionId(null);
     loadedConnectionIdRef.current = null;
+    setConnectionSettings(DEFAULT_CONNECTION_SETTINGS);
   };
 
   const authenticatePendingConnection = async (credential: string) => {
@@ -2186,6 +2216,7 @@ export function App() {
                 disabled={connected || busy}
                 onChange={(event) => {
                   setHost(event.target.value);
+                  setConnectionSettings(DEFAULT_CONNECTION_SETTINGS);
                   setActiveSessionTab(null);
                   setLoadedConnectionId(null);
                   loadedConnectionIdRef.current = null;
@@ -2205,6 +2236,7 @@ export function App() {
                 disabled={connected || busy}
                 onChange={(value) => {
                   setPort(value ?? 22);
+                  setConnectionSettings(DEFAULT_CONNECTION_SETTINGS);
                   setActiveSessionTab(null);
                   setLoadedConnectionId(null);
                   loadedConnectionIdRef.current = null;
@@ -2251,6 +2283,7 @@ export function App() {
                 disabled={connected || busy}
                 onChange={(event) => {
                   setUsername(event.target.value);
+                  setConnectionSettings(DEFAULT_CONNECTION_SETTINGS);
                   setActiveSessionTab(null);
                   setLoadedConnectionId(null);
                   loadedConnectionIdRef.current = null;
@@ -3008,14 +3041,47 @@ function connectionLabel(
   return stageLabels[stage] ?? labels[state];
 }
 
-function errorText(error: unknown, fallback: string): string {
+function errorText(error: unknown, t: TFunction): string {
+  if (error instanceof IpcError) {
+    return commandErrorText(error.code, error.message, t);
+  }
   if (typeof error === "string") {
     return error;
   }
   if (error instanceof Error) {
     return error.message;
   }
-  return fallback;
+  return t("errors.sshOperation");
+}
+
+function commandErrorText(
+  code: string,
+  fallback: string,
+  t: TFunction,
+): string {
+  switch (code) {
+    case "dns_lookup_timeout":
+      return t("errors.dnsLookupTimeout");
+    case "dns_lookup_failed":
+      return t("errors.dnsLookupFailed");
+    case "tcp_connect_timeout":
+    case "connect_timeout":
+      return t("errors.tcpConnectTimeout");
+    case "connection_refused":
+      return t("errors.connectionRefused");
+    case "network_unreachable":
+      return t("errors.networkUnreachable");
+    case "tcp_connect_failed":
+      return t("errors.tcpConnectFailed");
+    case "handshake_timeout":
+      return t("errors.handshakeTimeout");
+    case "handshake_failed":
+      return t("errors.handshakeFailed");
+    case "keep_alive_failed":
+      return t("errors.keepAliveFailed");
+    default:
+      return fallback;
+  }
 }
 
 function connectionAuthLabel(method: AuthMethod, t: TFunction): string {

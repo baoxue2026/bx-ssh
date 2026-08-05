@@ -124,6 +124,10 @@ impl ClientSession {
         SftpClient::open(channel.into_stream()).await
     }
 
+    pub async fn wait_for_transport(&mut self) -> Result<(), SshError> {
+        (&mut self.handle).await.map_err(SshError::from)
+    }
+
     pub async fn disconnect(self) -> Result<(), SshError> {
         self.handle
             .disconnect(russh::Disconnect::ByApplication, "", "")
@@ -282,12 +286,14 @@ async fn connect(
     ),
     SshError,
 > {
+    let deadline = time::Instant::now() + endpoint.connect_timeout();
+
     on_stage(SshConnectionStage::ResolvingDns);
     let lookup = tokio::select! {
         biased;
         _ = cancellation.cancelled() => return Err(SshError::ConnectionCancelled),
-        result = time::timeout(
-            endpoint.connect_timeout(),
+        result = time::timeout_at(
+            deadline,
             lookup_host((endpoint.host(), endpoint.port())),
         ) => result,
     };
@@ -306,13 +312,13 @@ async fn connect(
     let socket = tokio::select! {
         biased;
         _ = cancellation.cancelled() => return Err(SshError::ConnectionCancelled),
-        result = time::timeout(
-            endpoint.connect_timeout(),
+        result = time::timeout_at(
+            deadline,
             TcpStream::connect(addresses.as_slice()),
         ) => result,
     }
     .map_err(|_| SshError::TcpConnectTimeout)?
-    .map_err(SshError::TcpConnectFailed)?;
+    .map_err(classify_tcp_error)?;
     let _ = socket.set_nodelay(true);
 
     on_stage(SshConnectionStage::Handshaking);
@@ -328,8 +334,8 @@ async fn connect(
     let result = tokio::select! {
         biased;
         _ = cancellation.cancelled() => return Err(SshError::ConnectionCancelled),
-        result = time::timeout(
-            endpoint.connect_timeout(),
+        result = time::timeout_at(
+            deadline,
             client::connect_stream(config, socket, handler),
         ) => result,
     }
@@ -367,6 +373,17 @@ async fn connect(
     Ok((handle, host_key, negotiated_algorithms))
 }
 
+fn classify_tcp_error(error: std::io::Error) -> SshError {
+    match error.kind() {
+        std::io::ErrorKind::ConnectionRefused => SshError::ConnectionRefused(error),
+        std::io::ErrorKind::NetworkUnreachable
+        | std::io::ErrorKind::HostUnreachable
+        | std::io::ErrorKind::AddrNotAvailable => SshError::NetworkUnreachable(error),
+        std::io::ErrorKind::TimedOut => SshError::TcpConnectTimeout,
+        _ => SshError::TcpConnectFailed(error),
+    }
+}
+
 fn client_config(endpoint: &SshEndpoint) -> client::Config {
     client::Config {
         client_id: russh::SshId::Standard(Cow::Borrowed(concat!(
@@ -375,7 +392,7 @@ fn client_config(endpoint: &SshEndpoint) -> client::Config {
         ))),
         preferred: preferred_algorithms(),
         inactivity_timeout: None,
-        keepalive_interval: Some(endpoint.operation_timeout()),
+        keepalive_interval: endpoint.keep_alive_interval(),
         keepalive_max: 3,
         nodelay: true,
         ..Default::default()
@@ -394,8 +411,8 @@ fn validate_username(username: &str) -> Result<(), SshError> {
 mod tests {
     use std::time::Duration;
 
-    use super::{client_config, ConnectionCancellation};
-    use crate::SshEndpoint;
+    use super::{classify_tcp_error, client_config, probe_host_key, ConnectionCancellation};
+    use crate::{SshEndpoint, SshError};
     use tokio::time;
 
     #[test]
@@ -450,7 +467,7 @@ mod tests {
     fn keeps_idle_sessions_alive_and_detects_unresponsive_servers() {
         let endpoint = SshEndpoint::new("ssh.example.com", 22)
             .unwrap()
-            .with_operation_timeout(Duration::from_secs(45));
+            .with_keep_alive_interval(Some(Duration::from_secs(45)));
 
         let config = client_config(&endpoint);
 
@@ -458,5 +475,49 @@ mod tests {
         assert_eq!(config.keepalive_interval, Some(Duration::from_secs(45)));
         assert_eq!(config.keepalive_max, 3);
         assert!(config.nodelay);
+    }
+
+    #[test]
+    fn allows_keep_alive_to_be_disabled() {
+        let endpoint = SshEndpoint::new("ssh.example.com", 22)
+            .unwrap()
+            .with_keep_alive_interval(None);
+
+        assert_eq!(client_config(&endpoint).keepalive_interval, None);
+    }
+
+    #[test]
+    fn classifies_tcp_connection_errors() {
+        let refused =
+            classify_tcp_error(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
+        let unreachable =
+            classify_tcp_error(std::io::Error::from(std::io::ErrorKind::HostUnreachable));
+        let timed_out = classify_tcp_error(std::io::Error::from(std::io::ErrorKind::TimedOut));
+
+        assert!(matches!(refused, SshError::ConnectionRefused(_)));
+        assert!(matches!(unreachable, SshError::NetworkUnreachable(_)));
+        assert!(matches!(timed_out, SshError::TcpConnectTimeout));
+    }
+
+    #[tokio::test]
+    async fn applies_the_connect_deadline_to_the_ssh_handshake() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            time::sleep(Duration::from_secs(1)).await;
+        });
+        let endpoint = SshEndpoint::new("127.0.0.1", port)
+            .unwrap()
+            .with_connect_timeout(Duration::from_millis(50));
+        let started = time::Instant::now();
+
+        let error = probe_host_key(&endpoint).await.unwrap_err();
+
+        assert!(matches!(error, SshError::HandshakeTimeout));
+        assert!(started.elapsed() < Duration::from_millis(500));
+        server.abort();
     }
 }
