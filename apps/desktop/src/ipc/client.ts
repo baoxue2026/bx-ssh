@@ -6,6 +6,7 @@ import {
   type ConnectionConfig,
   type ConnectionGroup,
   type ConnectionSettingsOverride,
+  type HostKeyInfo,
   type OpenSshImportRequest,
   type ProbeHostRequest,
   type Result,
@@ -131,6 +132,13 @@ export const ipc = {
     unwrapVoid(() => commands.reorderConnections(groupId, ids)),
   probeSshHost: (request: ProbeHostRequest) =>
     unwrap(() => commands.probeSshHost(request)),
+  getKnownHost: (host: string, port: number) =>
+    unwrap(() => commands.getKnownHost(host, port)),
+  trustHostFingerprint: (request: {
+    host: string;
+    port: number;
+    hostKey: HostKeyInfo;
+  }) => unwrapVoid(() => commands.trustHostFingerprint(request)),
   writeTerminal: (sessionId: string, data: string) =>
     unwrapVoid(() => commands.writeTerminal(sessionId, data)),
   resizeTerminal: (sessionId: string, size: TerminalSize) =>

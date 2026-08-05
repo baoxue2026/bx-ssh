@@ -4,7 +4,7 @@ use std::fmt;
 use bx_contracts::{
     AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionGroup,
     ConnectionListItem, ConnectionSettingsLayers, ConnectionSettingsOverride,
-    ConnectionSettingsScope, ConnectionSettingsSnapshot,
+    ConnectionSettingsScope, ConnectionSettingsSnapshot, HostKeyInfo,
 };
 use rusqlite::{params, OptionalExtension, Row, Transaction};
 
@@ -80,6 +80,93 @@ impl ConnectionRepository {
             connection,
             settings: ConnectionSettingsSnapshot { layers, resolved },
         }))
+    }
+
+    pub fn list_host_fingerprints(&self, host: &str, port: u16) -> Result<Vec<HostKeyInfo>> {
+        validate_host_endpoint(host, port)?;
+        let mut statement = self
+            .database
+            .connection()
+            .prepare(
+                "SELECT key_algorithm, fingerprint_sha256
+                 FROM host_fingerprints
+                 WHERE host = ?1 COLLATE NOCASE AND port = ?2
+                 ORDER BY id",
+            )
+            .map_err(|source| database_operation("prepare a host fingerprint query", source))?;
+        let rows = statement
+            .query_map(params![host.trim(), port], |row| {
+                Ok(HostKeyInfo::new(
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                ))
+            })
+            .map_err(|source| database_operation("query host fingerprints", source))?;
+        rows.map(|row| row.map_err(|source| database_operation("read a host fingerprint", source)))
+            .collect()
+    }
+
+    pub fn trust_host_fingerprint(
+        &mut self,
+        host: &str,
+        port: u16,
+        host_key: &HostKeyInfo,
+        now_ms: u64,
+    ) -> Result<()> {
+        validate_host_endpoint(host, port)?;
+        validate_host_key(host_key)?;
+        let now = timestamp_to_i64(now_ms)?;
+        let host = host.trim();
+        let transaction = self
+            .database
+            .transaction()
+            .map_err(|source| database_operation("start a host fingerprint transaction", source))?;
+        let mut statement = transaction
+            .prepare(
+                "SELECT key_algorithm, fingerprint_sha256
+                 FROM host_fingerprints
+                 WHERE host = ?1 COLLATE NOCASE AND port = ?2",
+            )
+            .map_err(|source| {
+                database_operation("prepare a host fingerprint conflict query", source)
+            })?;
+        let stored = statement
+            .query_map(params![host, port], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|source| database_operation("query host fingerprint conflicts", source))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|source| database_operation("read host fingerprint conflicts", source))?;
+        drop(statement);
+
+        if stored.iter().any(|(algorithm, fingerprint)| {
+            algorithm != &host_key.algorithm || fingerprint != &host_key.fingerprint_sha256
+        }) {
+            return Err(PersistenceError::HostFingerprintConflict);
+        }
+
+        transaction
+            .execute(
+                "INSERT INTO host_fingerprints
+                 (id, host, port, key_algorithm, fingerprint_sha256, first_seen_at,
+                  trusted_at, last_verified_at)
+                 VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5, ?5, ?5)
+                 ON CONFLICT(host, port, key_algorithm) DO UPDATE SET
+                    last_verified_at = excluded.last_verified_at,
+                    revision = host_fingerprints.revision + 1",
+                params![
+                    host,
+                    port,
+                    host_key.algorithm,
+                    host_key.fingerprint_sha256,
+                    now
+                ],
+            )
+            .map_err(|source| database_operation("save a host fingerprint", source))?;
+        transaction
+            .commit()
+            .map_err(|source| database_operation("commit a host fingerprint", source))?;
+        Ok(())
     }
 
     pub fn save_group(&mut self, group: &ConnectionGroup, now_ms: u64) -> Result<()> {
@@ -829,11 +916,39 @@ fn database_operation(operation: &'static str, source: rusqlite::Error) -> Persi
     PersistenceError::DatabaseOperation { operation, source }
 }
 
+fn validate_host_endpoint(host: &str, port: u16) -> Result<()> {
+    if host.trim().is_empty() || port == 0 {
+        Err(PersistenceError::InvalidConnectionConfiguration)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_host_key(host_key: &HostKeyInfo) -> Result<()> {
+    let fingerprint = host_key.fingerprint_sha256.strip_prefix("SHA256:");
+    if host_key.algorithm.trim().is_empty()
+        || !fingerprint.is_some_and(|value| {
+            value.len() == 43
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        })
+    {
+        Err(PersistenceError::InvalidStoredRecord {
+            entity: "host fingerprint",
+        })
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::{Deref, DerefMut};
 
-    use bx_contracts::{ConnectionSettings, DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS};
+    use bx_contracts::{
+        ConnectionSettings, HostKeyInfo, DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS,
+    };
     use tempfile::{tempdir, TempDir};
 
     use super::*;
@@ -850,6 +965,73 @@ mod tests {
                 connections: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn persists_known_hosts_by_case_insensitive_endpoint_and_non_standard_port() {
+        let mut repository = test_repository();
+        let host_key = HostKeyInfo::new(
+            "ssh-ed25519",
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        );
+
+        assert!(repository
+            .list_host_fingerprints("Example.COM", 2222)
+            .unwrap()
+            .is_empty());
+        repository
+            .trust_host_fingerprint("Example.COM", 2222, &host_key, 1000)
+            .unwrap();
+        assert_eq!(
+            repository
+                .list_host_fingerprints("example.com", 2222)
+                .unwrap(),
+            vec![host_key.clone()]
+        );
+        assert!(repository
+            .list_host_fingerprints("example.com", 22)
+            .unwrap()
+            .is_empty());
+
+        repository
+            .trust_host_fingerprint("example.com", 2222, &host_key, 2000)
+            .unwrap();
+        let count: i64 = repository
+            .database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM host_fingerprints WHERE host = 'example.com' AND port = 2222",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn rejects_known_host_replacement_and_invalid_openssh_fingerprints() {
+        let mut repository = test_repository();
+        let original = HostKeyInfo::new(
+            "ssh-ed25519",
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        );
+        repository
+            .trust_host_fingerprint("example.com", 22, &original, 1000)
+            .unwrap();
+
+        let changed = HostKeyInfo::new(
+            "ssh-ed25519",
+            "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        );
+        assert!(matches!(
+            repository.trust_host_fingerprint("example.com", 22, &changed, 2000),
+            Err(PersistenceError::HostFingerprintConflict)
+        ));
+        let invalid = HostKeyInfo::new("ssh-ed25519", "MD5:aa:bb");
+        assert!(matches!(
+            repository.trust_host_fingerprint("example.com", 22, &invalid, 2000),
+            Err(PersistenceError::InvalidStoredRecord { .. })
+        ));
     }
 
     #[test]

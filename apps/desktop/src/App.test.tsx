@@ -921,6 +921,34 @@ describe("App", { timeout: 15_000 }, () => {
     });
   });
 
+  it("automatically trusts a previously stored matching host fingerprint", async () => {
+    const hostKey = {
+      algorithm: "ssh-ed25519",
+      fingerprintSha256: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    };
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "probe_ssh_host" || command === "get_known_host") {
+        return Promise.resolve(hostKey);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+
+    const fingerprint = await screen.findByRole("checkbox", {
+      name: "信任此主机指纹",
+    });
+    await waitFor(() => expect(fingerprint).toBeChecked());
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      "trust_host_fingerprint",
+      expect.anything(),
+    );
+  });
+
   it("announces connection failures assertively", async () => {
     mocks.invoke.mockImplementation((command: string) => {
       if (command === "app_info") {

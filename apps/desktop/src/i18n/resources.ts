@@ -389,6 +389,9 @@ export const resources = {
         dnsLookupTimeout: "解析主机名超时，请检查网络和 DNS 设置。",
         handshakeFailed: "SSH 握手失败，服务器可能不兼容或连接已中断。",
         handshakeTimeout: "SSH 握手超时，请检查服务器状态和网络质量。",
+        hostKeyMismatch:
+          "服务器主机指纹已变化，连接已阻止。请确认服务器身份后再处理。",
+        hostKeyUnavailable: "服务器没有提供可验证的主机密钥，连接已阻止。",
         keepAliveFailed: "服务器未响应 KeepAlive，SSH 连接已断开。",
         networkUnreachable: "网络或目标主机不可达，请检查网络和路由设置。",
         sshOperation: "SSH 操作失败",
@@ -815,6 +818,10 @@ export const resources = {
           "The SSH handshake failed. The server may be incompatible or the connection was interrupted.",
         handshakeTimeout:
           "The SSH handshake timed out. Check the server and network quality.",
+        hostKeyMismatch:
+          "The server host fingerprint changed, so the connection was blocked. Verify the server before continuing.",
+        hostKeyUnavailable:
+          "The server did not provide a verifiable host key, so the connection was blocked.",
         keepAliveFailed:
           "The server stopped responding to KeepAlive requests, so the SSH connection was closed.",
         networkUnreachable:

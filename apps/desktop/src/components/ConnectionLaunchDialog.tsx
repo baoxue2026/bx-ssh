@@ -85,7 +85,8 @@ export function ConnectionLaunchDialog({
           ) : (
             <Button
               type="primary"
-              disabled={!hostKey}
+              disabled={!hostKey || pending}
+              loading={pending}
               onClick={onConfirmFingerprint}
             >
               {t("hostFingerprint.trustAndContinue")}

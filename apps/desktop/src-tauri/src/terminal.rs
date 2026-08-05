@@ -11,11 +11,14 @@ use bx_ssh_core::{
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::ipc::{Channel, InvokeResponseBody, IpcResponse};
-use tauri::{State, WebviewWindow};
+use tauri::{AppHandle, State, WebviewWindow};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::Instant;
 
 use crate::command_error::{CommandError, CommandErrorCode};
+use crate::connections::{
+    app_data_directory, current_timestamp_ms, run_query, ConnectionRepositoryState,
+};
 use crate::lifecycle::AppActivity;
 use crate::session_manager::{SessionKind, SshConnectionEvent, SshSessionManager};
 
@@ -50,6 +53,14 @@ pub(crate) struct ProbeHostRequest {
     host: String,
     port: u16,
     settings: ConnectionSettings,
+}
+
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TrustHostFingerprintRequest {
+    host: String,
+    port: u16,
+    host_key: HostKeyInfo,
 }
 
 #[derive(Deserialize, Type)]
@@ -98,10 +109,97 @@ impl IpcResponse for TerminalOutput {
 
 #[tauri::command]
 #[specta::specta]
-pub(crate) async fn probe_ssh_host(request: ProbeHostRequest) -> Result<HostKeyInfo, CommandError> {
+pub(crate) async fn probe_ssh_host(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    request: ProbeHostRequest,
+) -> Result<HostKeyInfo, CommandError> {
     let endpoint =
         SshEndpoint::new(request.host, request.port)?.with_connection_settings(request.settings);
-    Ok(probe_host_key(&endpoint).await?)
+    let host_key = probe_host_key(&endpoint).await?;
+    let data_directory = app_data_directory(&app)?;
+    let stored = run_query(state.inner().clone(), data_directory, {
+        let host = endpoint.host().to_owned();
+        let port = endpoint.port();
+        move |repository| repository.list_host_fingerprints(&host, port)
+    })
+    .await?;
+    if let Some(expected) = stored
+        .first()
+        .filter(|_| !stored.iter().any(|stored| stored == &host_key))
+    {
+        return Err(CommandError::from(SshError::HostKeyMismatch {
+            expected: expected.fingerprint_sha256.clone(),
+            actual: host_key.fingerprint_sha256.clone(),
+        }));
+    }
+
+    if stored.iter().any(|stored| stored == &host_key) {
+        let data_directory = app_data_directory(&app)?;
+        let host = endpoint.host().to_owned();
+        let port = endpoint.port();
+        let now_ms = current_timestamp_ms()?;
+        let verified_host_key = host_key.clone();
+        run_query(state.inner().clone(), data_directory, move |repository| {
+            repository.trust_host_fingerprint(&host, port, &verified_host_key, now_ms)
+        })
+        .await?;
+    }
+    Ok(host_key)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn get_known_host(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    host: String,
+    port: u16,
+) -> Result<Option<HostKeyInfo>, CommandError> {
+    let endpoint = SshEndpoint::new(host, port)?;
+    let data_directory = app_data_directory(&app)?;
+    let host = endpoint.host().to_owned();
+    let port = endpoint.port();
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        Ok(repository
+            .list_host_fingerprints(&host, port)?
+            .into_iter()
+            .next())
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn trust_host_fingerprint(
+    app: AppHandle,
+    state: State<'_, ConnectionRepositoryState>,
+    request: TrustHostFingerprintRequest,
+) -> Result<(), CommandError> {
+    let endpoint = SshEndpoint::new(request.host, request.port)?;
+    let data_directory = app_data_directory(&app)?;
+    let host = endpoint.host().to_owned();
+    let port = endpoint.port();
+    let stored = run_query(state.inner().clone(), data_directory, {
+        let host = host.clone();
+        move |repository| repository.list_host_fingerprints(&host, port)
+    })
+    .await?;
+    if let Some(expected) = stored
+        .first()
+        .filter(|_| !stored.iter().any(|stored| stored == &request.host_key))
+    {
+        return Err(CommandError::from(SshError::HostKeyMismatch {
+            expected: expected.fingerprint_sha256.clone(),
+            actual: request.host_key.fingerprint_sha256.clone(),
+        }));
+    }
+    let now_ms = current_timestamp_ms()?;
+    let data_directory = app_data_directory(&app)?;
+    run_query(state.inner().clone(), data_directory, move |repository| {
+        repository.trust_host_fingerprint(&host, port, &request.host_key, now_ms)
+    })
+    .await
 }
 
 #[tauri::command]
