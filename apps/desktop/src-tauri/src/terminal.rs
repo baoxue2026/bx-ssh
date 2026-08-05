@@ -4,9 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bx_contracts::{ConnectionSettings, HostKeyInfo, SshConnectionStage};
+use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
-    authenticate_password_with_progress, probe_host_key, ClientSession, ShellEvent, SshEndpoint,
-    SshError, SshShell, TerminalSize,
+    authenticate_password_with_progress, authenticate_private_key_contents_with_progress,
+    probe_host_key, ClientSession, ShellEvent, SshEndpoint, SshError, SshShell, TerminalSize,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -20,6 +21,7 @@ use crate::connections::{
     app_data_directory, current_timestamp_ms, run_query, ConnectionRepositoryState,
 };
 use crate::lifecycle::AppActivity;
+use crate::private_keys::resolve_private_key;
 use crate::session_manager::{SessionKind, SshConnectionEvent, SshSessionManager};
 
 const COMMAND_QUEUE_CAPACITY: usize = 128;
@@ -301,6 +303,178 @@ pub(crate) async fn start_password_shell(
     let (command_tx, command_rx) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
     let activity_guard = manager.activity.track_session();
 
+    manager
+        .sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), command_tx);
+
+    let task_manager = manager.inner().clone();
+    let task_session_manager = session_manager.inner().clone();
+    let task_session_id = session_id.clone();
+    tauri::async_runtime::spawn(async move {
+        let _activity_guard = activity_guard;
+        run_session(
+            task_manager,
+            task_session_manager,
+            task_session_id,
+            session,
+            shell,
+            command_rx,
+            on_event,
+            on_output,
+        )
+        .await;
+    });
+
+    Ok(StartShellResponse {
+        session_id,
+        host_key,
+    })
+}
+
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StartPrivateKeyShellRequest {
+    attempt_id: String,
+    host: String,
+    port: u16,
+    username: String,
+    key_reference_id: String,
+    passphrase: Option<String>,
+    expected_fingerprint: String,
+    settings: ConnectionSettings,
+    columns: u32,
+    rows: u32,
+    pixel_width: u32,
+    pixel_height: u32,
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn start_private_key_shell(
+    app: AppHandle,
+    window: WebviewWindow,
+    manager: State<'_, TerminalSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    repository: State<'_, ConnectionRepositoryState>,
+    request: StartPrivateKeyShellRequest,
+    on_state: Channel<SshConnectionEvent>,
+    on_event: Channel<TerminalEvent>,
+    on_output: Channel<TerminalOutput>,
+) -> Result<StartShellResponse, CommandError> {
+    let owner = window.label().to_owned();
+    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?
+        .with_connection_settings(request.settings);
+    let size = TerminalSize::with_pixels(
+        request.columns,
+        request.rows,
+        request.pixel_width,
+        request.pixel_height,
+    )?;
+    let cancellation =
+        session_manager.begin_attempt(&owner, &request.attempt_id, SessionKind::Terminal)?;
+    let _ = on_state.send(SshConnectionEvent {
+        attempt_id: request.attempt_id.clone(),
+        stage: SshConnectionStage::Created,
+    });
+
+    let key = match resolve_private_key(
+        &app,
+        &repository,
+        &request.key_reference_id,
+        request.passphrase,
+    )
+    .await
+    {
+        Ok(key) => key,
+        Err(error) => {
+            if let Some(event) = session_manager.finish_attempt(
+                &owner,
+                &request.attempt_id,
+                SshConnectionStage::Failed,
+            ) {
+                let _ = on_state.send(event);
+            }
+            return Err(error);
+        }
+    };
+    let passphrase = key.passphrase.as_ref().map(|value| value.expose_secret());
+    let session = authenticate_private_key_contents_with_progress(
+        &endpoint,
+        &request.username,
+        &request.expected_fingerprint,
+        key.contents.expose_secret(),
+        passphrase,
+        &cancellation,
+        |stage| {
+            if let Ok(event) =
+                session_manager.transition_attempt(&owner, &request.attempt_id, stage)
+            {
+                let _ = on_state.send(event);
+            }
+        },
+    )
+    .await;
+    let session = match session {
+        Ok(session) => session,
+        Err(error) => {
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(error.into());
+        }
+    };
+    let host_key = session.host_key().clone();
+    let opening = session_manager.transition_attempt(
+        &owner,
+        &request.attempt_id,
+        SshConnectionStage::OpeningChannel,
+    )?;
+    let _ = on_state.send(opening);
+    let shell = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+        result = session.open_shell(size) => result,
+    };
+    let shell = match shell {
+        Ok(shell) => shell,
+        Err(error) => {
+            let _ = session.disconnect().await;
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(error.into());
+        }
+    };
+    let (session_id, connected) =
+        match session_manager.complete_attempt(&owner, &request.attempt_id) {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = shell.close().await;
+                let _ = session.disconnect().await;
+                if let Some(event) = session_manager.finish_attempt(
+                    &owner,
+                    &request.attempt_id,
+                    SshConnectionStage::Failed,
+                ) {
+                    let _ = on_state.send(event);
+                }
+                return Err(error);
+            }
+        };
+    let _ = on_state.send(connected);
+    let (command_tx, command_rx) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let activity_guard = manager.activity.track_session();
     manager
         .sessions
         .lock()

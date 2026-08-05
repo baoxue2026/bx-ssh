@@ -16,6 +16,7 @@ mod desktop_shell;
 mod lifecycle;
 mod openssh_import;
 mod platform;
+mod private_keys;
 mod session_manager;
 mod sftp;
 mod terminal;
@@ -36,12 +37,12 @@ use platform::set_webview_memory_usage;
 use session_manager::{cancel_ssh_connection, SshSessionManager};
 use sftp::{
     close_sftp_session, download_sftp_file, hash_remote_sftp_file, list_sftp_directory,
-    start_password_sftp, upload_sftp_file, SftpSessionManager,
+    start_password_sftp, start_private_key_sftp, upload_sftp_file, SftpSessionManager,
 };
 use terminal::{
     acknowledge_terminal_output, close_terminal_session, get_known_host, probe_ssh_host,
-    resize_terminal, start_password_shell, trust_host_fingerprint, write_terminal,
-    TerminalSessionManager,
+    resize_terminal, start_password_shell, start_private_key_shell, trust_host_fingerprint,
+    write_terminal, TerminalSessionManager,
 };
 use update::{check_for_update, install_update};
 
@@ -93,9 +94,11 @@ fn command_builder() -> Builder<tauri::Wry> {
             session_manager::cancel_ssh_connection
         ])
         .typ::<terminal::StartShellRequest>()
+        .typ::<terminal::StartPrivateKeyShellRequest>()
         .typ::<terminal::StartShellResponse>()
         .typ::<terminal::TerminalEvent>()
         .typ::<sftp::StartSftpRequest>()
+        .typ::<sftp::StartPrivateKeySftpRequest>()
         .typ::<sftp::StartSftpResponse>()
         .typ::<session_manager::SshConnectionEvent>()
         .typ::<update::UpdateEvent>()
@@ -195,11 +198,13 @@ pub fn run() {
             get_known_host,
             trust_host_fingerprint,
             start_password_shell,
+            start_private_key_shell,
             write_terminal,
             resize_terminal,
             acknowledge_terminal_output,
             close_terminal_session,
             start_password_sftp,
+            start_private_key_sftp,
             list_sftp_directory,
             upload_sftp_file,
             download_sftp_file,

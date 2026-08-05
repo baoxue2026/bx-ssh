@@ -5,8 +5,10 @@ use std::sync::Arc;
 use bx_contracts::{
     ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, SshConnectionStage, TransferSummary,
 };
+use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
-    authenticate_password_with_progress, ClientSession, SftpClient, SshEndpoint, SshError,
+    authenticate_password_with_progress, authenticate_private_key_contents_with_progress,
+    ClientSession, SftpClient, SshEndpoint, SshError,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -16,7 +18,9 @@ use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
 
 use crate::command_error::CommandError;
+use crate::connections::ConnectionRepositoryState;
 use crate::lifecycle::{ActivityGuard, AppActivity};
+use crate::private_keys::resolve_private_key;
 use crate::session_manager::{SessionKind, SshConnectionEvent, SshSessionManager};
 
 #[derive(Clone, Default)]
@@ -163,6 +167,172 @@ pub(crate) async fn start_password_sftp(
     let _ = on_state.send(connected);
     let activity_guard = manager.activity.track_session();
 
+    manager.sessions.lock().await.insert(
+        session_id.clone(),
+        Arc::new(Mutex::new(ManagedSftpSession {
+            ssh: Some(ssh),
+            sftp,
+            _activity_guard: activity_guard,
+        })),
+    );
+
+    Ok(StartSftpResponse {
+        session_id,
+        host_key,
+        directory,
+    })
+}
+
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StartPrivateKeySftpRequest {
+    attempt_id: String,
+    host: String,
+    port: u16,
+    username: String,
+    key_reference_id: String,
+    passphrase: Option<String>,
+    expected_fingerprint: String,
+    settings: ConnectionSettings,
+    initial_path: Option<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn start_private_key_sftp(
+    app: AppHandle,
+    window: WebviewWindow,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    repository: State<'_, ConnectionRepositoryState>,
+    request: StartPrivateKeySftpRequest,
+    on_state: Channel<SshConnectionEvent>,
+) -> Result<StartSftpResponse, CommandError> {
+    let owner = window.label().to_owned();
+    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?
+        .with_connection_settings(request.settings);
+    let cancellation =
+        session_manager.begin_attempt(&owner, &request.attempt_id, SessionKind::Sftp)?;
+    let _ = on_state.send(SshConnectionEvent {
+        attempt_id: request.attempt_id.clone(),
+        stage: SshConnectionStage::Created,
+    });
+
+    let key = match resolve_private_key(
+        &app,
+        &repository,
+        &request.key_reference_id,
+        request.passphrase,
+    )
+    .await
+    {
+        Ok(key) => key,
+        Err(error) => {
+            if let Some(event) = session_manager.finish_attempt(
+                &owner,
+                &request.attempt_id,
+                SshConnectionStage::Failed,
+            ) {
+                let _ = on_state.send(event);
+            }
+            return Err(error);
+        }
+    };
+    let passphrase = key.passphrase.as_ref().map(|value| value.expose_secret());
+    let ssh = authenticate_private_key_contents_with_progress(
+        &endpoint,
+        &request.username,
+        &request.expected_fingerprint,
+        key.contents.expose_secret(),
+        passphrase,
+        &cancellation,
+        |stage| {
+            if let Ok(event) =
+                session_manager.transition_attempt(&owner, &request.attempt_id, stage)
+            {
+                let _ = on_state.send(event);
+            }
+        },
+    )
+    .await;
+    let ssh = match ssh {
+        Ok(ssh) => ssh,
+        Err(error) => {
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(error.into());
+        }
+    };
+    let host_key = ssh.host_key().clone();
+    let opening = session_manager.transition_attempt(
+        &owner,
+        &request.attempt_id,
+        SshConnectionStage::OpeningChannel,
+    )?;
+    let _ = on_state.send(opening);
+    let sftp = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+        result = ssh.open_sftp() => result,
+    };
+    let sftp = match sftp {
+        Ok(sftp) => sftp,
+        Err(error) => {
+            let _ = ssh.disconnect().await;
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(connection_error(error, SshConnectionStage::OpeningChannel));
+        }
+    };
+    let initial_path = request.initial_path.as_deref().unwrap_or(".");
+    let directory = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+        result = sftp.list_directory(initial_path) => result,
+    };
+    let directory = match directory {
+        Ok(directory) => directory,
+        Err(error) => {
+            let _ = sftp.close().await;
+            let _ = ssh.disconnect().await;
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(connection_error(error, SshConnectionStage::OpeningChannel));
+        }
+    };
+    let (session_id, connected) =
+        match session_manager.complete_attempt(&owner, &request.attempt_id) {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = sftp.close().await;
+                let _ = ssh.disconnect().await;
+                if let Some(event) = session_manager.finish_attempt(
+                    &owner,
+                    &request.attempt_id,
+                    SshConnectionStage::Failed,
+                ) {
+                    let _ = on_state.send(event);
+                }
+                return Err(error);
+            }
+        };
+    let _ = on_state.send(connected);
+    let activity_guard = manager.activity.track_session();
     manager.sessions.lock().await.insert(
         session_id.clone(),
         Arc::new(Mutex::new(ManagedSftpSession {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Input, Radio } from "antd";
 import { Fingerprint, KeyRound, Server } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { HostKeyInfo } from "../ipc/bindings";
+import type { AuthMethod, HostKeyInfo } from "../ipc/bindings";
 import { AppDialog, FeedbackNotice } from "./Feedback";
 import type { CredentialMode } from "./ConnectionEditorDialog";
 
@@ -16,6 +16,7 @@ interface ConnectionLaunchDialogProps {
   initialPassword?: string;
   pending: boolean;
   step?: ConnectionLaunchStep;
+  authMethod?: AuthMethod;
   onCancel(): void;
   onConfirmFingerprint(): void;
   onSubmitPassword(password: string, mode: CredentialMode): void;
@@ -30,6 +31,7 @@ export function ConnectionLaunchDialog({
   initialPassword,
   pending,
   step,
+  authMethod = "password",
   onCancel,
   onConfirmFingerprint,
   onSubmitPassword,
@@ -42,15 +44,18 @@ export function ConnectionLaunchDialog({
     initialCredentialMode,
   );
   const passwordStep = step === "password";
+  const privateKeyStep = passwordStep && authMethod === "privateKey";
 
   useEffect(() => {
     if (passwordStep) {
+      // Credential references can resolve after the dialog has opened.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPassword(initialPassword ?? "");
     }
   }, [initialPassword, passwordStep]);
 
   const submitPassword = () => {
-    if (!password || pending) return;
+    if ((!password && !privateKeyStep) || pending) return;
     const credential = password;
     setPassword("");
     onSubmitPassword(credential, credentialMode);
@@ -68,14 +73,21 @@ export function ConnectionLaunchDialog({
       open={step !== undefined}
       title={
         passwordStep
-          ? t("connectionAuthentication.title")
+          ? t(
+              privateKeyStep
+                ? "connectionAuthentication.privateKeyTitle"
+                : "connectionAuthentication.title",
+            )
           : t("hostFingerprint.title")
       }
       description={
         passwordStep
-          ? t("connectionAuthentication.description", {
-              name: connectionName,
-            })
+          ? t(
+              privateKeyStep
+                ? "connectionAuthentication.privateKeyDescription"
+                : "connectionAuthentication.description",
+              { name: connectionName },
+            )
           : t("hostFingerprint.description", { name: connectionName })
       }
       initialFocusRef={passwordStep ? undefined : cancelRef}
@@ -91,7 +103,7 @@ export function ConnectionLaunchDialog({
             <Button
               type="primary"
               loading={pending}
-              disabled={!password}
+              disabled={!password && !privateKeyStep}
               onClick={submitPassword}
             >
               {t("connectionAuthentication.connect")}
@@ -117,7 +129,11 @@ export function ConnectionLaunchDialog({
           </div>
           <label className="field-group">
             <span className="field-label">
-              {t("connectionAuthentication.password")}
+              {t(
+                privateKeyStep
+                  ? "connectionAuthentication.passphrase"
+                  : "connectionAuthentication.password",
+              )}
             </span>
             <Input.Password
               autoFocus
@@ -128,29 +144,33 @@ export function ConnectionLaunchDialog({
               onPressEnter={submitPassword}
             />
           </label>
-          <fieldset className="field-group connection-credential-mode">
-            <legend className="field-label">
-              {t("connectionAuthentication.credentialMode")}
-            </legend>
-            <Radio.Group
-              aria-label={t("connectionAuthentication.credentialMode")}
-              buttonStyle="solid"
-              value={credentialMode}
-              onChange={(event) => {
-                const nextMode = event.target.value as CredentialMode;
-                setCredentialMode(nextMode);
-                if (nextMode === "ask") {
-                  setPassword("");
-                }
-              }}
-            >
-              {(["ask", "session", "vault"] as CredentialMode[]).map((mode) => (
-                <Radio.Button key={mode} value={mode} disabled={pending}>
-                  {t(`connectionAuthentication.modes.${mode}`)}
-                </Radio.Button>
-              ))}
-            </Radio.Group>
-          </fieldset>
+          {!privateKeyStep && (
+            <fieldset className="field-group connection-credential-mode">
+              <legend className="field-label">
+                {t("connectionAuthentication.credentialMode")}
+              </legend>
+              <Radio.Group
+                aria-label={t("connectionAuthentication.credentialMode")}
+                buttonStyle="solid"
+                value={credentialMode}
+                onChange={(event) => {
+                  const nextMode = event.target.value as CredentialMode;
+                  setCredentialMode(nextMode);
+                  if (nextMode === "ask") {
+                    setPassword("");
+                  }
+                }}
+              >
+                {(["ask", "session", "vault"] as CredentialMode[]).map(
+                  (mode) => (
+                    <Radio.Button key={mode} value={mode} disabled={pending}>
+                      {t(`connectionAuthentication.modes.${mode}`)}
+                    </Radio.Button>
+                  ),
+                )}
+              </Radio.Group>
+            </fieldset>
+          )}
           {errorMessage && (
             <FeedbackNotice
               type="error"
@@ -160,7 +180,11 @@ export function ConnectionLaunchDialog({
             />
           )}
           <p className="connection-auth-hint">
-            {t("connectionAuthentication.sessionOnly")}
+            {t(
+              privateKeyStep
+                ? "connectionAuthentication.privateKeyHint"
+                : "connectionAuthentication.sessionOnly",
+            )}
           </p>
         </>
       ) : (

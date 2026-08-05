@@ -63,6 +63,10 @@ export const resources = {
         description: "为“{{name}}”输入本次 SSH 会话使用的凭据。",
         failed: "认证或 Shell 启动失败",
         password: "密码",
+        passphrase: "私钥口令（可选）",
+        privateKeyTitle: "输入私钥口令",
+        privateKeyDescription: "为“{{name}}”输入私钥口令（如有）。",
+        privateKeyHint: "私钥内容只在 Rust 后端读取，口令仅用于本次连接。",
         sessionOnly: "密码仅用于本次连接，不会写入连接配置或本地数据库。",
         modes: {
           ask: "每次询问",
@@ -418,6 +422,10 @@ export const resources = {
         tcpConnectFailed: "无法建立 SSH 网络连接，请检查网络和服务器状态。",
         tcpConnectTimeout: "连接 SSH 服务器超时，请检查地址、端口和网络状态。",
         invalidCredential: "凭据引用或密码无效。",
+        privateKeyError: "私钥文件、导入记录或私钥口令无效。",
+        authenticationRejected: "服务器拒绝了私钥认证，请确认公钥和账户权限。",
+        legacyRsaSignatureOnly:
+          "服务器仅提供已弃用的 SHA-1 RSA 签名，连接已阻止。",
       },
       feedback: {
         loading: "正在加载",
@@ -493,6 +501,12 @@ export const resources = {
           'Enter the credential used only for the SSH session "{{name}}".',
         failed: "Authentication or shell startup failed",
         password: "Password",
+        passphrase: "Private key passphrase (optional)",
+        privateKeyTitle: "Enter Private Key Passphrase",
+        privateKeyDescription:
+          'Enter the passphrase for the private key used by "{{name}}" (if any).',
+        privateKeyHint:
+          "The private key is read only by the Rust backend; the passphrase is used for this connection.",
         sessionOnly:
           "The password is used only for this connection and is not written to the connection configuration or local database.",
         modes: {
@@ -878,6 +892,12 @@ export const resources = {
         tcpConnectTimeout:
           "The SSH connection timed out. Check the address, port, and network.",
         invalidCredential: "The credential reference or password is invalid.",
+        privateKeyError:
+          "The private key file, imported record, or passphrase is invalid.",
+        authenticationRejected:
+          "The server rejected private-key authentication. Verify the public key and account permissions.",
+        legacyRsaSignatureOnly:
+          "The server only offers the deprecated SHA-1 RSA signature, so the connection was blocked.",
       },
       feedback: {
         loading: "Loading",

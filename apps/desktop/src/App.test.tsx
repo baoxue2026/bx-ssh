@@ -1441,8 +1441,13 @@ describe("App", { timeout: 15_000 }, () => {
     });
   });
 
-  it("stops unsupported saved authentication before probing the host", async () => {
+  it("probes the host before launching a saved private-key connection", async () => {
     const saved = savedConnectionDetails();
+    const hostKey = {
+      algorithm: "ssh-ed25519",
+      fingerprintSha256:
+        "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    };
     const details = {
       ...saved,
       connection: {
@@ -1467,6 +1472,18 @@ describe("App", { timeout: 15_000 }, () => {
       if (command === "get_connection") {
         return Promise.resolve(details);
       }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve(hostKey);
+      }
+      if (command === "get_known_host") {
+        return Promise.resolve(null);
+      }
+      if (command === "start_private_key_shell") {
+        return Promise.resolve({
+          sessionId: "session-private-key",
+          hostKey,
+        });
+      }
       return Promise.resolve();
     });
     renderApp();
@@ -1475,8 +1492,40 @@ describe("App", { timeout: 15_000 }, () => {
       await screen.findByRole("button", { name: "打开 生产服务器" }),
     );
 
-    expect(await screen.findByText(/对应认证能力尚未接入/)).toBeInTheDocument();
-    expect(commandCalls("probe_ssh_host")).toHaveLength(0);
+    const fingerprintDialog = await screen.findByRole("dialog", {
+      name: "确认主机身份",
+    });
+    fireEvent.click(
+      within(fingerprintDialog).getByRole("button", { name: "信任并继续" }),
+    );
+
+    const authenticationDialog = await screen.findByRole("dialog", {
+      name: "输入私钥口令",
+    });
+    fireEvent.change(
+      within(authenticationDialog).getByLabelText("私钥口令（可选）"),
+      { target: { value: "key-secret" } },
+    );
+    fireEvent.click(
+      within(authenticationDialog).getByRole("button", { name: /连\s*接/ }),
+    );
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "start_private_key_shell",
+        expect.objectContaining({
+          request: expect.objectContaining({
+            host: "prod.example.com",
+            port: 22,
+            username: "deploy",
+            keyReferenceId: "key-production",
+            passphrase: "key-secret",
+            expectedFingerprint: hostKey.fingerprintSha256,
+            settings: { connectTimeoutSecs: 15, keepAliveSecs: 45 },
+          }),
+        }),
+      );
+    });
     expect(commandCalls("start_password_shell")).toHaveLength(0);
   });
 });

@@ -14,6 +14,7 @@ pub use error::SshError;
 pub use fingerprint::HostFingerprint;
 pub use session::{
     authenticate_password, authenticate_password_with_progress, authenticate_private_key,
+    authenticate_private_key_contents_with_progress, authenticate_private_key_with_progress,
     probe_host_key, ClientSession, ConnectionCancellation,
 };
 pub use sftp::SftpClient;
