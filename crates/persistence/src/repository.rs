@@ -38,6 +38,39 @@ pub struct ConnectionRepository {
     database: EncryptedDatabase,
 }
 
+/// A private-key reference resolved from the encrypted connection database.
+///
+/// The encrypted material is only consumed by the Rust desktop command layer and
+/// is intentionally not serializable or exposed to the WebView.
+pub struct PrivateKeyReference {
+    pub id: String,
+    pub storage_kind: String,
+    pub file_path: Option<String>,
+    pub encrypted_material: Option<Vec<u8>>,
+    pub material_key_ref: Option<String>,
+    pub passphrase_credential_ref: Option<String>,
+    pub public_key_algorithm: Option<String>,
+    pub fingerprint_sha256: Option<String>,
+    pub comment: Option<String>,
+}
+
+impl fmt::Debug for PrivateKeyReference {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateKeyReference")
+            .field("id", &self.id)
+            .field("storage_kind", &self.storage_kind)
+            .field("file_path", &self.file_path)
+            .field("encrypted_material", &"[REDACTED]")
+            .field("material_key_ref", &self.material_key_ref)
+            .field("passphrase_credential_ref", &self.passphrase_credential_ref)
+            .field("public_key_algorithm", &self.public_key_algorithm)
+            .field("fingerprint_sha256", &self.fingerprint_sha256)
+            .field("comment", &self.comment)
+            .finish()
+    }
+}
+
 impl fmt::Debug for ConnectionRepository {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("ConnectionRepository([REDACTED])")
@@ -104,6 +137,37 @@ impl ConnectionRepository {
             .map_err(|source| database_operation("query host fingerprints", source))?;
         rows.map(|row| row.map_err(|source| database_operation("read a host fingerprint", source)))
             .collect()
+    }
+
+    pub fn get_private_key_reference(&self, id: &str) -> Result<Option<PrivateKeyReference>> {
+        validate_id(id)?;
+        let mut statement = self
+            .database
+            .connection()
+            .prepare(
+                "SELECT id, storage_kind, file_path, encrypted_material, material_key_ref,
+                        passphrase_credential_ref, public_key_algorithm, fingerprint_sha256,
+                        comment
+                 FROM key_references
+                 WHERE id = ?1",
+            )
+            .map_err(|source| database_operation("prepare a private key query", source))?;
+        statement
+            .query_row([id], |row| {
+                Ok(PrivateKeyReference {
+                    id: row.get(0)?,
+                    storage_kind: row.get(1)?,
+                    file_path: row.get(2)?,
+                    encrypted_material: row.get(3)?,
+                    material_key_ref: row.get(4)?,
+                    passphrase_credential_ref: row.get(5)?,
+                    public_key_algorithm: row.get(6)?,
+                    fingerprint_sha256: row.get(7)?,
+                    comment: row.get(8)?,
+                })
+            })
+            .optional()
+            .map_err(|source| database_operation("query a private key", source))
     }
 
     pub fn trust_host_fingerprint(
@@ -1006,6 +1070,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn reads_private_key_references_without_exposing_material_in_debug() {
+        let repository = test_repository();
+        repository
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO key_references
+                 (id, name, storage_kind, file_path, public_key_algorithm,
+                  fingerprint_sha256, created_at, updated_at)
+                 VALUES ('key-1', 'Deploy key', 'file', '/keys/deploy', 'ssh-ed25519',
+                         'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 1, 1)",
+                [],
+            )
+            .unwrap();
+
+        let reference = repository
+            .get_private_key_reference("key-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(reference.file_path.as_deref(), Some("/keys/deploy"));
+        assert_eq!(
+            reference.public_key_algorithm.as_deref(),
+            Some("ssh-ed25519")
+        );
+        assert!(!format!("{reference:?}").contains("PRIVATE_KEY_MATERIAL"));
+        assert!(repository
+            .get_private_key_reference("missing")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

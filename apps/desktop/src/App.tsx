@@ -229,6 +229,11 @@ export function App() {
   >();
   const [launchCredentialMode, setLaunchCredentialMode] =
     useState<CredentialMode>("ask");
+  const [launchAuthMethod, setLaunchAuthMethod] =
+    useState<AuthMethod>("password");
+  const [launchKeyReferenceId, setLaunchKeyReferenceId] = useState<
+    string | null
+  >(null);
   const [connectionEditorInitialValue, setConnectionEditorInitialValue] =
     useState<ConnectionEditorValue>();
   const [connectionEditorOpen, setConnectionEditorOpen] = useState(false);
@@ -660,6 +665,8 @@ export function App() {
     setUsername(config.username);
     setConnectionSettings(settings);
     setPassword("");
+    setLaunchAuthMethod(config.authMethod);
+    setLaunchKeyReferenceId(config.keyReferenceId);
     setLaunchCredentialRef(config.credentialRef);
     setLaunchCredentialMode(config.credentialRef ? "vault" : "ask");
     setLaunchCredentialPassword(undefined);
@@ -667,7 +674,7 @@ export function App() {
     loadedConnectionIdRef.current = config.id;
     resetHostTrust();
 
-    if (config.authMethod !== "password") {
+    if (config.authMethod === "keyboardInteractive") {
       setConnectionState("failed");
       setErrorMessage(
         t("connectionAuthentication.unsupported", {
@@ -680,7 +687,7 @@ export function App() {
 
     const result = await probeHost(config.host, config.port, settings);
     if (connectionAttemptRef.current === request && result) {
-      if (config.credentialRef) {
+      if (config.authMethod === "password" && config.credentialRef) {
         try {
           setLaunchCredentialPassword(
             (await ipc.getPasswordCredential(config.credentialRef)) ??
@@ -1064,10 +1071,16 @@ export function App() {
   };
 
   const connectTerminal = async (
-    passwordOverride?: string,
+    credentialOverride?: string,
   ): Promise<boolean> => {
-    const connectionPassword = passwordOverride ?? password;
-    if (!hostKey || !trusted || !username || !connectionPassword) {
+    const credential = credentialOverride ?? password;
+    const privateKeyAuth = launchAuthMethod === "privateKey";
+    if (
+      !hostKey ||
+      !trusted ||
+      !username ||
+      (privateKeyAuth ? !launchKeyReferenceId : !credential)
+    ) {
       return false;
     }
 
@@ -1153,24 +1166,40 @@ export function App() {
 
     try {
       await enableLowMemoryUsage();
-      const response = await ipc.startPasswordShell(
-        {
-          attemptId: connectionAttemptId,
-          host,
-          port,
-          username,
-          password: connectionPassword,
-          expectedFingerprint: hostKey.fingerprintSha256,
-          settings: connectionSettings,
-          ...viewport,
-        },
-        {
-          onState: (event) =>
-            handleSshConnectionEvent(connectionAttemptId, event),
-          onEvent: handleTerminalEvent,
-          onOutput: handleTerminalOutput,
-        },
-      );
+      const channels = {
+        onState: (event: SshConnectionEvent) =>
+          handleSshConnectionEvent(connectionAttemptId, event),
+        onEvent: handleTerminalEvent,
+        onOutput: handleTerminalOutput,
+      };
+      const response = privateKeyAuth
+        ? await ipc.startPrivateKeyShell(
+            {
+              attemptId: connectionAttemptId,
+              host,
+              port,
+              username,
+              keyReferenceId: launchKeyReferenceId as string,
+              passphrase: credential || null,
+              expectedFingerprint: hostKey.fingerprintSha256,
+              settings: connectionSettings,
+              ...viewport,
+            },
+            channels,
+          )
+        : await ipc.startPasswordShell(
+            {
+              attemptId: connectionAttemptId,
+              host,
+              port,
+              username,
+              password: credential,
+              expectedFingerprint: hostKey.fingerprintSha256,
+              settings: connectionSettings,
+              ...viewport,
+            },
+            channels,
+          );
       acknowledgementSessionId = response.sessionId;
       queueAcknowledgement(processedSequence);
 
@@ -1213,7 +1242,14 @@ export function App() {
   };
 
   const connectSftp = async () => {
-    if (!hostKey || !trusted || !username || !password) {
+    const privateKeyAuth = launchAuthMethod === "privateKey";
+    const credential = password;
+    if (
+      !hostKey ||
+      !trusted ||
+      !username ||
+      (privateKeyAuth ? !launchKeyReferenceId : !credential)
+    ) {
       return;
     }
 
@@ -1230,19 +1266,34 @@ export function App() {
 
     try {
       await enableLowMemoryUsage();
-      const response = await ipc.startPasswordSftp(
-        {
-          attemptId: connectionAttemptId,
-          host,
-          port,
-          username,
-          password,
-          expectedFingerprint: hostKey.fingerprintSha256,
-          settings: connectionSettings,
-          initialPath: ".",
-        },
-        (event) => handleSshConnectionEvent(connectionAttemptId, event),
-      );
+      const response = privateKeyAuth
+        ? await ipc.startPrivateKeySftp(
+            {
+              attemptId: connectionAttemptId,
+              host,
+              port,
+              username,
+              keyReferenceId: launchKeyReferenceId as string,
+              passphrase: credential || null,
+              expectedFingerprint: hostKey.fingerprintSha256,
+              settings: connectionSettings,
+              initialPath: ".",
+            },
+            (event) => handleSshConnectionEvent(connectionAttemptId, event),
+          )
+        : await ipc.startPasswordSftp(
+            {
+              attemptId: connectionAttemptId,
+              host,
+              port,
+              username,
+              password: credential,
+              expectedFingerprint: hostKey.fingerprintSha256,
+              settings: connectionSettings,
+              initialPath: ".",
+            },
+            (event) => handleSshConnectionEvent(connectionAttemptId, event),
+          );
       if (connectionAttemptRef.current !== attempt) {
         void ipc.closeSftpSession(response.sessionId).catch(() => undefined);
         return;
@@ -1329,6 +1380,8 @@ export function App() {
     setConnectionLaunchStep(undefined);
     setLaunchCredentialRef(null);
     setLaunchCredentialMode("ask");
+    setLaunchAuthMethod("password");
+    setLaunchKeyReferenceId(null);
     setLaunchCredentialPassword(undefined);
     setPassword("");
     setTrusted(false);
@@ -1381,7 +1434,9 @@ export function App() {
     const connectedSuccessfully = await connectTerminal(credential);
     if (connectedSuccessfully) {
       try {
-        await saveAuthenticatedCredential(credential, mode);
+        if (launchAuthMethod === "password") {
+          await saveAuthenticatedCredential(credential, mode);
+        }
       } catch (error) {
         setErrorMessage(localizedErrorText(error));
       }
@@ -2644,6 +2699,7 @@ export function App() {
         initialPassword={launchCredentialPassword}
         pending={connectionState === "connecting" || fingerprintTrustPending}
         step={activeSessionTab ? connectionLaunchStep : undefined}
+        authMethod={launchAuthMethod}
         onCancel={cancelConnectionFlow}
         onConfirmFingerprint={confirmConnectionFingerprint}
         initialCredentialMode={launchCredentialMode}
@@ -3237,6 +3293,12 @@ function commandErrorText(
       return t("errors.credentialStoreFailed");
     case "invalid_credential":
       return t("errors.invalidCredential");
+    case "private_key_error":
+      return t("errors.privateKeyError");
+    case "authentication_rejected":
+      return t("errors.authenticationRejected");
+    case "legacy_rsa_signature_only":
+      return t("errors.legacyRsaSignatureOnly");
     case "keep_alive_failed":
       return t("errors.keepAliveFailed");
     default:

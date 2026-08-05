@@ -14,6 +14,8 @@ import {
   type SshConnectionStage,
   type StartSftpRequest,
   type StartSftpResponse,
+  type StartPrivateKeySftpRequest,
+  type StartPrivateKeyShellRequest,
   type StartShellRequest,
   type StartShellResponse,
   type TerminalEvent,
@@ -173,6 +175,16 @@ export const ipc = {
         onState: createChannel(onState),
       }),
     ),
+  startPrivateKeySftp: (
+    request: StartPrivateKeySftpRequest,
+    onState: (event: SshConnectionEvent) => void,
+  ) =>
+    call(() =>
+      invoke<StartSftpResponse>("start_private_key_sftp", {
+        request,
+        onState: createChannel(onState),
+      }),
+    ),
   listSftpDirectory: (sessionId: string, path: string) =>
     unwrap(() => commands.listSftpDirectory(sessionId, path)),
   uploadSftpFile: (
@@ -207,6 +219,18 @@ export const ipc = {
   ) =>
     call(() =>
       invoke<StartShellResponse>("start_password_shell", {
+        request,
+        onState: createChannel(channels.onState),
+        onEvent: createChannel(channels.onEvent),
+        onOutput: createChannel(channels.onOutput),
+      }),
+    ),
+  startPrivateKeyShell: (
+    request: StartPrivateKeyShellRequest,
+    channels: TerminalChannels,
+  ) =>
+    call(() =>
+      invoke<StartShellResponse>("start_private_key_shell", {
         request,
         onState: createChannel(channels.onState),
         onEvent: createChannel(channels.onEvent),

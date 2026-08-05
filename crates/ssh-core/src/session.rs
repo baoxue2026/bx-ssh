@@ -228,14 +228,90 @@ pub async fn authenticate_private_key(
     private_key_path: impl AsRef<Path>,
     passphrase: Option<&str>,
 ) -> Result<ClientSession, SshError> {
-    validate_username(username)?;
-    let fingerprint = HostFingerprint::parse(expected_fingerprint)?;
-    let private_key = keys::load_secret_key(private_key_path, passphrase)?;
-    let cancellation = ConnectionCancellation::default();
-    let (mut handle, host_key, negotiated_algorithms) =
-        connect(endpoint, Some(fingerprint), &cancellation, &mut |_| {}).await?;
+    authenticate_private_key_with_progress(
+        endpoint,
+        username,
+        expected_fingerprint,
+        private_key_path,
+        passphrase,
+        &ConnectionCancellation::default(),
+        |_| {},
+    )
+    .await
+}
 
-    let result = time::timeout(endpoint.operation_timeout(), async {
+pub async fn authenticate_private_key_with_progress<F>(
+    endpoint: &SshEndpoint,
+    username: &str,
+    expected_fingerprint: &str,
+    private_key_path: impl AsRef<Path>,
+    passphrase: Option<&str>,
+    cancellation: &ConnectionCancellation,
+    mut on_stage: F,
+) -> Result<ClientSession, SshError>
+where
+    F: FnMut(SshConnectionStage),
+{
+    validate_username(username)?;
+    let private_key = keys::load_secret_key(private_key_path, passphrase)?;
+    authenticate_loaded_private_key(
+        endpoint,
+        username,
+        expected_fingerprint,
+        private_key,
+        cancellation,
+        &mut on_stage,
+    )
+    .await
+}
+
+/// Authenticate using private-key contents already loaded by the Rust desktop
+/// layer. The contents never need to cross the WebView boundary.
+pub async fn authenticate_private_key_contents_with_progress<F>(
+    endpoint: &SshEndpoint,
+    username: &str,
+    expected_fingerprint: &str,
+    private_key_contents: &str,
+    passphrase: Option<&str>,
+    cancellation: &ConnectionCancellation,
+    mut on_stage: F,
+) -> Result<ClientSession, SshError>
+where
+    F: FnMut(SshConnectionStage),
+{
+    validate_username(username)?;
+    let private_key = keys::decode_secret_key(private_key_contents, passphrase)?;
+    authenticate_loaded_private_key(
+        endpoint,
+        username,
+        expected_fingerprint,
+        private_key,
+        cancellation,
+        &mut on_stage,
+    )
+    .await
+}
+
+async fn authenticate_loaded_private_key(
+    endpoint: &SshEndpoint,
+    username: &str,
+    expected_fingerprint: &str,
+    private_key: keys::PrivateKey,
+    cancellation: &ConnectionCancellation,
+    on_stage: &mut impl FnMut(SshConnectionStage),
+) -> Result<ClientSession, SshError> {
+    let fingerprint = HostFingerprint::parse(expected_fingerprint)?;
+    let (mut handle, host_key, negotiated_algorithms) =
+        connect(endpoint, Some(fingerprint), cancellation, on_stage).await?;
+
+    on_stage(SshConnectionStage::Authenticating);
+    let authentication = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => {
+            let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
+            return Err(SshError::ConnectionCancelled);
+        }
+        result = time::timeout(endpoint.operation_timeout(), async {
         let hash_algorithm = if private_key.algorithm().is_rsa() {
             match handle.best_supported_rsa_hash().await? {
                 Some(Some(hash_algorithm)) => Some(hash_algorithm),
@@ -253,9 +329,23 @@ pub async fn authenticate_private_key(
             )
             .await
             .map_err(SshError::from)
-    })
-    .await
-    .map_err(|_| SshError::AuthenticationTimeout)??;
+        }) => result,
+    };
+    let result = match authentication {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => {
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            return Err(error);
+        }
+        Err(_) => {
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            return Err(SshError::AuthenticationTimeout);
+        }
+    };
 
     if !result.success() {
         let _ = handle
