@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -58,7 +59,10 @@ async fn validates_host_key_authentication_and_interactive_shell() {
     assert!(product_algorithm_policy().allows(password_session.negotiated_algorithms()));
 
     let mut shell = password_session
-        .open_shell(TerminalSize::new(80, 24).unwrap())
+        .open_shell_with_environment(
+            TerminalSize::new(80, 24).unwrap(),
+            &BTreeMap::from([(String::from("BX_SSH_TEST_ENV"), String::from("enabled"))]),
+        )
         .await
         .unwrap();
     shell

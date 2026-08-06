@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
@@ -117,12 +118,21 @@ impl ClientSession {
     }
 
     pub async fn open_shell(&self, size: TerminalSize) -> Result<SshShell, SshError> {
+        self.open_shell_with_environment(size, &BTreeMap::new())
+            .await
+    }
+
+    pub async fn open_shell_with_environment(
+        &self,
+        size: TerminalSize,
+        environment: &BTreeMap<String, String>,
+    ) -> Result<SshShell, SshError> {
         let channel = self
             .handle
             .channel_open_session()
             .await
             .map_err(SshError::ChannelOpenFailed)?;
-        SshShell::open(channel, size).await
+        SshShell::open_with_environment(channel, size, environment).await
     }
 
     pub async fn open_sftp(&self) -> Result<SftpClient, SshError> {
