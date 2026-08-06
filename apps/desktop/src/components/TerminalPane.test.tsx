@@ -1,0 +1,252 @@
+import { createRef } from "react";
+import { act, cleanup, render } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  TerminalPane,
+  type TerminalHandle,
+} from "./TerminalPane";
+
+interface MockTerminalInstance {
+  cols: number;
+  rows: number;
+  dispose: ReturnType<typeof vi.fn>;
+  focus: ReturnType<typeof vi.fn>;
+  onData: ReturnType<typeof vi.fn>;
+  open: ReturnType<typeof vi.fn>;
+  reset: ReturnType<typeof vi.fn>;
+  write: ReturnType<typeof vi.fn>;
+  emitData(data: string): void;
+}
+
+interface MockFitAddonInstance {
+  fit: ReturnType<typeof vi.fn>;
+}
+
+const xtermMocks = vi.hoisted(() => ({
+  dataDisposables: [] as Array<{ dispose: ReturnType<typeof vi.fn> }>,
+  fitAddons: [] as MockFitAddonInstance[],
+  terminals: [] as MockTerminalInstance[],
+}));
+
+vi.mock("@xterm/xterm", () => ({
+  Terminal: class MockTerminal implements MockTerminalInstance {
+    cols = 120;
+    rows = 40;
+    dispose = vi.fn();
+    focus = vi.fn();
+    open = vi.fn();
+    reset = vi.fn();
+    write = vi.fn(
+      (_data: Uint8Array, onProcessed?: () => void) => onProcessed?.(),
+    );
+    private dataHandler: ((data: string) => void) | null = null;
+    onData = vi.fn((handler: (data: string) => void) => {
+      this.dataHandler = handler;
+      const disposable = { dispose: vi.fn() };
+      xtermMocks.dataDisposables.push(disposable);
+      return disposable;
+    });
+
+    constructor() {
+      xtermMocks.terminals.push(this);
+    }
+
+    loadAddon() {}
+
+    emitData(data: string) {
+      this.dataHandler?.(data);
+    }
+  },
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class MockFitAddon implements MockFitAddonInstance {
+    fit = vi.fn();
+
+    constructor() {
+      xtermMocks.fitAddons.push(this);
+    }
+  },
+}));
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+
+class MockResizeObserver implements ResizeObserver {
+  static instances: MockResizeObserver[] = [];
+  disconnect = vi.fn();
+  observe = vi.fn();
+  unobserve = vi.fn();
+
+  constructor(private readonly callback: ResizeObserverCallback) {
+    MockResizeObserver.instances.push(this);
+  }
+
+  emit() {
+    this.callback([], this);
+  }
+}
+
+describe("TerminalPane", () => {
+  let animationFrames: Map<number, FrameRequestCallback>;
+  let nextAnimationFrame: number;
+  let originalRequestAnimationFrame: typeof window.requestAnimationFrame;
+  let originalCancelAnimationFrame: typeof window.cancelAnimationFrame;
+  let originalResizeObserver: typeof ResizeObserver | undefined;
+
+  beforeEach(() => {
+    xtermMocks.dataDisposables.length = 0;
+    xtermMocks.fitAddons.length = 0;
+    xtermMocks.terminals.length = 0;
+    MockResizeObserver.instances.length = 0;
+    animationFrames = new Map();
+    nextAnimationFrame = 1;
+    originalRequestAnimationFrame = window.requestAnimationFrame;
+    originalCancelAnimationFrame = window.cancelAnimationFrame;
+    originalResizeObserver = globalThis.ResizeObserver;
+    window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      const id = nextAnimationFrame++;
+      animationFrames.set(id, callback);
+      return id;
+    });
+    window.cancelAnimationFrame = vi.fn((id: number) => {
+      animationFrames.delete(id);
+    });
+    globalThis.ResizeObserver = MockResizeObserver;
+  });
+
+  afterEach(() => {
+    cleanup();
+    window.requestAnimationFrame = originalRequestAnimationFrame;
+    window.cancelAnimationFrame = originalCancelAnimationFrame;
+    if (originalResizeObserver) {
+      globalThis.ResizeObserver = originalResizeObserver;
+    } else {
+      Reflect.deleteProperty(globalThis, "ResizeObserver");
+    }
+  });
+
+  it("coalesces resize work and reports the final viewport", () => {
+    const onResize = vi.fn();
+    const { container } = render(
+      <TerminalPane
+        connected
+        sessionKey="session-1"
+        onData={vi.fn()}
+        onResize={onResize}
+      />,
+    );
+    const terminalContainer = container.firstElementChild as HTMLDivElement;
+    Object.defineProperties(terminalContainer, {
+      clientWidth: { configurable: true, value: 960 },
+      clientHeight: { configurable: true, value: 600 },
+    });
+
+    const observer = MockResizeObserver.instances[0];
+    observer.emit();
+    observer.emit();
+    expect(animationFrames).toHaveLength(1);
+
+    act(() => flushAnimationFrames(animationFrames));
+
+    expect(xtermMocks.fitAddons[0].fit).toHaveBeenCalledTimes(1);
+    expect(onResize).toHaveBeenCalledWith({
+      columns: 120,
+      rows: 40,
+      pixelWidth: 960,
+      pixelHeight: 600,
+    });
+    expect(terminalContainer).toHaveAttribute("data-session-key", "session-1");
+  });
+
+  it("uses current connection state and current callbacks", () => {
+    const firstOnData = vi.fn();
+    const latestOnData = vi.fn();
+    const latestOnResize = vi.fn();
+    const { rerender } = render(
+      <TerminalPane
+        connected={false}
+        onData={firstOnData}
+        onResize={vi.fn()}
+      />,
+    );
+    const terminal = xtermMocks.terminals[0];
+
+    terminal.emitData("blocked");
+    rerender(
+      <TerminalPane
+        connected
+        onData={latestOnData}
+        onResize={latestOnResize}
+      />,
+    );
+    terminal.emitData("accepted");
+    MockResizeObserver.instances[0].emit();
+    act(() => flushAnimationFrames(animationFrames));
+
+    expect(firstOnData).not.toHaveBeenCalled();
+    expect(latestOnData).toHaveBeenCalledWith("accepted");
+    expect(latestOnResize).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes terminal controls and releases every resource on unmount", () => {
+    const ref = createRef<TerminalHandle>();
+    const processed = vi.fn();
+    const { unmount } = render(
+      <TerminalPane
+        ref={ref}
+        connected
+        onData={vi.fn()}
+        onResize={vi.fn()}
+      />,
+    );
+    const terminal = xtermMocks.terminals[0];
+    const observer = MockResizeObserver.instances[0];
+
+    ref.current?.focus();
+    ref.current?.reset();
+    ref.current?.write(new Uint8Array([65]), processed);
+    expect(ref.current?.fit()).toMatchObject({ columns: 120, rows: 40 });
+
+    expect(terminal.focus).toHaveBeenCalledTimes(1);
+    expect(terminal.reset).toHaveBeenCalledTimes(1);
+    expect(terminal.write).toHaveBeenCalledTimes(1);
+    expect(processed).toHaveBeenCalledTimes(1);
+
+    unmount();
+
+    expect(observer.disconnect).toHaveBeenCalledTimes(1);
+    expect(xtermMocks.dataDisposables[0].dispose).toHaveBeenCalledTimes(1);
+    expect(terminal.dispose).toHaveBeenCalledTimes(1);
+    expect(animationFrames).toHaveLength(0);
+  });
+
+  it("refits after the application returns to the foreground", () => {
+    const onResize = vi.fn();
+    render(
+      <TerminalPane connected onData={vi.fn()} onResize={onResize} />,
+    );
+    act(() => flushAnimationFrames(animationFrames));
+    onResize.mockClear();
+    xtermMocks.fitAddons[0].fit.mockClear();
+
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: false,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(animationFrames).toHaveLength(1);
+    act(() => flushAnimationFrames(animationFrames));
+
+    expect(xtermMocks.fitAddons[0].fit).toHaveBeenCalledTimes(1);
+    expect(onResize).toHaveBeenCalledTimes(1);
+  });
+});
+
+function flushAnimationFrames(frames: Map<number, FrameRequestCallback>) {
+  const callbacks = [...frames.values()];
+  frames.clear();
+  callbacks.forEach((callback) => callback(0));
+}

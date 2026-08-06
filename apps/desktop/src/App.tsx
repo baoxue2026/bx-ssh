@@ -2688,8 +2688,10 @@ export function App() {
                 </div>
                 <div className="terminal-stage">
                   <TerminalPane
+                    key={activeSessionTab?.clientId ?? "terminal-empty"}
                     ref={terminalRef}
                     connected={connected}
+                    sessionKey={activeSessionTab?.clientId}
                     onData={writeTerminal}
                     onResize={resizeTerminal}
                   />

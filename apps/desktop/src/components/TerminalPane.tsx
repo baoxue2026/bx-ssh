@@ -14,6 +14,7 @@ export interface TerminalViewport {
 
 export interface TerminalHandle {
   focus(): void;
+  fit(): TerminalViewport;
   reset(): void;
   viewport(): TerminalViewport;
   write(data: Uint8Array, onProcessed?: () => void): void;
@@ -21,12 +22,13 @@ export interface TerminalHandle {
 
 interface TerminalPaneProps {
   connected: boolean;
+  sessionKey?: string;
   onData(data: string): void;
   onResize(viewport: TerminalViewport): void;
 }
 
 export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
-  function TerminalPane({ connected, onData, onResize }, ref) {
+  function TerminalPane({ connected, sessionKey, onData, onResize }, ref) {
     const { t } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
@@ -34,6 +36,8 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
     const connectedRef = useRef(connected);
     const onDataRef = useRef(onData);
     const onResizeRef = useRef(onResize);
+    const resizeFrameRef = useRef<number | null>(null);
+    const disposedRef = useRef(false);
 
     useEffect(() => {
       connectedRef.current = connected;
@@ -49,6 +53,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
       if (!container) {
         return;
       }
+      disposedRef.current = false;
 
       const terminal = new Terminal({
         allowProposedApi: false,
@@ -82,11 +87,20 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
       fitAddonRef.current = fitAddon;
 
       const emitResize = () => {
+        if (disposedRef.current) return;
         fitAddon.fit();
         onResizeRef.current(viewportFor(terminal, container));
       };
 
-      const frame = window.requestAnimationFrame(emitResize);
+      const scheduleResize = () => {
+        if (resizeFrameRef.current !== null) return;
+        resizeFrameRef.current = window.requestAnimationFrame(() => {
+          resizeFrameRef.current = null;
+          emitResize();
+        });
+      };
+
+      scheduleResize();
       const dataDisposable = terminal.onData((data) => {
         if (connectedRef.current) {
           onDataRef.current(data);
@@ -95,12 +109,22 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
       const resizeObserver =
         typeof ResizeObserver === "undefined"
           ? null
-          : new ResizeObserver(() => emitResize());
+          : new ResizeObserver(scheduleResize);
       resizeObserver?.observe(container);
 
+      const handleVisibilityChange = () => {
+        if (!document.hidden) scheduleResize();
+      };
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+
       return () => {
-        window.cancelAnimationFrame(frame);
+        disposedRef.current = true;
+        if (resizeFrameRef.current !== null) {
+          window.cancelAnimationFrame(resizeFrameRef.current);
+          resizeFrameRef.current = null;
+        }
         resizeObserver?.disconnect();
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
         dataDisposable.dispose();
         terminal.dispose();
         terminalRef.current = null;
@@ -113,6 +137,16 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
       () => ({
         focus() {
           terminalRef.current?.focus();
+        },
+        fit() {
+          const terminal = terminalRef.current;
+          const container = containerRef.current;
+          const fitAddon = fitAddonRef.current;
+          if (terminal && container && fitAddon) {
+            fitAddon.fit();
+            return viewportFor(terminal, container);
+          }
+          return { columns: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 };
         },
         reset() {
           terminalRef.current?.reset();
@@ -140,6 +174,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
       <div
         ref={containerRef}
         className="terminal-container"
+        data-session-key={sessionKey}
         role="application"
         aria-label={t("terminal.aria")}
       />
