@@ -1,7 +1,20 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Dropdown, Tooltip, type MenuProps } from "antd";
-import { Check, Copy, Minus, Square, SquareTerminal, X } from "lucide-react";
+import { Button, Dropdown, Input, Tooltip, type MenuProps } from "antd";
+import {
+  Check,
+  Copy,
+  Minus,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  Search,
+  Settings,
+  Square,
+  SquareTerminal,
+  Sun,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useUiPreferences } from "../ui/preferenceContext";
 import { UpdateControl } from "./UpdateControl";
@@ -12,7 +25,14 @@ interface WindowTitleBarProps {
   appName: string;
   connectionLabel: string;
   connectionState: string;
+  connectionSearch: string;
+  onConnectionSearchChange(value: string): void;
   onCheckForUpdates(): void;
+  onNewConnection(): void;
+  onToggleSettings(): void;
+  onToggleSidebar(): void;
+  sidebarCollapsed: boolean;
+  settingsOpen: boolean;
   onWorkspaceModeChange(mode: WorkspaceMode): void;
   updateRequestId: number;
   version: string;
@@ -24,7 +44,14 @@ export function WindowTitleBar({
   appName,
   connectionLabel,
   connectionState,
+  connectionSearch,
+  onConnectionSearchChange,
   onCheckForUpdates,
+  onNewConnection,
+  onToggleSettings,
+  onToggleSidebar,
+  sidebarCollapsed,
+  settingsOpen,
   onWorkspaceModeChange,
   updateRequestId,
   version,
@@ -177,11 +204,37 @@ export function WindowTitleBar({
       <div className="titlebar-identity" data-tauri-drag-region>
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            <SquareTerminal size={17} strokeWidth={2.1} />
+            <SquareTerminal size={13} strokeWidth={2.5} />
           </span>
           <span>{appName}</span>
         </div>
       </div>
+      <Tooltip
+        title={t(sidebarCollapsedLabel(sidebarCollapsed))}
+        mouseEnterDelay={0.5}
+      >
+        <button
+          className="titlebar-sidebar-toggle"
+          type="button"
+          aria-label={t(sidebarCollapsedLabel(sidebarCollapsed))}
+          onClick={onToggleSidebar}
+        >
+          {sidebarCollapsed ? (
+            <PanelLeftClose size={14} />
+          ) : (
+            <PanelLeftOpen size={14} />
+          )}
+        </button>
+      </Tooltip>
+      <Input
+        allowClear
+        aria-label={t("connectionSearch.label")}
+        className="titlebar-search"
+        placeholder={t("connectionSearch.placeholder")}
+        prefix={<Search size={14} aria-hidden="true" />}
+        value={connectionSearch}
+        onChange={(event) => onConnectionSearchChange(event.target.value)}
+      />
       <nav className="app-menu-bar" aria-label={t("menu.application")}>
         <AppMenu label={t("menu.file")} menu={fileMenu} />
         <AppMenu label={t("menu.workspace")} menu={workspaceMenu} />
@@ -197,7 +250,38 @@ export function WindowTitleBar({
       </div>
 
       <div className="titlebar-actions">
+        <Dropdown
+          menu={appearanceMenu}
+          trigger={["click"]}
+          placement="bottomRight"
+        >
+          <Button
+            aria-label={t("appearance.theme")}
+            className="titlebar-tool"
+            icon={<Sun size={15} />}
+            type="text"
+          />
+        </Dropdown>
         <UpdateControl currentVersion={version} requestId={updateRequestId} />
+        <Tooltip title={t("settings.title")} mouseEnterDelay={0.5}>
+          <Button
+            aria-label={t("settings.title")}
+            aria-pressed={settingsOpen}
+            className={`titlebar-tool${settingsOpen ? " is-active" : ""}`}
+            icon={<Settings size={15} />}
+            type="text"
+            onClick={onToggleSettings}
+          />
+        </Tooltip>
+        <Button
+          aria-label={t("connectionEditor.actions.newConnection") + "（顶部）"}
+          className="titlebar-new-connection"
+          icon={<Plus size={13} />}
+          onClick={onNewConnection}
+          type="primary"
+        >
+          {t("connectionEditor.actions.newConnection")}
+        </Button>
         <div className="window-controls" aria-label={t("window.controls")}>
           <Tooltip title={t("window.minimize")} mouseEnterDelay={0.5}>
             <button
@@ -240,6 +324,10 @@ export function WindowTitleBar({
       </div>
     </header>
   );
+}
+
+function sidebarCollapsedLabel(collapsed: boolean) {
+  return collapsed ? "connectionSidebar.expand" : "connectionSidebar.collapse";
 }
 
 function AppMenu({ label, menu }: { label: string; menu: MenuProps }) {

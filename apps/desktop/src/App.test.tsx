@@ -152,6 +152,37 @@ describe("App", { timeout: 15_000 }, () => {
     );
   });
 
+  it("opens and closes the prototype-aligned settings workspace", async () => {
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+
+    const settings = screen.getByRole("region", { name: "设置" });
+    expect(
+      within(settings).getByRole("navigation", { name: "设置分类" }),
+    ).toBeVisible();
+    expect(
+      within(settings).getByRole("heading", { name: "常规" }),
+    ).toBeVisible();
+
+    fireEvent.click(within(settings).getByRole("button", { name: "安全" }));
+    expect(
+      within(settings).getByRole("heading", { name: "安全" }),
+    ).toBeVisible();
+    expect(within(settings).getByText("已连接系统凭据库")).toBeVisible();
+
+    fireEvent.click(within(settings).getByRole("button", { name: "外观" }));
+    fireEvent.click(within(settings).getByRole("radio", { name: "浅色" }));
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+
+    fireEvent.click(within(settings).getByRole("button", { name: "关闭设置" }));
+    expect(
+      screen.queryByRole("region", { name: "设置" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
+    expect(screen.getByRole("region", { name: "设置" })).toBeInTheDocument();
+  });
+
   it("shows the first-start state separately from an empty connection list", async () => {
     renderApp();
 
@@ -562,7 +593,7 @@ describe("App", { timeout: 15_000 }, () => {
       name: "调整连接侧栏宽度",
     });
     expect(workspace).toHaveStyle({
-      gridTemplateColumns: "240px minmax(0, 1fr)",
+      gridTemplateColumns: "228px minmax(0, 1fr)",
     });
 
     fireEvent.keyDown(separator, { key: "End" });
@@ -573,19 +604,19 @@ describe("App", { timeout: 15_000 }, () => {
 
     fireEvent.doubleClick(separator);
     expect(workspace).toHaveStyle({
-      gridTemplateColumns: "240px minmax(0, 1fr)",
+      gridTemplateColumns: "228px minmax(0, 1fr)",
     });
 
     fireEvent.click(screen.getByRole("button", { name: "折叠连接侧栏" }));
     expect(workspace).toHaveStyle({
-      gridTemplateColumns: "32px minmax(0, 1fr)",
+      gridTemplateColumns: "0px minmax(0, 1fr)",
     });
     expect(
       screen.queryByRole("separator", { name: "调整连接侧栏宽度" }),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "展开连接侧栏" }));
     expect(workspace).toHaveStyle({
-      gridTemplateColumns: "240px minmax(0, 1fr)",
+      gridTemplateColumns: "228px minmax(0, 1fr)",
     });
   });
 

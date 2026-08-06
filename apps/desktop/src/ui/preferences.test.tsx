@@ -31,13 +31,13 @@ describe("UI preferences", () => {
   afterEach(() => cleanup());
 
   it("falls back safely when stored preferences are missing or invalid", () => {
-    expect(readThemeMode()).toBe("system");
+    expect(readThemeMode()).toBe("dark");
     expect(readLanguage()).toBe("zh-CN");
 
     localStorage.setItem(THEME_STORAGE_KEY, "sepia");
     localStorage.setItem(LANGUAGE_STORAGE_KEY, "fr-FR");
 
-    expect(readThemeMode()).toBe("system");
+    expect(readThemeMode()).toBe("dark");
     expect(readLanguage()).toBe("zh-CN");
   });
 
@@ -62,6 +62,7 @@ describe("UI preferences", () => {
 
   it("tracks operating-system theme changes in system mode", async () => {
     const media = installMatchMedia(false);
+    localStorage.setItem(THEME_STORAGE_KEY, "system");
     renderPreferences();
 
     expect(document.documentElement).toHaveAttribute("data-theme", "light");

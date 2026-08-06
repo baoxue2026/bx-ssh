@@ -14,7 +14,7 @@ export function readThemeMode(): ThemeMode {
   const value = readPreference(THEME_STORAGE_KEY);
   return value === "light" || value === "dark" || value === "system"
     ? value
-    : "system";
+    : "dark";
 }
 
 export function resolveTheme(

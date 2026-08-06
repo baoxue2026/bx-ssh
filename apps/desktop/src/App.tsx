@@ -13,7 +13,6 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import type { TFunction } from "i18next";
 import { Button, Checkbox, Input, InputNumber, Segmented, Tooltip } from "antd";
 import {
-  Circle,
   CircleX,
   ChevronDown,
   ChevronRight,
@@ -26,18 +25,19 @@ import {
   History,
   MoveDown,
   MoveUp,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   PlugZap,
   RefreshCw,
   Search,
   ScanSearch,
   Server,
+  Settings,
   SquareTerminal,
   Star,
   Trash2,
   Unplug,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -54,6 +54,7 @@ import {
 import { ConnectionWorkspaceEmptyState } from "./components/ConnectionWorkspaceEmptyState";
 import { OpenSshImportDialog } from "./components/OpenSshImportDialog";
 import { SessionTabBar, type SessionTab } from "./components/SessionTabBar";
+import { SettingsView } from "./components/SettingsView";
 import {
   TerminalPane,
   type TerminalHandle,
@@ -136,7 +137,7 @@ const EXIT_REQUESTED_EVENT = "app-exit-requested";
 const APP_MENU_ACTION_EVENT = "app-menu-action";
 const SIDEBAR_WIDTH_MIN = 200;
 const SIDEBAR_WIDTH_MAX = 420;
-const SIDEBAR_WIDTH_DEFAULT = 240;
+const SIDEBAR_WIDTH_DEFAULT = 228;
 const SIDEBAR_WIDTH_STORAGE_KEY = "bx-ssh.sidebar-width";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "bx-ssh.sidebar-collapsed";
 
@@ -166,6 +167,7 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] =
     useState(readSidebarCollapsed);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [sftpSessionId, setSftpSessionId] = useState<string | null>(null);
   const [sftpDirectory, setSftpDirectory] =
@@ -1753,34 +1755,31 @@ export function App() {
         appName={appInfo.name}
         connectionLabel={connectionLabel(connectionState, connectionStage, t)}
         connectionState={connectionState}
+        connectionSearch={connectionSearch}
+        onConnectionSearchChange={setConnectionSearch}
         onCheckForUpdates={() => setUpdateRequestId((current) => current + 1)}
+        onNewConnection={openNewConnectionEditor}
+        onToggleSettings={() => setSettingsOpen((current) => !current)}
+        onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
         onWorkspaceModeChange={selectWorkspaceMode}
         updateRequestId={updateRequestId}
         version={appInfo.version}
         workspaceMode={workspaceMode}
         workspaceModeLocked={connected || busy}
+        sidebarCollapsed={sidebarCollapsed}
+        settingsOpen={settingsOpen}
       />
 
       <div
         className={`workspace${sidebarResizing ? " is-resizing-sidebar" : ""}`}
         style={{
-          gridTemplateColumns: `${sidebarCollapsed ? 32 : sidebarWidth}px minmax(0, 1fr)`,
+          gridTemplateColumns: `${sidebarCollapsed ? 0 : sidebarWidth}px minmax(0, 1fr)`,
         }}
       >
         <aside
           className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}
           aria-label={t("connection.sidebar")}
         >
-          <Tooltip title={t("connectionSidebar.expand")} placement="right">
-            <Button
-              className="sidebar-restore"
-              aria-label={t("connectionSidebar.expand")}
-              icon={<PanelLeftOpen size={15} />}
-              size="small"
-              type="text"
-              onClick={() => setSidebarCollapsed(false)}
-            />
-          </Tooltip>
           <div className="sidebar-heading">
             <h1>{t("connection.title")}</h1>
             <div className="sidebar-heading-actions">
@@ -1789,15 +1788,6 @@ export function App() {
                   ? t("terminal.protocol")
                   : t("sftp.protocol")}
               </span>
-              <Tooltip title={t("connectionSidebar.collapse")}>
-                <Button
-                  aria-label={t("connectionSidebar.collapse")}
-                  icon={<PanelLeftClose size={14} />}
-                  size="small"
-                  type="text"
-                  onClick={() => setSidebarCollapsed(true)}
-                />
-              </Tooltip>
             </div>
           </div>
 
@@ -1837,16 +1827,6 @@ export function App() {
               type="success"
             />
           )}
-
-          <Input
-            allowClear
-            aria-label={t("connectionSearch.label")}
-            className="connection-search"
-            placeholder={t("connectionSearch.placeholder")}
-            prefix={<Search size={14} aria-hidden="true" />}
-            value={connectionSearch}
-            onChange={(event) => setConnectionSearch(event.target.value)}
-          />
 
           {!connectionSearch.trim() && (
             <div role="group" aria-label={t("connectionListView.label")}>
@@ -2661,31 +2641,56 @@ export function App() {
             )}
           </div>
         </main>
+
+        {settingsOpen && (
+          <SettingsView
+            appName={appInfo.name}
+            groups={connectionCatalog.groups}
+            left={sidebarCollapsed ? 0 : sidebarWidth}
+            version={appInfo.version}
+            onCheckForUpdates={() =>
+              setUpdateRequestId((current) => current + 1)
+            }
+            onClose={() => setSettingsOpen(false)}
+          />
+        )}
       </div>
 
-      <footer className="statusbar">
+      <footer className={`statusbar${connected ? " is-connected" : ""}`}>
         <span className="status-item">
-          <Circle
-            className={`status-dot state-${connectionState}`}
-            size={7}
-            fill="currentColor"
-          />
-          {connectionLabel(connectionState, connectionStage, t)}
+          {connected ? <Wifi size={10} /> : <WifiOff size={10} />}
+          {!connected && settingsOpen
+            ? t("settings.title")
+            : connectionLabel(connectionState, connectionStage, t)}
         </span>
         <span className="status-spacer" />
-        <Tooltip
-          title={
-            workspaceMode === "terminal"
-              ? t("terminal.type")
-              : t("sftp.protocolVersion")
-          }
-        >
-          <span>
-            {workspaceMode === "terminal" ? "xterm-256color" : "SFTP v3"}
-          </span>
+        {connected && (
+          <>
+            <Tooltip
+              title={
+                workspaceMode === "terminal"
+                  ? t("terminal.type")
+                  : t("sftp.protocolVersion")
+              }
+            >
+              <span>
+                {workspaceMode === "terminal" ? "xterm-256color" : "SFTP v3"}
+              </span>
+            </Tooltip>
+            <span className="status-divider" />
+            <span>UTF-8</span>
+          </>
+        )}
+        <Tooltip title={t("settings.title")}>
+          <button
+            aria-label={t("settings.open")}
+            className="statusbar-settings"
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings size={10} />
+          </button>
         </Tooltip>
-        <span className="status-divider" />
-        <span>UTF-8</span>
       </footer>
 
       <ConnectionLaunchDialog

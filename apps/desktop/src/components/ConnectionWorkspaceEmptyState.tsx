@@ -1,5 +1,5 @@
 import { Button } from "antd";
-import { FileInput, History, Plus, Server } from "lucide-react";
+import { FileInput, Plus, Server, SquareTerminal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ConnectionListItem } from "../ipc/bindings";
 
@@ -31,7 +31,7 @@ export function ConnectionWorkspaceEmptyState({
         aria-label={t("connectionWorkspace.firstStartTitle")}
       >
         <span className="connection-workspace-empty-icon" aria-hidden="true">
-          <Server size={38} strokeWidth={1.35} />
+          <SquareTerminal size={27} strokeWidth={1.45} />
         </span>
         <h2>{t("connectionWorkspace.firstStartTitle")}</h2>
         <p>{t("connectionWorkspace.firstStartDescription")}</p>
@@ -61,7 +61,7 @@ export function ConnectionWorkspaceEmptyState({
       aria-label={t("connectionWorkspace.noSessionTitle")}
     >
       <span className="connection-workspace-empty-icon" aria-hidden="true">
-        <History size={38} strokeWidth={1.35} />
+        <SquareTerminal size={27} strokeWidth={1.45} />
       </span>
       <h2>{t("connectionWorkspace.noSessionTitle")}</h2>
       <p>{t("connectionWorkspace.noSessionDescription")}</p>
@@ -76,12 +76,12 @@ export function ConnectionWorkspaceEmptyState({
               className="connection-workspace-recent-item"
               key={item.config.id}
             >
-              <span
+              <Server
                 className="connection-workspace-recent-color"
+                size={15}
+                strokeWidth={1.6}
                 style={
-                  item.config.color
-                    ? { backgroundColor: item.config.color }
-                    : undefined
+                  item.config.color ? { color: item.config.color } : undefined
                 }
                 aria-hidden="true"
               />
