@@ -864,7 +864,8 @@ impl TerminalSessionManager {
         for sender in senders {
             let (complete, completed) = oneshot::channel();
             if sender
-                .try_send(SessionCommand::Close(Some(complete)))
+                .send(SessionCommand::Close(Some(complete)))
+                .await
                 .is_ok()
             {
                 completions.push(completed);
@@ -1254,6 +1255,52 @@ mod tests {
         worker.await.unwrap();
 
         assert!(manager.sessions.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn closes_sessions_even_when_the_command_queue_is_full() {
+        let manager = TerminalSessionManager::default();
+        let (sender, mut commands) = mpsc::channel(1);
+        sender
+            .send(SessionCommand::Write(b"pending".to_vec()))
+            .await
+            .unwrap();
+        manager
+            .sessions
+            .lock()
+            .await
+            .insert("active".to_owned(), sender);
+        let worker = tokio::spawn(async move {
+            assert!(matches!(
+                commands.recv().await,
+                Some(SessionCommand::Write(_))
+            ));
+            let Some(SessionCommand::Close(Some(complete))) = commands.recv().await else {
+                panic!("close command did not reach a full queue");
+            };
+            complete.send(()).unwrap();
+        });
+
+        manager.close_all().await;
+        worker.await.unwrap();
+        assert!(manager.sessions.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn clears_pending_keyboard_answers_during_shutdown() {
+        let manager = TerminalSessionManager::default();
+        let (sender, _receiver) = mpsc::channel(1);
+        manager
+            .register_keyboard_prompt("main", "attempt-1", sender)
+            .await
+            .unwrap();
+
+        manager.close_all().await;
+
+        assert!(manager
+            .respond_keyboard_prompt("main", "attempt-1", vec!["secret".to_owned()])
+            .await
+            .is_err());
     }
 
     #[tokio::test]
