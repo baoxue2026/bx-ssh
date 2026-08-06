@@ -142,6 +142,9 @@ describe("TerminalPane", () => {
       clientWidth: { configurable: true, value: 960 },
       clientHeight: { configurable: true, value: 600 },
     });
+    act(() => flushAnimationFrames(animationFrames));
+    onResize.mockClear();
+    xtermMocks.fitAddons[0].fit.mockClear();
 
     const observer = MockResizeObserver.instances[0];
     observer.emit();
@@ -181,13 +184,57 @@ describe("TerminalPane", () => {
         onResize={latestOnResize}
       />,
     );
-    terminal.emitData("accepted");
+    terminal.emitData("中文输入\u001b[A");
     MockResizeObserver.instances[0].emit();
     act(() => flushAnimationFrames(animationFrames));
 
     expect(firstOnData).not.toHaveBeenCalled();
-    expect(latestOnData).toHaveBeenCalledWith("accepted");
+    expect(latestOnData).toHaveBeenCalledWith("中文输入\u001b[A");
     expect(latestOnResize).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses after connecting and cancels stale focus work", () => {
+    const { rerender } = render(
+      <TerminalPane
+        connected={false}
+        sessionKey="session-1"
+        onData={vi.fn()}
+        onResize={vi.fn()}
+      />,
+    );
+    act(() => flushAnimationFrames(animationFrames));
+    const terminal = xtermMocks.terminals[0];
+
+    rerender(
+      <TerminalPane
+        connected
+        sessionKey="session-1"
+        onData={vi.fn()}
+        onResize={vi.fn()}
+      />,
+    );
+    expect(animationFrames).toHaveLength(1);
+    rerender(
+      <TerminalPane
+        connected={false}
+        sessionKey="session-1"
+        onData={vi.fn()}
+        onResize={vi.fn()}
+      />,
+    );
+    act(() => flushAnimationFrames(animationFrames));
+    expect(terminal.focus).not.toHaveBeenCalled();
+
+    rerender(
+      <TerminalPane
+        connected
+        sessionKey="session-2"
+        onData={vi.fn()}
+        onResize={vi.fn()}
+      />,
+    );
+    act(() => flushAnimationFrames(animationFrames));
+    expect(terminal.focus).toHaveBeenCalledTimes(1);
   });
 
   it("exposes terminal controls and releases every resource on unmount", () => {

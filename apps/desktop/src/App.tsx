@@ -60,6 +60,7 @@ import {
   type TerminalHandle,
   type TerminalViewport,
 } from "./components/TerminalPane";
+import { shouldSkipApplicationShortcut } from "./components/terminalKeyboard";
 import {
   AppDialog,
   EmptyState,
@@ -498,6 +499,7 @@ export function App() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (shouldSkipApplicationShortcut(event)) return;
       if (!event.ctrlKey || event.altKey || event.metaKey) return;
 
       if (!event.shiftKey && (event.key === "1" || event.key === "2")) {

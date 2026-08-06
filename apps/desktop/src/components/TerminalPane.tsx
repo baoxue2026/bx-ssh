@@ -37,6 +37,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
     const onDataRef = useRef(onData);
     const onResizeRef = useRef(onResize);
     const resizeFrameRef = useRef<number | null>(null);
+    const focusFrameRef = useRef<number | null>(null);
     const disposedRef = useRef(false);
 
     useEffect(() => {
@@ -169,6 +170,22 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
       }),
       [],
     );
+
+    useEffect(() => {
+      if (!connected) return;
+
+      focusFrameRef.current = window.requestAnimationFrame(() => {
+        focusFrameRef.current = null;
+        if (!disposedRef.current) terminalRef.current?.focus();
+      });
+
+      return () => {
+        if (focusFrameRef.current !== null) {
+          window.cancelAnimationFrame(focusFrameRef.current);
+          focusFrameRef.current = null;
+        }
+      };
+    }, [connected, sessionKey]);
 
     return (
       <div
