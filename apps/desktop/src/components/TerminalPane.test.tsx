@@ -5,6 +5,7 @@ import { TerminalPane, type TerminalHandle } from "./TerminalPane";
 
 interface MockTerminalInstance {
   attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
+  clear: ReturnType<typeof vi.fn>;
   cols: number;
   rows: number;
   dispose: ReturnType<typeof vi.fn>;
@@ -15,6 +16,7 @@ interface MockTerminalInstance {
   open: ReturnType<typeof vi.fn>;
   paste: ReturnType<typeof vi.fn>;
   reset: ReturnType<typeof vi.fn>;
+  selectAll: ReturnType<typeof vi.fn>;
   selection: string;
   write: ReturnType<typeof vi.fn>;
   emitData(data: string): void;
@@ -32,10 +34,12 @@ const xtermMocks = vi.hoisted(() => ({
   linkHandlers: [] as Array<(event: MouseEvent, url: string) => void>,
   selectionDisposables: [] as Array<{ dispose: ReturnType<typeof vi.fn> }>,
   terminals: [] as MockTerminalInstance[],
+  terminalOptions: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal implements MockTerminalInstance {
+    clear = vi.fn();
     cols = 120;
     rows = 40;
     selection = "";
@@ -45,6 +49,7 @@ vi.mock("@xterm/xterm", () => ({
     open = vi.fn();
     paste = vi.fn();
     reset = vi.fn();
+    selectAll = vi.fn();
     write = vi.fn((_data: Uint8Array, onProcessed?: () => void) =>
       onProcessed?.(),
     );
@@ -69,8 +74,9 @@ vi.mock("@xterm/xterm", () => ({
       return disposable;
     });
 
-    constructor() {
+    constructor(options: Record<string, unknown>) {
       xtermMocks.terminals.push(this);
+      xtermMocks.terminalOptions.push(options);
     }
 
     loadAddon() {}
@@ -139,6 +145,7 @@ describe("TerminalPane", () => {
     xtermMocks.linkHandlers.length = 0;
     xtermMocks.selectionDisposables.length = 0;
     xtermMocks.terminals.length = 0;
+    xtermMocks.terminalOptions.length = 0;
     MockResizeObserver.instances.length = 0;
     animationFrames = new Map();
     nextAnimationFrame = 1;
@@ -314,6 +321,13 @@ describe("TerminalPane", () => {
     expect(terminal.emitKey(interruptEvent)).toBe(true);
     expect(onCopySelection).toHaveBeenCalledTimes(1);
 
+    const remoteSelectEvent = new KeyboardEvent("keydown", {
+      ctrlKey: true,
+      key: "a",
+    });
+    expect(terminal.emitKey(remoteSelectEvent)).toBe(true);
+    expect(terminal.selectAll).not.toHaveBeenCalled();
+
     const pasteEvent = new KeyboardEvent("keydown", {
       cancelable: true,
       ctrlKey: true,
@@ -353,15 +367,22 @@ describe("TerminalPane", () => {
     const terminal = xtermMocks.terminals[0];
     const observer = MockResizeObserver.instances[0];
 
+    ref.current?.clearScrollback();
     ref.current?.focus();
     ref.current?.reset();
     ref.current?.paste("pasted");
+    ref.current?.selectAll();
     ref.current?.write(new Uint8Array([65]), processed);
     expect(ref.current?.fit()).toMatchObject({ columns: 120, rows: 40 });
 
+    expect(terminal.clear).toHaveBeenCalledTimes(1);
     expect(terminal.focus).toHaveBeenCalledTimes(1);
     expect(terminal.reset).toHaveBeenCalledTimes(1);
     expect(terminal.paste).toHaveBeenCalledWith("pasted");
+    expect(terminal.selectAll).toHaveBeenCalledTimes(1);
+    expect(xtermMocks.terminalOptions[0]).toMatchObject({
+      scrollback: 100_000,
+    });
     expect(terminal.write).toHaveBeenCalledTimes(1);
     expect(processed).toHaveBeenCalledTimes(1);
 

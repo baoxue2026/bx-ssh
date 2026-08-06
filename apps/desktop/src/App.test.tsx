@@ -30,8 +30,10 @@ const mocks = vi.hoisted(() => ({
     toggleMaximize: vi.fn(() => Promise.resolve()),
   },
   terminalReset: vi.fn(),
+  terminalClearScrollback: vi.fn(),
   terminalPaste: vi.fn(),
   terminalSelection: "",
+  terminalSelectAll: vi.fn(),
   terminalProps: undefined as
     | {
         onOpenLink?(url: string): void;
@@ -74,6 +76,7 @@ vi.mock("./components/TerminalPane", async () => {
     TerminalPane: React.forwardRef(function MockTerminalPane(props, ref) {
       mocks.terminalProps = props;
       React.useImperativeHandle(ref, () => ({
+        clearScrollback: mocks.terminalClearScrollback,
         fit: () => ({
           columns: 80,
           rows: 24,
@@ -84,6 +87,7 @@ vi.mock("./components/TerminalPane", async () => {
         getSelection: () => mocks.terminalSelection,
         paste: mocks.terminalPaste,
         reset: mocks.terminalReset,
+        selectAll: mocks.terminalSelectAll,
         viewport: () => ({
           columns: 80,
           rows: 24,
@@ -121,8 +125,10 @@ describe("App", { timeout: 15_000 }, () => {
     mocks.window.onResized.mockClear();
     mocks.window.toggleMaximize.mockClear();
     mocks.terminalReset.mockReset();
+    mocks.terminalClearScrollback.mockReset();
     mocks.terminalPaste.mockReset();
     mocks.terminalSelection = "";
+    mocks.terminalSelectAll.mockReset();
     mocks.terminalProps = undefined;
     mocks.terminalWrite.mockReset();
     mocks.invoke.mockImplementation((command: string, args?: unknown) => {
@@ -1223,6 +1229,27 @@ describe("App", { timeout: 15_000 }, () => {
         "https://docs.example.com:8443/terminal",
       ),
     );
+  });
+
+  it("keeps local terminal buffer operations distinct", async () => {
+    renderApp();
+    await screen.findByRole("textbox", { name: "搜索已保存连接" });
+
+    const openMenu = () =>
+      fireEvent.click(screen.getByRole("button", { name: "终端操作菜单" }));
+
+    openMenu();
+    fireEvent.click(await screen.findByText("选择全部内容"));
+    expect(mocks.terminalSelectAll).toHaveBeenCalledOnce();
+
+    openMenu();
+    fireEvent.click(await screen.findByText("清除回滚内容"));
+    expect(mocks.terminalClearScrollback).toHaveBeenCalledOnce();
+
+    openMenu();
+    fireEvent.click(await screen.findByText("重置终端状态"));
+    expect(mocks.terminalReset).toHaveBeenCalledOnce();
+    expect(commandCalls("write_terminal")).toHaveLength(0);
   });
 
   it("shows native SSH stages and cancels an active connection attempt", async () => {

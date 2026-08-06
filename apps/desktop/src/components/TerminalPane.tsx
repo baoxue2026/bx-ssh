@@ -15,11 +15,13 @@ export interface TerminalViewport {
 }
 
 export interface TerminalHandle {
+  clearScrollback(): void;
   focus(): void;
   fit(): TerminalViewport;
   getSelection(): string;
   paste(data: string): void;
   reset(): void;
+  selectAll(): void;
   viewport(): TerminalViewport;
   write(data: Uint8Array, onProcessed?: () => void): void;
 }
@@ -196,6 +198,9 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
     useImperativeHandle(
       ref,
       () => ({
+        clearScrollback() {
+          terminalRef.current?.clear();
+        },
         focus() {
           terminalRef.current?.focus();
         },
@@ -217,6 +222,9 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         },
         reset() {
           terminalRef.current?.reset();
+        },
+        selectAll() {
+          terminalRef.current?.selectAll();
         },
         viewport() {
           const terminal = terminalRef.current;

@@ -11,13 +11,24 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import type { TFunction } from "i18next";
-import { Button, Checkbox, Input, InputNumber, Segmented, Tooltip } from "antd";
+import {
+  Button,
+  Checkbox,
+  Dropdown,
+  Input,
+  InputNumber,
+  Segmented,
+  Tooltip,
+  type MenuProps,
+} from "antd";
 import {
   CircleX,
   ChevronDown,
   ChevronRight,
   ClipboardPaste,
   Copy,
+  EllipsisVertical,
+  Eraser,
   FilePenLine,
   FileInput,
   Fingerprint,
@@ -29,12 +40,14 @@ import {
   Plus,
   PlugZap,
   RefreshCw,
+  RotateCcw,
   Search,
   ScanSearch,
   Server,
   Settings,
   SquareTerminal,
   Star,
+  TextSelect,
   Trash2,
   Unplug,
   Wifi,
@@ -1901,6 +1914,23 @@ export function App() {
     if (pending) pasteTerminalText(pending.text);
   };
 
+  const clearTerminalScrollback = () => {
+    terminalRef.current?.clearScrollback();
+    terminalRef.current?.focus();
+    setTerminalSelection("");
+  };
+
+  const resetTerminalState = () => {
+    terminalRef.current?.reset();
+    terminalRef.current?.focus();
+    setTerminalSelection("");
+  };
+
+  const selectAllTerminalContents = () => {
+    terminalRef.current?.selectAll();
+    terminalRef.current?.focus();
+  };
+
   const requestExternalTerminalLink = (value: string) => {
     const link = parseExternalHttpLink(value);
     if (!link) {
@@ -1954,6 +1984,46 @@ export function App() {
   const currentSessionCloseImpact = {
     activeSessions: Number(sessionId !== null) + Number(sftpSessionId !== null),
     activeTransfers: Number(sftpTransferActive),
+  };
+
+  const terminalOperationsMenu: MenuProps = {
+    items: [
+      {
+        key: "copy",
+        icon: <Copy size={13} />,
+        label: t("terminal.copySelection"),
+        disabled: !terminalSelection,
+      },
+      {
+        key: "paste",
+        icon: <ClipboardPaste size={13} />,
+        label: t("terminal.paste"),
+        disabled: sessionId === null || terminalClipboardPending,
+      },
+      { type: "divider" },
+      {
+        key: "select-all",
+        icon: <TextSelect size={13} />,
+        label: t("terminal.selectAll"),
+      },
+      {
+        key: "clear-scrollback",
+        icon: <Eraser size={13} />,
+        label: t("terminal.clearScrollback"),
+      },
+      {
+        key: "reset",
+        icon: <RotateCcw size={13} />,
+        label: t("terminal.resetState"),
+      },
+    ],
+    onClick: ({ key }) => {
+      if (key === "copy") void copyTerminalSelection();
+      if (key === "paste") void requestTerminalPaste();
+      if (key === "select-all") selectAllTerminalContents();
+      if (key === "clear-scrollback") clearTerminalScrollback();
+      if (key === "reset") resetTerminalState();
+    },
   };
 
   return (
@@ -2822,59 +2892,80 @@ export function App() {
                         onClick={() => void requestTerminalPaste()}
                       />
                     </Tooltip>
+                    <Tooltip title={t("terminal.operationsMenu")}>
+                      <Dropdown
+                        menu={terminalOperationsMenu}
+                        placement="bottomRight"
+                        trigger={["click"]}
+                      >
+                        <Button
+                          aria-label={t("terminal.operationsMenu")}
+                          icon={<EllipsisVertical size={14} />}
+                          size="small"
+                          type="text"
+                        />
+                      </Dropdown>
+                    </Tooltip>
                   </div>
                 </div>
-                <div className="terminal-stage">
-                  <TerminalPane
-                    key={activeSessionTab?.clientId ?? "terminal-empty"}
-                    ref={terminalRef}
-                    connected={connected}
-                    sessionKey={activeSessionTab?.clientId}
-                    onCopySelection={(selection) =>
-                      void copyTerminalSelection(selection)
-                    }
-                    onData={writeTerminal}
-                    onOpenLink={requestExternalTerminalLink}
-                    onPasteRequest={() => void requestTerminalPaste()}
-                    onResize={resizeTerminal}
-                    onSelectionChange={setTerminalSelection}
-                  />
-                  {terminalInteractionError && (
-                    <FeedbackNotice
-                      className="terminal-operation-error"
-                      closable
-                      message={t("terminal.operationFailed")}
-                      description={terminalInteractionError}
-                      showIcon
-                      type="error"
-                      onClose={() => setTerminalInteractionError(null)}
+                <Dropdown
+                  menu={terminalOperationsMenu}
+                  trigger={["contextMenu"]}
+                >
+                  <div className="terminal-stage">
+                    <TerminalPane
+                      key={activeSessionTab?.clientId ?? "terminal-empty"}
+                      ref={terminalRef}
+                      connected={connected}
+                      sessionKey={activeSessionTab?.clientId}
+                      onCopySelection={(selection) =>
+                        void copyTerminalSelection(selection)
+                      }
+                      onData={writeTerminal}
+                      onOpenLink={requestExternalTerminalLink}
+                      onPasteRequest={() => void requestTerminalPaste()}
+                      onResize={resizeTerminal}
+                      onSelectionChange={setTerminalSelection}
                     />
-                  )}
-                  {!connected &&
-                    (connectionState === "idle" && !hostKey ? (
-                      <ConnectionWorkspaceEmptyState
-                        language={language}
-                        loadingConnectionId={connectionActionId}
-                        recentConnections={recentConnections}
-                        totalConnections={connectionCatalog.connections.length}
-                        onImportConfig={openOpenSshImport}
-                        onNewConnection={openNewConnectionEditor}
-                        onQuickConnect={(item) =>
-                          void loadSavedConnection(item)
-                        }
+                    {terminalInteractionError && (
+                      <FeedbackNotice
+                        className="terminal-operation-error"
+                        closable
+                        message={t("terminal.operationFailed")}
+                        description={terminalInteractionError}
+                        showIcon
+                        type="error"
+                        onClose={() => setTerminalInteractionError(null)}
                       />
-                    ) : (
-                      <EmptyState
-                        className="terminal-empty"
-                        icon={<SquareTerminal size={36} strokeWidth={1.3} />}
-                        title={connectionLabel(
-                          connectionState,
-                          connectionStage,
-                          t,
-                        )}
-                      />
-                    ))}
-                </div>
+                    )}
+                    {!connected &&
+                      (connectionState === "idle" && !hostKey ? (
+                        <ConnectionWorkspaceEmptyState
+                          language={language}
+                          loadingConnectionId={connectionActionId}
+                          recentConnections={recentConnections}
+                          totalConnections={
+                            connectionCatalog.connections.length
+                          }
+                          onImportConfig={openOpenSshImport}
+                          onNewConnection={openNewConnectionEditor}
+                          onQuickConnect={(item) =>
+                            void loadSavedConnection(item)
+                          }
+                        />
+                      ) : (
+                        <EmptyState
+                          className="terminal-empty"
+                          icon={<SquareTerminal size={36} strokeWidth={1.3} />}
+                          title={connectionLabel(
+                            connectionState,
+                            connectionStage,
+                            t,
+                          )}
+                        />
+                      ))}
+                  </div>
+                </Dropdown>
               </section>
             ) : (
               <section className="sftp-workspace">

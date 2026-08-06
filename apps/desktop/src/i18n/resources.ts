@@ -465,6 +465,7 @@ export const resources = {
       },
       terminal: {
         aria: "SSH 终端",
+        clearScrollback: "清除回滚内容",
         confirmPaste: "确认粘贴",
         clipboardUnavailable: "系统剪贴板当前不可用，请稍后重试",
         copySelection: "复制终端选区",
@@ -477,12 +478,15 @@ export const resources = {
         externalLinkUrl: "完整地址",
         openExternalLink: "打开链接",
         operationFailed: "终端操作失败",
+        operationsMenu: "终端操作菜单",
         paste: "粘贴到终端",
         pasteConfirmDescription:
           "即将向远端 Shell 发送 {{lines}} 行、{{characters}} 个字符。请先检查命令内容。",
         pasteConfirmTitle: "确认粘贴到终端？",
         pastePreview: "待粘贴内容预览",
         protocol: "SSH / PTY",
+        resetState: "重置终端状态",
+        selectAll: "选择全部内容",
         type: "终端类型",
       },
       sftp: {
@@ -1062,6 +1066,7 @@ export const resources = {
       },
       terminal: {
         aria: "SSH terminal",
+        clearScrollback: "Clear Scrollback",
         confirmPaste: "Paste",
         clipboardUnavailable:
           "The system clipboard is unavailable. Try again in a moment.",
@@ -1076,12 +1081,15 @@ export const resources = {
         externalLinkUrl: "Full URL",
         openExternalLink: "Open Link",
         operationFailed: "Terminal Operation Failed",
+        operationsMenu: "Terminal Actions",
         paste: "Paste into terminal",
         pasteConfirmDescription:
           "You are about to send {{lines}} lines and {{characters}} characters to the remote shell. Review the commands first.",
         pasteConfirmTitle: "Paste into Terminal?",
         pastePreview: "Content to paste",
         protocol: "SSH / PTY",
+        resetState: "Reset Terminal State",
+        selectAll: "Select All Content",
         type: "Terminal type",
       },
       sftp: {
