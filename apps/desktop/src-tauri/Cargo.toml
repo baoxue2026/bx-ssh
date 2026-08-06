@@ -21,6 +21,7 @@ tauri-build.workspace = true
 bx-contracts.workspace = true
 bx-persistence.workspace = true
 bx-ssh-core.workspace = true
+open.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 secrecy.workspace = true
@@ -38,6 +39,7 @@ tauri-plugin-wdio-webdriver = { workspace = true, optional = true }
 tauri-specta.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+url.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 webview2-com.workspace = true

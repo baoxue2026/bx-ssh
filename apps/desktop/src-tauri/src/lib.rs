@@ -10,9 +10,11 @@ use tauri_plugin_window_state::StateFlags;
 #[cfg(any(debug_assertions, test))]
 use tauri_specta::{collect_commands, Builder};
 
+mod clipboard;
 mod command_error;
 mod connections;
 mod desktop_shell;
+mod external_links;
 mod lifecycle;
 mod openssh_import;
 mod platform;
@@ -22,6 +24,7 @@ mod sftp;
 mod terminal;
 mod update;
 
+use clipboard::{read_clipboard_text, write_clipboard_text};
 use connections::{
     delete_connection, delete_connection_group, delete_password_credential, get_connection,
     get_password_credential, list_connections, record_successful_connection,
@@ -31,6 +34,7 @@ use connections::{
 };
 #[cfg(any(debug_assertions, test))]
 use desktop_shell::AppMenuAction;
+use external_links::open_external_url;
 use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
 use openssh_import::{import_openssh_connections, preview_openssh_config};
 use platform::set_webview_memory_usage;
@@ -61,6 +65,9 @@ fn command_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             app_info,
+            clipboard::read_clipboard_text,
+            clipboard::write_clipboard_text,
+            external_links::open_external_url,
             terminal::probe_ssh_host,
             terminal::get_known_host,
             terminal::trust_host_fingerprint,
@@ -198,6 +205,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            read_clipboard_text,
+            write_clipboard_text,
+            open_external_url,
             probe_ssh_host,
             get_known_host,
             trust_host_fingerprint,

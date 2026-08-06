@@ -19,6 +19,9 @@ const violations = [];
 
 const reviewedApplicationCommands = [
   "app_info",
+  "read_clipboard_text",
+  "write_clipboard_text",
+  "open_external_url",
   "probe_ssh_host",
   "start_password_shell",
   "write_terminal",

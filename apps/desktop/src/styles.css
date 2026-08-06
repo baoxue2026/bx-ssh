@@ -1490,7 +1490,7 @@ select {
 .terminal-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 0 10px;
   color: var(--text-secondary);
   background: var(--terminal-toolbar-bg);
@@ -1506,8 +1506,9 @@ select {
 }
 
 .endpoint-label {
+  flex: 1 1 auto;
   overflow: hidden;
-  max-width: 65%;
+  min-width: 0;
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -1515,11 +1516,75 @@ select {
   white-space: nowrap;
 }
 
+.terminal-toolbar-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.terminal-toolbar-actions .ant-btn {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-secondary);
+}
+
 .terminal-stage {
   position: relative;
   min-width: 0;
   min-height: 0;
   background: var(--terminal-bg);
+}
+
+.terminal-operation-error {
+  position: absolute;
+  z-index: 5;
+  top: 8px;
+  right: 8px;
+  width: min(420px, calc(100% - 16px));
+}
+
+.terminal-operation-error .ant-alert-message,
+.terminal-operation-error .ant-alert-description {
+  font-size: 11px;
+}
+
+.terminal-paste-preview {
+  overflow: auto;
+  max-height: min(360px, 45vh);
+  margin: 0;
+  padding: 12px;
+  color: #d6d6d6;
+  background: var(--terminal-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.terminal-external-link-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0 0 12px;
+  font-size: 11px;
+}
+
+.terminal-external-link-details dt {
+  color: var(--text-muted);
+}
+
+.terminal-external-link-details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
 }
 
 .connection-launch-dialog .ant-modal-body {

@@ -465,6 +465,23 @@ export const resources = {
       },
       terminal: {
         aria: "SSH 终端",
+        confirmPaste: "确认粘贴",
+        clipboardUnavailable: "系统剪贴板当前不可用，请稍后重试",
+        copySelection: "复制终端选区",
+        externalLinkDescription:
+          "链接将交给系统默认浏览器打开，请确认目标域名。",
+        externalLinkFailed: "无法打开外部链接",
+        externalLinkHost: "完整域名",
+        externalLinkInvalid: "终端链接无效或不是安全的 HTTP/HTTPS 地址",
+        externalLinkTitle: "打开外部链接？",
+        externalLinkUrl: "完整地址",
+        openExternalLink: "打开链接",
+        operationFailed: "终端操作失败",
+        paste: "粘贴到终端",
+        pasteConfirmDescription:
+          "即将向远端 Shell 发送 {{lines}} 行、{{characters}} 个字符。请先检查命令内容。",
+        pasteConfirmTitle: "确认粘贴到终端？",
+        pastePreview: "待粘贴内容预览",
         protocol: "SSH / PTY",
         type: "终端类型",
       },
@@ -729,7 +746,8 @@ export const resources = {
         keyboardInteractiveTitle: "Interactive Authentication",
         keyboardInteractiveDescription:
           'The server is requesting interactive authentication for "{{name}}".',
-        keyboardInteractiveWaiting: "Waiting for the server authentication prompt...",
+        keyboardInteractiveWaiting:
+          "Waiting for the server authentication prompt...",
         startInteractive: "Start Authentication",
         credentialMode: "Password storage",
         credentialReferenceMissing:
@@ -1044,6 +1062,25 @@ export const resources = {
       },
       terminal: {
         aria: "SSH terminal",
+        confirmPaste: "Paste",
+        clipboardUnavailable:
+          "The system clipboard is unavailable. Try again in a moment.",
+        copySelection: "Copy terminal selection",
+        externalLinkDescription:
+          "The link will open in your default browser. Verify the destination host first.",
+        externalLinkFailed: "Unable to Open External Link",
+        externalLinkHost: "Full host",
+        externalLinkInvalid:
+          "The terminal link is invalid or is not a safe HTTP/HTTPS address",
+        externalLinkTitle: "Open External Link?",
+        externalLinkUrl: "Full URL",
+        openExternalLink: "Open Link",
+        operationFailed: "Terminal Operation Failed",
+        paste: "Paste into terminal",
+        pasteConfirmDescription:
+          "You are about to send {{lines}} lines and {{characters}} characters to the remote shell. Review the commands first.",
+        pasteConfirmTitle: "Paste into Terminal?",
+        pastePreview: "Content to paste",
         protocol: "SSH / PTY",
         type: "Terminal type",
       },

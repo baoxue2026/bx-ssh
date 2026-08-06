@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
 import "@xterm/xterm/css/xterm.css";
@@ -16,6 +17,8 @@ export interface TerminalViewport {
 export interface TerminalHandle {
   focus(): void;
   fit(): TerminalViewport;
+  getSelection(): string;
+  paste(data: string): void;
   reset(): void;
   viewport(): TerminalViewport;
   write(data: Uint8Array, onProcessed?: () => void): void;
@@ -25,18 +28,38 @@ interface TerminalPaneProps {
   connected: boolean;
   sessionKey?: string;
   onData(data: string): void;
+  onCopySelection?(data: string): void;
+  onOpenLink?(url: string): void;
+  onPasteRequest?(): void;
   onResize(viewport: TerminalViewport): void;
+  onSelectionChange?(data: string): void;
 }
 
 export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
-  function TerminalPane({ connected, sessionKey, onData, onResize }, ref) {
+  function TerminalPane(
+    {
+      connected,
+      sessionKey,
+      onCopySelection,
+      onData,
+      onOpenLink,
+      onPasteRequest,
+      onResize,
+      onSelectionChange,
+    },
+    ref,
+  ) {
     const { t } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const connectedRef = useRef(connected);
+    const onCopySelectionRef = useRef(onCopySelection);
     const onDataRef = useRef(onData);
+    const onOpenLinkRef = useRef(onOpenLink);
+    const onPasteRequestRef = useRef(onPasteRequest);
     const onResizeRef = useRef(onResize);
+    const onSelectionChangeRef = useRef(onSelectionChange);
     const resizeFrameRef = useRef<number | null>(null);
     const focusFrameRef = useRef<number | null>(null);
     const disposedRef = useRef(false);
@@ -46,9 +69,20 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
     }, [connected]);
 
     useEffect(() => {
+      onCopySelectionRef.current = onCopySelection;
       onDataRef.current = onData;
+      onOpenLinkRef.current = onOpenLink;
+      onPasteRequestRef.current = onPasteRequest;
       onResizeRef.current = onResize;
-    }, [onData, onResize]);
+      onSelectionChangeRef.current = onSelectionChange;
+    }, [
+      onCopySelection,
+      onData,
+      onOpenLink,
+      onPasteRequest,
+      onResize,
+      onSelectionChange,
+    ]);
 
     useEffect(() => {
       const container = containerRef.current;
@@ -71,7 +105,12 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         theme: TERMINAL_THEME,
       });
       const fitAddon = new FitAddon();
+      const webLinksAddon = new WebLinksAddon((event, url) => {
+        event.preventDefault();
+        onOpenLinkRef.current?.(url);
+      });
       terminal.loadAddon(fitAddon);
+      terminal.loadAddon(webLinksAddon);
       terminal.open(container);
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
@@ -96,6 +135,34 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
           onDataRef.current(data);
         }
       });
+      const selectionDisposable = terminal.onSelectionChange(() => {
+        onSelectionChangeRef.current?.(terminal.getSelection());
+      });
+      terminal.attachCustomKeyEventHandler((event) => {
+        if (
+          event.type !== "keydown" ||
+          !event.ctrlKey ||
+          !event.shiftKey ||
+          event.altKey ||
+          event.metaKey
+        ) {
+          return true;
+        }
+
+        const key = event.key.toLowerCase();
+        if (key === "c") {
+          event.preventDefault();
+          const selection = terminal.getSelection();
+          if (selection) onCopySelectionRef.current?.(selection);
+          return false;
+        }
+        if (key === "v") {
+          event.preventDefault();
+          if (connectedRef.current) onPasteRequestRef.current?.();
+          return false;
+        }
+        return true;
+      });
       const resizeObserver =
         typeof ResizeObserver === "undefined"
           ? null
@@ -114,8 +181,12 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
           resizeFrameRef.current = null;
         }
         resizeObserver?.disconnect();
-        document.removeEventListener("visibilitychange", handleVisibilityChange);
+        document.removeEventListener(
+          "visibilitychange",
+          handleVisibilityChange,
+        );
         dataDisposable.dispose();
+        selectionDisposable.dispose();
         terminal.dispose();
         terminalRef.current = null;
         fitAddonRef.current = null;
@@ -137,6 +208,12 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
             return viewportFor(terminal, container);
           }
           return { columns: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 };
+        },
+        getSelection() {
+          return terminalRef.current?.getSelection() ?? "";
+        },
+        paste(data: string) {
+          terminalRef.current?.paste(data);
         },
         reset() {
           terminalRef.current?.reset();

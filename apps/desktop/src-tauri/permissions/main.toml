@@ -5,6 +5,9 @@ identifier = "allow-main-commands"
 description = "Allows the local main window to call the reviewed BX SSH command surface."
 commands.allow = [
   "app_info",
+  "read_clipboard_text",
+  "write_clipboard_text",
+  "open_external_url",
   "probe_ssh_host",
   "start_password_shell",
   "write_terminal",

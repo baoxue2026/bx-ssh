@@ -1,21 +1,25 @@
 import { createRef } from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  TerminalPane,
-  type TerminalHandle,
-} from "./TerminalPane";
+import { TerminalPane, type TerminalHandle } from "./TerminalPane";
 
 interface MockTerminalInstance {
+  attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
   cols: number;
   rows: number;
   dispose: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
+  getSelection: ReturnType<typeof vi.fn>;
   onData: ReturnType<typeof vi.fn>;
+  onSelectionChange: ReturnType<typeof vi.fn>;
   open: ReturnType<typeof vi.fn>;
+  paste: ReturnType<typeof vi.fn>;
   reset: ReturnType<typeof vi.fn>;
+  selection: string;
   write: ReturnType<typeof vi.fn>;
   emitData(data: string): void;
+  emitSelection(): void;
+  emitKey(event: KeyboardEvent): boolean | undefined;
 }
 
 interface MockFitAddonInstance {
@@ -25,6 +29,8 @@ interface MockFitAddonInstance {
 const xtermMocks = vi.hoisted(() => ({
   dataDisposables: [] as Array<{ dispose: ReturnType<typeof vi.fn> }>,
   fitAddons: [] as MockFitAddonInstance[],
+  linkHandlers: [] as Array<(event: MouseEvent, url: string) => void>,
+  selectionDisposables: [] as Array<{ dispose: ReturnType<typeof vi.fn> }>,
   terminals: [] as MockTerminalInstance[],
 }));
 
@@ -32,18 +38,34 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal implements MockTerminalInstance {
     cols = 120;
     rows = 40;
+    selection = "";
     dispose = vi.fn();
     focus = vi.fn();
+    getSelection = vi.fn(() => this.selection);
     open = vi.fn();
+    paste = vi.fn();
     reset = vi.fn();
-    write = vi.fn(
-      (_data: Uint8Array, onProcessed?: () => void) => onProcessed?.(),
+    write = vi.fn((_data: Uint8Array, onProcessed?: () => void) =>
+      onProcessed?.(),
     );
     private dataHandler: ((data: string) => void) | null = null;
+    private keyHandler: ((event: KeyboardEvent) => boolean) | null = null;
+    private selectionHandler: (() => void) | null = null;
+    attachCustomKeyEventHandler = vi.fn(
+      (handler: (event: KeyboardEvent) => boolean) => {
+        this.keyHandler = handler;
+      },
+    );
     onData = vi.fn((handler: (data: string) => void) => {
       this.dataHandler = handler;
       const disposable = { dispose: vi.fn() };
       xtermMocks.dataDisposables.push(disposable);
+      return disposable;
+    });
+    onSelectionChange = vi.fn((handler: () => void) => {
+      this.selectionHandler = handler;
+      const disposable = { dispose: vi.fn() };
+      xtermMocks.selectionDisposables.push(disposable);
       return disposable;
     });
 
@@ -56,6 +78,14 @@ vi.mock("@xterm/xterm", () => ({
     emitData(data: string) {
       this.dataHandler?.(data);
     }
+
+    emitSelection() {
+      this.selectionHandler?.();
+    }
+
+    emitKey(event: KeyboardEvent) {
+      return this.keyHandler?.(event);
+    }
   },
 }));
 
@@ -65,6 +95,14 @@ vi.mock("@xterm/addon-fit", () => ({
 
     constructor() {
       xtermMocks.fitAddons.push(this);
+    }
+  },
+}));
+
+vi.mock("@xterm/addon-web-links", () => ({
+  WebLinksAddon: class MockWebLinksAddon {
+    constructor(handler: (event: MouseEvent, url: string) => void) {
+      xtermMocks.linkHandlers.push(handler);
     }
   },
 }));
@@ -98,6 +136,8 @@ describe("TerminalPane", () => {
   beforeEach(() => {
     xtermMocks.dataDisposables.length = 0;
     xtermMocks.fitAddons.length = 0;
+    xtermMocks.linkHandlers.length = 0;
+    xtermMocks.selectionDisposables.length = 0;
     xtermMocks.terminals.length = 0;
     MockResizeObserver.instances.length = 0;
     animationFrames = new Map();
@@ -237,27 +277,91 @@ describe("TerminalPane", () => {
     expect(terminal.focus).toHaveBeenCalledTimes(1);
   });
 
+  it("handles selection, copy, paste and external links safely", () => {
+    const onCopySelection = vi.fn();
+    const onOpenLink = vi.fn();
+    const onPasteRequest = vi.fn();
+    const onSelectionChange = vi.fn();
+    const { rerender } = render(
+      <TerminalPane
+        connected
+        onCopySelection={onCopySelection}
+        onData={vi.fn()}
+        onOpenLink={onOpenLink}
+        onPasteRequest={onPasteRequest}
+        onResize={vi.fn()}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    const terminal = xtermMocks.terminals[0];
+    terminal.selection = "selected output";
+    terminal.emitSelection();
+
+    const copyEvent = new KeyboardEvent("keydown", {
+      cancelable: true,
+      ctrlKey: true,
+      key: "c",
+      shiftKey: true,
+    });
+    expect(terminal.emitKey(copyEvent)).toBe(false);
+    expect(copyEvent.defaultPrevented).toBe(true);
+    expect(onCopySelection).toHaveBeenCalledWith("selected output");
+
+    const interruptEvent = new KeyboardEvent("keydown", {
+      ctrlKey: true,
+      key: "c",
+    });
+    expect(terminal.emitKey(interruptEvent)).toBe(true);
+    expect(onCopySelection).toHaveBeenCalledTimes(1);
+
+    const pasteEvent = new KeyboardEvent("keydown", {
+      cancelable: true,
+      ctrlKey: true,
+      key: "v",
+      shiftKey: true,
+    });
+    expect(terminal.emitKey(pasteEvent)).toBe(false);
+    expect(onPasteRequest).toHaveBeenCalledTimes(1);
+    expect(onSelectionChange).toHaveBeenCalledWith("selected output");
+
+    rerender(
+      <TerminalPane
+        connected={false}
+        onCopySelection={onCopySelection}
+        onData={vi.fn()}
+        onOpenLink={onOpenLink}
+        onPasteRequest={onPasteRequest}
+        onResize={vi.fn()}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    terminal.emitKey(pasteEvent);
+    expect(onPasteRequest).toHaveBeenCalledTimes(1);
+
+    const linkEvent = new MouseEvent("click", { cancelable: true });
+    xtermMocks.linkHandlers[0](linkEvent, "https://example.com/path");
+    expect(linkEvent.defaultPrevented).toBe(true);
+    expect(onOpenLink).toHaveBeenCalledWith("https://example.com/path");
+  });
+
   it("exposes terminal controls and releases every resource on unmount", () => {
     const ref = createRef<TerminalHandle>();
     const processed = vi.fn();
     const { unmount } = render(
-      <TerminalPane
-        ref={ref}
-        connected
-        onData={vi.fn()}
-        onResize={vi.fn()}
-      />,
+      <TerminalPane ref={ref} connected onData={vi.fn()} onResize={vi.fn()} />,
     );
     const terminal = xtermMocks.terminals[0];
     const observer = MockResizeObserver.instances[0];
 
     ref.current?.focus();
     ref.current?.reset();
+    ref.current?.paste("pasted");
     ref.current?.write(new Uint8Array([65]), processed);
     expect(ref.current?.fit()).toMatchObject({ columns: 120, rows: 40 });
 
     expect(terminal.focus).toHaveBeenCalledTimes(1);
     expect(terminal.reset).toHaveBeenCalledTimes(1);
+    expect(terminal.paste).toHaveBeenCalledWith("pasted");
     expect(terminal.write).toHaveBeenCalledTimes(1);
     expect(processed).toHaveBeenCalledTimes(1);
 
@@ -265,15 +369,14 @@ describe("TerminalPane", () => {
 
     expect(observer.disconnect).toHaveBeenCalledTimes(1);
     expect(xtermMocks.dataDisposables[0].dispose).toHaveBeenCalledTimes(1);
+    expect(xtermMocks.selectionDisposables[0].dispose).toHaveBeenCalledTimes(1);
     expect(terminal.dispose).toHaveBeenCalledTimes(1);
     expect(animationFrames).toHaveLength(0);
   });
 
   it("refits after the application returns to the foreground", () => {
     const onResize = vi.fn();
-    render(
-      <TerminalPane connected onData={vi.fn()} onResize={onResize} />,
-    );
+    render(<TerminalPane connected onData={vi.fn()} onResize={onResize} />);
     act(() => flushAnimationFrames(animationFrames));
     onResize.mockClear();
     xtermMocks.fitAddons[0].fit.mockClear();

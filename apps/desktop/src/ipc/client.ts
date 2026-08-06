@@ -116,6 +116,11 @@ function createChannel<T>(onMessage: (message: T) => void): Channel<T> {
 
 export const ipc = {
   appInfo: () => call(() => commands.appInfo()),
+  readClipboardText: () => unwrap(() => commands.readClipboardText()),
+  writeClipboardText: (text: string) =>
+    unwrapVoid(() => commands.writeClipboardText(text)),
+  openExternalUrl: (url: string) =>
+    unwrapVoid(() => commands.openExternalUrl(url)),
   listConnections: () => unwrap(() => commands.listConnections()),
   getConnection: (id: string) => unwrap(() => commands.getConnection(id)),
   previewOpenSshConfig: (path: string | null) =>

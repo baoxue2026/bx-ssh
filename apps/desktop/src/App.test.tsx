@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
     Array<(event: { payload: unknown }) => void>
   >(),
   invoke: vi.fn(),
+  clipboardRead: vi.fn(),
+  clipboardWrite: vi.fn(),
+  openUrl: vi.fn(),
   window: {
     close: vi.fn(() => Promise.resolve()),
     isMaximized: vi.fn(() => Promise.resolve(false)),
@@ -27,6 +30,15 @@ const mocks = vi.hoisted(() => ({
     toggleMaximize: vi.fn(() => Promise.resolve()),
   },
   terminalReset: vi.fn(),
+  terminalPaste: vi.fn(),
+  terminalSelection: "",
+  terminalProps: undefined as
+    | {
+        onOpenLink?(url: string): void;
+        onPasteRequest?(): void;
+        onSelectionChange?(selection: string): void;
+      }
+    | undefined,
   terminalWrite: vi.fn(),
 }));
 
@@ -59,9 +71,18 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("./components/TerminalPane", async () => {
   const React = await import("react");
   return {
-    TerminalPane: React.forwardRef(function MockTerminalPane(_, ref) {
+    TerminalPane: React.forwardRef(function MockTerminalPane(props, ref) {
+      mocks.terminalProps = props;
       React.useImperativeHandle(ref, () => ({
+        fit: () => ({
+          columns: 80,
+          rows: 24,
+          pixelWidth: 800,
+          pixelHeight: 600,
+        }),
         focus: vi.fn(),
+        getSelection: () => mocks.terminalSelection,
+        paste: mocks.terminalPaste,
         reset: mocks.terminalReset,
         viewport: () => ({
           columns: 80,
@@ -87,6 +108,12 @@ describe("App", { timeout: 15_000 }, () => {
     mocks.channels.length = 0;
     mocks.eventListeners.clear();
     mocks.invoke.mockReset();
+    mocks.clipboardRead.mockReset();
+    mocks.clipboardRead.mockResolvedValue("");
+    mocks.clipboardWrite.mockReset();
+    mocks.clipboardWrite.mockResolvedValue(undefined);
+    mocks.openUrl.mockReset();
+    mocks.openUrl.mockResolvedValue(undefined);
     mocks.window.close.mockClear();
     mocks.window.isMaximized.mockClear();
     mocks.window.isMaximized.mockResolvedValue(false);
@@ -94,10 +121,23 @@ describe("App", { timeout: 15_000 }, () => {
     mocks.window.onResized.mockClear();
     mocks.window.toggleMaximize.mockClear();
     mocks.terminalReset.mockReset();
+    mocks.terminalPaste.mockReset();
+    mocks.terminalSelection = "";
+    mocks.terminalProps = undefined;
     mocks.terminalWrite.mockReset();
-    mocks.invoke.mockImplementation((command: string) => {
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
       if (command === "app_info") {
         return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "open_external_url") {
+        mocks.openUrl((args as { url: string }).url);
+        return Promise.resolve();
+      }
+      if (command === "read_clipboard_text") {
+        return mocks.clipboardRead();
+      }
+      if (command === "write_clipboard_text") {
+        return mocks.clipboardWrite((args as { text: string }).text);
       }
       if (command === "probe_ssh_host") {
         return Promise.resolve({
@@ -1057,7 +1097,7 @@ describe("App", { timeout: 15_000 }, () => {
     const startResponse = new Promise((resolve) => {
       resolveStart = resolve;
     });
-    mocks.invoke.mockImplementation((command: string) => {
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
       if (command === "app_info") {
         return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
       }
@@ -1070,6 +1110,12 @@ describe("App", { timeout: 15_000 }, () => {
       }
       if (command === "start_password_shell") {
         return startResponse;
+      }
+      if (command === "read_clipboard_text") {
+        return mocks.clipboardRead();
+      }
+      if (command === "write_clipboard_text") {
+        return mocks.clipboardWrite((args as { text: string }).text);
       }
       return Promise.resolve();
     });
@@ -1129,6 +1175,54 @@ describe("App", { timeout: 15_000 }, () => {
         { low: false },
       );
     });
+
+    mocks.terminalSelection = "selected output";
+    act(() => mocks.terminalProps?.onSelectionChange?.("selected output"));
+    fireEvent.click(screen.getByRole("button", { name: "复制终端选区" }));
+    await waitFor(() =>
+      expect(mocks.clipboardWrite).toHaveBeenCalledWith("selected output"),
+    );
+
+    mocks.clipboardRead.mockResolvedValue("echo first\necho second");
+    await act(async () => mocks.terminalProps?.onPasteRequest?.());
+    const pasteDialog = await screen.findByRole("dialog", {
+      name: "确认粘贴到终端？",
+    });
+    expect(
+      within(pasteDialog).getByLabelText("待粘贴内容预览"),
+    ).toHaveTextContent("echo first echo second");
+    expect(mocks.terminalPaste).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(pasteDialog).getByRole("button", { name: "确认粘贴" }),
+    );
+    expect(mocks.terminalPaste).toHaveBeenCalledWith("echo first\necho second");
+  }, 30_000);
+
+  it("shows the complete host before opening a terminal link", async () => {
+    renderApp();
+    await screen.findByRole("textbox", { name: "搜索已保存连接" });
+    expect(mocks.terminalProps?.onOpenLink).toBeTypeOf("function");
+
+    act(() =>
+      mocks.terminalProps?.onOpenLink?.(
+        "https://docs.example.com:8443/terminal",
+      ),
+    );
+    const linkDialog = await screen.findByRole("dialog", {
+      name: "打开外部链接？",
+    });
+    await waitFor(() => expect(linkDialog).toBeVisible());
+    expect(
+      within(linkDialog).getByText("docs.example.com:8443"),
+    ).toHaveTextContent("docs.example.com:8443");
+    fireEvent.click(
+      within(linkDialog).getByRole("button", { name: "打开链接" }),
+    );
+    await waitFor(() =>
+      expect(mocks.openUrl).toHaveBeenCalledWith(
+        "https://docs.example.com:8443/terminal",
+      ),
+    );
   });
 
   it("shows native SSH stages and cancels an active connection attempt", async () => {

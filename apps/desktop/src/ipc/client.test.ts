@@ -268,6 +268,30 @@ describe("IPC client", () => {
     expect(onOutput).toHaveBeenCalledWith(output);
   });
 
+  it("opens external URLs only through the reviewed application command", async () => {
+    mocks.invoke.mockResolvedValue(null);
+
+    await expect(
+      ipc.openExternalUrl("https://docs.example.com/terminal"),
+    ).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("open_external_url", {
+      url: "https://docs.example.com/terminal",
+    });
+  });
+
+  it("reads and writes text through the reviewed clipboard commands", async () => {
+    mocks.invoke.mockResolvedValueOnce("selected output");
+
+    await expect(ipc.readClipboardText()).resolves.toBe("selected output");
+    expect(mocks.invoke).toHaveBeenCalledWith("read_clipboard_text");
+
+    mocks.invoke.mockResolvedValueOnce(null);
+    await expect(ipc.writeClipboardText("echo bx-ssh")).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("write_clipboard_text", {
+      text: "echo bx-ssh",
+    });
+  });
+
   it("sends keyboard-interactive answers through the generated command", async () => {
     mocks.invoke.mockResolvedValue({ status: "ok", data: null });
 

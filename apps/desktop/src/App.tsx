@@ -16,6 +16,7 @@ import {
   CircleX,
   ChevronDown,
   ChevronRight,
+  ClipboardPaste,
   Copy,
   FilePenLine,
   FileInput,
@@ -61,6 +62,12 @@ import {
   type TerminalViewport,
 } from "./components/TerminalPane";
 import { shouldSkipApplicationShortcut } from "./components/terminalKeyboard";
+import {
+  parseExternalHttpLink,
+  terminalPasteDetails,
+  type ExternalHttpLink,
+  type TerminalPasteDetails,
+} from "./components/terminalSecurity";
 import {
   AppDialog,
   EmptyState,
@@ -117,6 +124,10 @@ interface ConnectionSearchResult {
   matchedFields: ConnectionSearchField[];
 }
 
+interface PendingTerminalPaste extends TerminalPasteDetails {
+  text: string;
+}
+
 const fallbackInfo: AppInfo = {
   name: "BX SSH",
   version: "0.1.0",
@@ -163,6 +174,20 @@ export function App() {
   const [connectionStage, setConnectionStage] =
     useState<SshConnectionStage | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [terminalSelection, setTerminalSelection] = useState("");
+  const [terminalClipboardPending, setTerminalClipboardPending] =
+    useState(false);
+  const [terminalInteractionError, setTerminalInteractionError] = useState<
+    string | null
+  >(null);
+  const [pendingTerminalPaste, setPendingTerminalPaste] =
+    useState<PendingTerminalPaste | null>(null);
+  const [externalTerminalLink, setExternalTerminalLink] =
+    useState<ExternalHttpLink | null>(null);
+  const [externalLinkPending, setExternalLinkPending] = useState(false);
+  const [externalLinkError, setExternalLinkError] = useState<string | null>(
+    null,
+  );
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("terminal");
   const [connectionListMode, setConnectionListMode] =
     useState<ConnectionListMode>("connections");
@@ -228,8 +253,10 @@ export function App() {
   const [keyboardInteractivePrompt, setKeyboardInteractivePrompt] = useState<
     Extract<KeyboardInteractiveEvent, { type: "prompt" }> | undefined
   >();
-  const [keyboardInteractiveResponsePending, setKeyboardInteractiveResponsePending] =
-    useState(false);
+  const [
+    keyboardInteractiveResponsePending,
+    setKeyboardInteractiveResponsePending,
+  ] = useState(false);
   const [launchCredentialRef, setLaunchCredentialRef] = useState<string | null>(
     null,
   );
@@ -267,6 +294,7 @@ export function App() {
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const terminalRef = useRef<TerminalHandle>(null);
+  const terminalClipboardPendingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(null);
   const loadedConnectionIdRef = useRef<string | null>(null);
   const sidebarResizeRef = useRef<{
@@ -283,6 +311,8 @@ export function App() {
   const sessionTabSequenceRef = useRef(0);
   const sftpOperationGenerationRef = useRef(0);
   const sessionCloseCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const terminalPasteCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const externalLinkCancelButtonRef = useRef<HTMLButtonElement>(null);
   const exitCancelButtonRef = useRef<HTMLButtonElement>(null);
   const deleteCancelButtonRef = useRef<HTMLButtonElement>(null);
   const connectionStateRef = useRef<ConnectionState>("idle");
@@ -1207,7 +1237,9 @@ export function App() {
       }
     };
 
-    const handleKeyboardInteractiveEvent = (event: KeyboardInteractiveEvent) => {
+    const handleKeyboardInteractiveEvent = (
+      event: KeyboardInteractiveEvent,
+    ) => {
       if (
         connectionAttemptRef.current !== attempt ||
         event.type !== "prompt" ||
@@ -1259,18 +1291,18 @@ export function App() {
               channels,
             )
           : await ipc.startPasswordShell(
-            {
-              attemptId: connectionAttemptId,
-              host,
-              port,
-              username,
-              password: credential,
-              expectedFingerprint: hostKey.fingerprintSha256,
-              settings: connectionSettings,
-              ...viewport,
-            },
-            channels,
-          );
+              {
+                attemptId: connectionAttemptId,
+                host,
+                port,
+                username,
+                password: credential,
+                expectedFingerprint: hostKey.fingerprintSha256,
+                settings: connectionSettings,
+                ...viewport,
+              },
+              channels,
+            );
       acknowledgementSessionId = response.sessionId;
       queueAcknowledgement(processedSequence);
 
@@ -1551,6 +1583,11 @@ export function App() {
     setLaunchCredentialPassword(undefined);
     setKeyboardInteractivePrompt(undefined);
     setKeyboardInteractiveResponsePending(false);
+    setPendingTerminalPaste(null);
+    setExternalTerminalLink(null);
+    setExternalLinkError(null);
+    setTerminalInteractionError(null);
+    setTerminalSelection("");
     setConnectionState("idle");
     setConnectionStage(null);
     sessionIdRef.current = null;
@@ -1814,6 +1851,81 @@ export function App() {
     },
     [localizedErrorText],
   );
+
+  const copyTerminalSelection = async (selection?: string) => {
+    const text = selection ?? terminalRef.current?.getSelection() ?? "";
+    if (!text) return;
+
+    try {
+      await ipc.writeClipboardText(text);
+      setTerminalInteractionError(null);
+    } catch (error) {
+      setTerminalInteractionError(localizedErrorText(error));
+    }
+  };
+
+  const pasteTerminalText = (text: string) => {
+    if (!sessionIdRef.current || !text) return;
+    terminalRef.current?.paste(text);
+    terminalRef.current?.focus();
+    setTerminalInteractionError(null);
+  };
+
+  const requestTerminalPaste = async () => {
+    const activeSessionId = sessionIdRef.current;
+    if (!activeSessionId || terminalClipboardPendingRef.current) return;
+
+    terminalClipboardPendingRef.current = true;
+    setTerminalClipboardPending(true);
+    setTerminalInteractionError(null);
+    try {
+      const text = await ipc.readClipboardText();
+      if (sessionIdRef.current !== activeSessionId || !text) return;
+      const details = terminalPasteDetails(text);
+      if (details.requiresConfirmation) {
+        setPendingTerminalPaste({ text, ...details });
+      } else {
+        pasteTerminalText(text);
+      }
+    } catch (error) {
+      setTerminalInteractionError(localizedErrorText(error));
+    } finally {
+      terminalClipboardPendingRef.current = false;
+      setTerminalClipboardPending(false);
+    }
+  };
+
+  const confirmTerminalPaste = () => {
+    const pending = pendingTerminalPaste;
+    setPendingTerminalPaste(null);
+    if (pending) pasteTerminalText(pending.text);
+  };
+
+  const requestExternalTerminalLink = (value: string) => {
+    const link = parseExternalHttpLink(value);
+    if (!link) {
+      setTerminalInteractionError(t("terminal.externalLinkInvalid"));
+      return;
+    }
+    setExternalLinkError(null);
+    setExternalTerminalLink(link);
+  };
+
+  const confirmExternalTerminalLink = async () => {
+    const link = externalTerminalLink;
+    if (!link || externalLinkPending) return;
+
+    setExternalLinkPending(true);
+    setExternalLinkError(null);
+    try {
+      await ipc.openExternalUrl(link.url);
+      setExternalTerminalLink(null);
+    } catch (error) {
+      setExternalLinkError(localizedErrorText(error));
+    } finally {
+      setExternalLinkPending(false);
+    }
+  };
 
   const confirmAppExit = async () => {
     setExitPending(true);
@@ -2586,10 +2698,9 @@ export function App() {
               >
                 {t("connection.cancel")}
               </Button>
-            ) :
-              !activeSessionId &&
-                connectionState === "disconnected" &&
-                activeSessionTab ? (
+            ) : !activeSessionId &&
+              connectionState === "disconnected" &&
+              activeSessionTab ? (
               <Button
                 type="primary"
                 icon={<RefreshCw size={15} />}
@@ -2687,6 +2798,31 @@ export function App() {
                       ? `${username}@${host}:${port}`
                       : t("sftp.notConnected")}
                   </span>
+                  <div className="terminal-toolbar-actions">
+                    <Tooltip
+                      title={`${t("terminal.copySelection")} (Ctrl+Shift+C)`}
+                    >
+                      <Button
+                        aria-label={t("terminal.copySelection")}
+                        disabled={!terminalSelection}
+                        icon={<Copy size={14} />}
+                        size="small"
+                        type="text"
+                        onClick={() => void copyTerminalSelection()}
+                      />
+                    </Tooltip>
+                    <Tooltip title={`${t("terminal.paste")} (Ctrl+Shift+V)`}>
+                      <Button
+                        aria-label={t("terminal.paste")}
+                        disabled={sessionId === null}
+                        icon={<ClipboardPaste size={14} />}
+                        loading={terminalClipboardPending}
+                        size="small"
+                        type="text"
+                        onClick={() => void requestTerminalPaste()}
+                      />
+                    </Tooltip>
+                  </div>
                 </div>
                 <div className="terminal-stage">
                   <TerminalPane
@@ -2694,9 +2830,26 @@ export function App() {
                     ref={terminalRef}
                     connected={connected}
                     sessionKey={activeSessionTab?.clientId}
+                    onCopySelection={(selection) =>
+                      void copyTerminalSelection(selection)
+                    }
                     onData={writeTerminal}
+                    onOpenLink={requestExternalTerminalLink}
+                    onPasteRequest={() => void requestTerminalPaste()}
                     onResize={resizeTerminal}
+                    onSelectionChange={setTerminalSelection}
                   />
+                  {terminalInteractionError && (
+                    <FeedbackNotice
+                      className="terminal-operation-error"
+                      closable
+                      message={t("terminal.operationFailed")}
+                      description={terminalInteractionError}
+                      showIcon
+                      type="error"
+                      onClose={() => setTerminalInteractionError(null)}
+                    />
+                  )}
                   {!connected &&
                     (connectionState === "idle" && !hostKey ? (
                       <ConnectionWorkspaceEmptyState
@@ -2828,6 +2981,96 @@ export function App() {
         }
         onSubmitKeyboardInteractive={submitKeyboardInteractive}
       />
+
+      <AppDialog
+        open={pendingTerminalPaste !== null}
+        title={t("terminal.pasteConfirmTitle")}
+        description={
+          pendingTerminalPaste
+            ? t("terminal.pasteConfirmDescription", {
+                characters: pendingTerminalPaste.characterCount,
+                lines: pendingTerminalPaste.lineCount,
+              })
+            : undefined
+        }
+        initialFocusRef={terminalPasteCancelButtonRef}
+        onClose={() => setPendingTerminalPaste(null)}
+        footer={
+          <>
+            <Button
+              ref={terminalPasteCancelButtonRef}
+              onClick={() => setPendingTerminalPaste(null)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button type="primary" onClick={confirmTerminalPaste}>
+              {t("terminal.confirmPaste")}
+            </Button>
+          </>
+        }
+      >
+        {pendingTerminalPaste && (
+          <pre
+            aria-label={t("terminal.pastePreview")}
+            className="terminal-paste-preview"
+          >
+            {pendingTerminalPaste.text}
+          </pre>
+        )}
+      </AppDialog>
+
+      <AppDialog
+        open={externalTerminalLink !== null}
+        title={t("terminal.externalLinkTitle")}
+        description={t("terminal.externalLinkDescription")}
+        closable={!externalLinkPending}
+        closeOnEscape={!externalLinkPending}
+        initialFocusRef={externalLinkCancelButtonRef}
+        onClose={() => {
+          if (!externalLinkPending) {
+            setExternalTerminalLink(null);
+            setExternalLinkError(null);
+          }
+        }}
+        footer={
+          <>
+            <Button
+              ref={externalLinkCancelButtonRef}
+              disabled={externalLinkPending}
+              onClick={() => {
+                setExternalTerminalLink(null);
+                setExternalLinkError(null);
+              }}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              loading={externalLinkPending}
+              type="primary"
+              onClick={() => void confirmExternalTerminalLink()}
+            >
+              {t("terminal.openExternalLink")}
+            </Button>
+          </>
+        }
+      >
+        {externalTerminalLink && (
+          <dl className="terminal-external-link-details">
+            <dt>{t("terminal.externalLinkHost")}</dt>
+            <dd>{externalTerminalLink.host}</dd>
+            <dt>{t("terminal.externalLinkUrl")}</dt>
+            <dd>{externalTerminalLink.url}</dd>
+          </dl>
+        )}
+        {externalLinkError && (
+          <FeedbackNotice
+            message={t("terminal.externalLinkFailed")}
+            description={externalLinkError}
+            showIcon
+            type="error"
+          />
+        )}
+      </AppDialog>
 
       <AppDialog
         open={sessionCloseOpen}
@@ -3422,6 +3665,12 @@ function commandErrorText(
       return t("errors.legacyRsaSignatureOnly");
     case "keep_alive_failed":
       return t("errors.keepAliveFailed");
+    case "clipboard_unavailable":
+      return t("terminal.clipboardUnavailable");
+    case "invalid_external_url":
+      return t("terminal.externalLinkInvalid");
+    case "external_link_open_failed":
+      return t("terminal.externalLinkFailed");
     default:
       return fallback;
   }
