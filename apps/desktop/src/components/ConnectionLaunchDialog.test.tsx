@@ -62,4 +62,39 @@ describe("ConnectionLaunchDialog", () => {
     expect(onCancel).toHaveBeenCalledOnce();
     expect(onSubmitPassword).not.toHaveBeenCalled();
   });
+
+  it("renders echoed and hidden keyboard-interactive prompts", () => {
+    const onSubmit = vi.fn();
+    render(
+      <ConnectionLaunchDialog
+        connectionName="生产服务器"
+        endpoint="deploy@example.com:22"
+        pending={false}
+        step="keyboardInteractive"
+        keyboardPrompt={{
+          type: "prompt",
+          attemptId: "attempt-1",
+          name: "PAM",
+          instructions: "请完成二次认证",
+          prompts: [
+            { prompt: "验证码", echo: true },
+            { prompt: "一次性密码", echo: false },
+          ],
+        }}
+        onCancel={vi.fn()}
+        onConfirmFingerprint={vi.fn()}
+        onSubmitPassword={vi.fn()}
+        onSubmitKeyboardInteractive={onSubmit}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("验证码"), {
+      target: { value: "1234" },
+    });
+    fireEvent.change(screen.getByLabelText("一次性密码"), {
+      target: { value: "otp-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /连\s*接/ }));
+    expect(onSubmit).toHaveBeenCalledWith(["1234", "otp-secret"]);
+  });
 });

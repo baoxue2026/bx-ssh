@@ -13,9 +13,11 @@ pub use endpoint::SshEndpoint;
 pub use error::SshError;
 pub use fingerprint::HostFingerprint;
 pub use session::{
-    authenticate_password, authenticate_password_with_progress, authenticate_private_key,
+    authenticate_keyboard_interactive_with_progress, authenticate_password,
+    authenticate_password_with_progress, authenticate_private_key,
     authenticate_private_key_contents_with_progress, authenticate_private_key_with_progress,
-    probe_host_key, ClientSession, ConnectionCancellation,
+    probe_host_key, ClientSession, ConnectionCancellation, KeyboardInteractivePrompt,
+    KeyboardInteractivePromptItem,
 };
 pub use sftp::SftpClient;
 pub use shell::{ShellEvent, SshShell, TerminalSize};

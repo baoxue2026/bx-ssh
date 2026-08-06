@@ -268,6 +268,18 @@ describe("IPC client", () => {
     expect(onOutput).toHaveBeenCalledWith(output);
   });
 
+  it("sends keyboard-interactive answers through the generated command", async () => {
+    mocks.invoke.mockResolvedValue({ status: "ok", data: null });
+
+    await expect(
+      ipc.respondKeyboardInteractive("attempt-1", ["1234", "otp"]),
+    ).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("respond_keyboard_interactive", {
+      attemptId: "attempt-1",
+      responses: ["1234", "otp"],
+    });
+  });
+
   it("normalizes errors from the native update channel command", async () => {
     mocks.invoke.mockRejectedValue({
       code: "update_signature_invalid",

@@ -81,6 +81,7 @@ import type {
   ConnectionSettings,
   ExitImpact,
   HostKeyInfo,
+  KeyboardInteractiveEvent,
   OpenSshImportPreview,
   OpenSshImportRequest,
   RemoteDirectoryListing,
@@ -223,6 +224,11 @@ export function App() {
   );
   const [connectionLaunchStep, setConnectionLaunchStep] =
     useState<ConnectionLaunchStep>();
+  const [keyboardInteractivePrompt, setKeyboardInteractivePrompt] = useState<
+    Extract<KeyboardInteractiveEvent, { type: "prompt" }> | undefined
+  >();
+  const [keyboardInteractiveResponsePending, setKeyboardInteractiveResponsePending] =
+    useState(false);
   const [launchCredentialRef, setLaunchCredentialRef] = useState<string | null>(
     null,
   );
@@ -672,20 +678,11 @@ export function App() {
     setLaunchCredentialRef(config.credentialRef);
     setLaunchCredentialMode(config.credentialRef ? "vault" : "ask");
     setLaunchCredentialPassword(undefined);
+    setKeyboardInteractivePrompt(undefined);
+    setKeyboardInteractiveResponsePending(false);
     setLoadedConnectionId(config.id);
     loadedConnectionIdRef.current = config.id;
     resetHostTrust();
-
-    if (config.authMethod === "keyboardInteractive") {
-      setConnectionState("failed");
-      setErrorMessage(
-        t("connectionAuthentication.unsupported", {
-          method: connectionAuthLabel(config.authMethod, t),
-        }),
-      );
-      connectionFlowPendingRef.current = false;
-      return;
-    }
 
     const result = await probeHost(config.host, config.port, settings);
     if (connectionAttemptRef.current === request && result) {
@@ -705,7 +702,13 @@ export function App() {
         connectionFlowPendingRef.current = false;
         return;
       }
-      setConnectionLaunchStep(result.known ? "password" : "fingerprint");
+      setConnectionLaunchStep(
+        result.known
+          ? config.authMethod === "keyboardInteractive"
+            ? "keyboardInteractive"
+            : "password"
+          : "fingerprint",
+      );
     } else {
       connectionFlowPendingRef.current = false;
     }
@@ -1077,11 +1080,16 @@ export function App() {
   ): Promise<boolean> => {
     const credential = credentialOverride ?? password;
     const privateKeyAuth = launchAuthMethod === "privateKey";
+    const keyboardInteractiveAuth = launchAuthMethod === "keyboardInteractive";
     if (
       !hostKey ||
       !trusted ||
       !username ||
-      (privateKeyAuth ? !launchKeyReferenceId : !credential)
+      (privateKeyAuth
+        ? !launchKeyReferenceId
+        : keyboardInteractiveAuth
+          ? false
+          : !credential)
     ) {
       return false;
     }
@@ -1092,6 +1100,8 @@ export function App() {
 
     setConnectionState("connecting");
     setErrorMessage(null);
+    setKeyboardInteractivePrompt(undefined);
+    setKeyboardInteractiveResponsePending(false);
     terminalRef.current?.reset();
 
     const attempt = ++connectionAttemptRef.current;
@@ -1164,11 +1174,24 @@ export function App() {
       }
     };
 
+    const handleKeyboardInteractiveEvent = (event: KeyboardInteractiveEvent) => {
+      if (
+        connectionAttemptRef.current !== attempt ||
+        event.type !== "prompt" ||
+        event.attemptId !== connectionAttemptId
+      ) {
+        return;
+      }
+      setKeyboardInteractiveResponsePending(false);
+      setKeyboardInteractivePrompt(event);
+    };
+
     const viewport = terminalRef.current?.viewport() ?? fallbackViewport;
 
     try {
       await enableLowMemoryUsage();
       const channels = {
+        onAuth: handleKeyboardInteractiveEvent,
         onState: (event: SshConnectionEvent) =>
           handleSshConnectionEvent(connectionAttemptId, event),
         onEvent: handleTerminalEvent,
@@ -1189,7 +1212,20 @@ export function App() {
             },
             channels,
           )
-        : await ipc.startPasswordShell(
+        : keyboardInteractiveAuth
+          ? await ipc.startKeyboardInteractiveShell(
+              {
+                attemptId: connectionAttemptId,
+                host,
+                port,
+                username,
+                expectedFingerprint: hostKey.fingerprintSha256,
+                settings: connectionSettings,
+                ...viewport,
+              },
+              channels,
+            )
+          : await ipc.startPasswordShell(
             {
               attemptId: connectionAttemptId,
               host,
@@ -1213,6 +1249,8 @@ export function App() {
       }
 
       setPassword("");
+      setKeyboardInteractivePrompt(undefined);
+      setKeyboardInteractiveResponsePending(false);
       if (ended) {
         void ipc
           .closeTerminalSession(response.sessionId)
@@ -1233,6 +1271,8 @@ export function App() {
         return false;
       }
       setPassword("");
+      setKeyboardInteractivePrompt(undefined);
+      setKeyboardInteractiveResponsePending(false);
       setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
       return false;
@@ -1366,7 +1406,11 @@ export function App() {
     setFingerprintTrustPending(true);
     void persistHostFingerprint()
       .then(() => {
-        setConnectionLaunchStep("password");
+        setConnectionLaunchStep(
+          launchAuthMethod === "keyboardInteractive"
+            ? "keyboardInteractive"
+            : "password",
+        );
       })
       .catch((error: unknown) => {
         setErrorMessage(localizedErrorText(error));
@@ -1385,6 +1429,8 @@ export function App() {
     setLaunchAuthMethod("password");
     setLaunchKeyReferenceId(null);
     setLaunchCredentialPassword(undefined);
+    setKeyboardInteractivePrompt(undefined);
+    setKeyboardInteractiveResponsePending(false);
     setPassword("");
     setTrusted(false);
     setHostFingerprintKnown(false);
@@ -1450,12 +1496,28 @@ export function App() {
     }
   };
 
+  const submitKeyboardInteractive = (responses: string[]) => {
+    const attemptId = activeConnectionAttemptIdRef.current;
+    if (!attemptId || keyboardInteractiveResponsePending) {
+      return;
+    }
+    setKeyboardInteractiveResponsePending(true);
+    void ipc.respondKeyboardInteractive(attemptId, responses).catch((error) => {
+      if (activeConnectionAttemptIdRef.current === attemptId) {
+        setKeyboardInteractiveResponsePending(false);
+        setErrorMessage(localizedErrorText(error));
+      }
+    });
+  };
+
   const resetSessionWorkspace = () => {
     connectionAttemptRef.current += 1;
     connectionFlowPendingRef.current = false;
     sftpOperationGenerationRef.current += 1;
     setConnectionLaunchStep(undefined);
     setLaunchCredentialPassword(undefined);
+    setKeyboardInteractivePrompt(undefined);
+    setKeyboardInteractiveResponsePending(false);
     setConnectionState("idle");
     setConnectionStage(null);
     sessionIdRef.current = null;
@@ -2702,15 +2764,21 @@ export function App() {
         }
         hostKey={hostKey ?? undefined}
         initialPassword={launchCredentialPassword}
-        pending={connectionState === "connecting" || fingerprintTrustPending}
+        pending={
+          fingerprintTrustPending ||
+          keyboardInteractiveResponsePending ||
+          (connectionState === "connecting" && !keyboardInteractivePrompt)
+        }
         step={activeSessionTab ? connectionLaunchStep : undefined}
         authMethod={launchAuthMethod}
+        keyboardPrompt={keyboardInteractivePrompt}
         onCancel={cancelConnectionFlow}
         onConfirmFingerprint={confirmConnectionFingerprint}
         initialCredentialMode={launchCredentialMode}
         onSubmitPassword={(credential, mode) =>
           void authenticatePendingConnection(credential, mode)
         }
+        onSubmitKeyboardInteractive={submitKeyboardInteractive}
       />
 
       <AppDialog
@@ -3308,17 +3376,6 @@ function commandErrorText(
       return t("errors.keepAliveFailed");
     default:
       return fallback;
-  }
-}
-
-function connectionAuthLabel(method: AuthMethod, t: TFunction): string {
-  switch (method) {
-    case "privateKey":
-      return t("connectionEditor.auth.privateKey");
-    case "keyboardInteractive":
-      return t("connectionEditor.auth.keyboardInteractive");
-    default:
-      return t("connectionEditor.auth.password");
   }
 }
 

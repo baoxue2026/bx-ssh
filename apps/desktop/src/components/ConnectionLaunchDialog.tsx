@@ -2,11 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Input, Radio } from "antd";
 import { Fingerprint, KeyRound, Server } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { AuthMethod, HostKeyInfo } from "../ipc/bindings";
+import type {
+  AuthMethod,
+  HostKeyInfo,
+  KeyboardInteractiveEvent,
+} from "../ipc/bindings";
 import { AppDialog, FeedbackNotice } from "./Feedback";
 import type { CredentialMode } from "./ConnectionEditorDialog";
 
-export type ConnectionLaunchStep = "fingerprint" | "password";
+export type ConnectionLaunchStep =
+  | "fingerprint"
+  | "password"
+  | "keyboardInteractive";
 
 interface ConnectionLaunchDialogProps {
   connectionName: string;
@@ -21,6 +28,8 @@ interface ConnectionLaunchDialogProps {
   onConfirmFingerprint(): void;
   onSubmitPassword(password: string, mode: CredentialMode): void;
   initialCredentialMode?: CredentialMode;
+  keyboardPrompt?: Extract<KeyboardInteractiveEvent, { type: "prompt" }>;
+  onSubmitKeyboardInteractive?(responses: string[]): void;
 }
 
 export function ConnectionLaunchDialog({
@@ -36,6 +45,8 @@ export function ConnectionLaunchDialog({
   onConfirmFingerprint,
   onSubmitPassword,
   initialCredentialMode = "ask",
+  keyboardPrompt,
+  onSubmitKeyboardInteractive,
 }: ConnectionLaunchDialogProps) {
   const { t } = useTranslation();
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -44,7 +55,17 @@ export function ConnectionLaunchDialog({
     initialCredentialMode,
   );
   const passwordStep = step === "password";
+  const interactiveStep = step === "keyboardInteractive";
   const privateKeyStep = passwordStep && authMethod === "privateKey";
+  const [interactiveResponses, setInteractiveResponses] = useState<string[]>(
+    [],
+  );
+
+  useEffect(() => {
+    // Prompt rounds replace the controlled response list.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInteractiveResponses(keyboardPrompt?.prompts.map(() => "") ?? []);
+  }, [keyboardPrompt]);
 
   useEffect(() => {
     if (passwordStep) {
@@ -55,6 +76,14 @@ export function ConnectionLaunchDialog({
   }, [initialPassword, passwordStep]);
 
   const submitPassword = () => {
+    if (interactiveStep) {
+      if (keyboardPrompt && !pending) {
+        onSubmitKeyboardInteractive?.(interactiveResponses);
+      } else if (!keyboardPrompt && !pending) {
+        onSubmitPassword("", "ask");
+      }
+      return;
+    }
     if ((!password && !privateKeyStep) || pending) return;
     const credential = password;
     setPassword("");
@@ -78,7 +107,9 @@ export function ConnectionLaunchDialog({
                 ? "connectionAuthentication.privateKeyTitle"
                 : "connectionAuthentication.title",
             )
-          : t("hostFingerprint.title")
+          : interactiveStep
+            ? t("connectionAuthentication.keyboardInteractiveTitle")
+            : t("hostFingerprint.title")
       }
       description={
         passwordStep
@@ -88,7 +119,11 @@ export function ConnectionLaunchDialog({
                 : "connectionAuthentication.description",
               { name: connectionName },
             )
-          : t("hostFingerprint.description", { name: connectionName })
+          : interactiveStep
+            ? t("connectionAuthentication.keyboardInteractiveDescription", {
+                name: connectionName,
+              })
+            : t("hostFingerprint.description", { name: connectionName })
       }
       initialFocusRef={passwordStep ? undefined : cancelRef}
       closable
@@ -99,14 +134,23 @@ export function ConnectionLaunchDialog({
           <Button ref={cancelRef} onClick={cancel}>
             {t("common.cancel")}
           </Button>
-          {passwordStep ? (
+          {passwordStep || interactiveStep ? (
             <Button
               type="primary"
               loading={pending}
-              disabled={!password && !privateKeyStep}
+              disabled={
+                interactiveStep
+                  ? pending ||
+                    (!!keyboardPrompt &&
+                      interactiveResponses.length !==
+                        keyboardPrompt.prompts.length)
+                  : !password && !privateKeyStep
+              }
               onClick={submitPassword}
             >
-              {t("connectionAuthentication.connect")}
+              {interactiveStep && !keyboardPrompt
+                ? t("connectionAuthentication.startInteractive")
+                : t("connectionAuthentication.connect")}
             </Button>
           ) : (
             <Button
@@ -186,6 +230,58 @@ export function ConnectionLaunchDialog({
                 : "connectionAuthentication.sessionOnly",
             )}
           </p>
+        </>
+      ) : interactiveStep ? (
+        <>
+          <div className="connection-auth-endpoint">
+            <KeyRound size={16} aria-hidden="true" />
+            <span>{endpoint}</span>
+          </div>
+          {keyboardPrompt ? (
+            <div className="keyboard-interactive-prompts">
+              {keyboardPrompt.name && (
+                <p className="connection-auth-hint">{keyboardPrompt.name}</p>
+              )}
+              {keyboardPrompt.instructions && (
+                <p className="connection-auth-hint">
+                  {keyboardPrompt.instructions}
+                </p>
+              )}
+              {keyboardPrompt.prompts.map((item, index) => (
+                <label className="field-group" key={`${item.prompt}-${index}`}>
+                  <span className="field-label">{item.prompt}</span>
+                  {item.echo ? (
+                    <Input
+                      autoFocus={index === 0}
+                      value={interactiveResponses[index] ?? ""}
+                      disabled={pending}
+                      onChange={(event) => {
+                        const next = [...interactiveResponses];
+                        next[index] = event.target.value;
+                        setInteractiveResponses(next);
+                      }}
+                    />
+                  ) : (
+                    <Input.Password
+                      autoFocus={index === 0}
+                      value={interactiveResponses[index] ?? ""}
+                      autoComplete="off"
+                      disabled={pending}
+                      onChange={(event) => {
+                        const next = [...interactiveResponses];
+                        next[index] = event.target.value;
+                        setInteractiveResponses(next);
+                      }}
+                    />
+                  )}
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="connection-auth-hint">
+              {t("connectionAuthentication.keyboardInteractiveWaiting")}
+            </p>
+          )}
         </>
       ) : (
         <>

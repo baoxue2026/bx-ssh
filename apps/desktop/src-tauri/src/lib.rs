@@ -41,8 +41,9 @@ use sftp::{
 };
 use terminal::{
     acknowledge_terminal_output, close_terminal_session, get_known_host, probe_ssh_host,
-    resize_terminal, start_password_shell, start_private_key_shell, trust_host_fingerprint,
-    write_terminal, TerminalSessionManager,
+    resize_terminal, respond_keyboard_interactive, start_keyboard_interactive_shell,
+    start_password_shell, start_private_key_shell, trust_host_fingerprint, write_terminal,
+    TerminalSessionManager,
 };
 use update::{check_for_update, install_update};
 
@@ -67,6 +68,7 @@ fn command_builder() -> Builder<tauri::Wry> {
             terminal::resize_terminal,
             terminal::acknowledge_terminal_output,
             terminal::close_terminal_session,
+            terminal::respond_keyboard_interactive,
             sftp::list_sftp_directory,
             sftp::upload_sftp_file,
             sftp::download_sftp_file,
@@ -94,9 +96,11 @@ fn command_builder() -> Builder<tauri::Wry> {
             session_manager::cancel_ssh_connection
         ])
         .typ::<terminal::StartShellRequest>()
+        .typ::<terminal::StartKeyboardInteractiveShellRequest>()
         .typ::<terminal::StartPrivateKeyShellRequest>()
         .typ::<terminal::StartShellResponse>()
         .typ::<terminal::TerminalEvent>()
+        .typ::<terminal::KeyboardInteractiveEvent>()
         .typ::<sftp::StartSftpRequest>()
         .typ::<sftp::StartPrivateKeySftpRequest>()
         .typ::<sftp::StartSftpResponse>()
@@ -199,6 +203,8 @@ pub fn run() {
             trust_host_fingerprint,
             start_password_shell,
             start_private_key_shell,
+            start_keyboard_interactive_shell,
+            respond_keyboard_interactive,
             write_terminal,
             resize_terminal,
             acknowledge_terminal_output,

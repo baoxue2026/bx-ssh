@@ -7,6 +7,7 @@ import {
   type ConnectionGroup,
   type ConnectionSettingsOverride,
   type HostKeyInfo,
+  type KeyboardInteractiveEvent,
   type OpenSshImportRequest,
   type ProbeHostRequest,
   type Result,
@@ -16,6 +17,7 @@ import {
   type StartSftpResponse,
   type StartPrivateKeySftpRequest,
   type StartPrivateKeyShellRequest,
+  type StartKeyboardInteractiveShellRequest,
   type StartShellRequest,
   type StartShellResponse,
   type TerminalEvent,
@@ -70,6 +72,13 @@ type TerminalSize = Pick<
 >;
 
 interface TerminalChannels {
+  onState(event: SshConnectionEvent): void;
+  onEvent(event: TerminalEvent): void;
+  onOutput(data: ArrayBuffer): void;
+}
+
+interface KeyboardInteractiveChannels {
+  onAuth(event: KeyboardInteractiveEvent): void;
   onState(event: SshConnectionEvent): void;
   onEvent(event: TerminalEvent): void;
   onOutput(data: ArrayBuffer): void;
@@ -237,6 +246,21 @@ export const ipc = {
         onOutput: createChannel(channels.onOutput),
       }),
     ),
+  startKeyboardInteractiveShell: (
+    request: StartKeyboardInteractiveShellRequest,
+    channels: KeyboardInteractiveChannels,
+  ) =>
+    call(() =>
+      invoke<StartShellResponse>("start_keyboard_interactive_shell", {
+        request,
+        onAuth: createChannel(channels.onAuth),
+        onState: createChannel(channels.onState),
+        onEvent: createChannel(channels.onEvent),
+        onOutput: createChannel(channels.onOutput),
+      }),
+    ),
+  respondKeyboardInteractive: (attemptId: string, responses: string[]) =>
+    unwrapVoid(() => commands.respondKeyboardInteractive(attemptId, responses)),
   installUpdate: (
     expectedVersion: string,
     onEvent: (event: UpdateEvent) => void,

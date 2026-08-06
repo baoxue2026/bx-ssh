@@ -167,6 +167,11 @@ export const resources = {
       },
       connectionAuthentication: {
         connect: "连接",
+        keyboardInteractiveTitle: "交互式认证",
+        keyboardInteractiveDescription:
+          "服务器正在请求“{{name}}”的交互式认证信息。",
+        keyboardInteractiveWaiting: "等待服务器发送认证问题……",
+        startInteractive: "开始认证",
         credentialMode: "密码保存方式",
         credentialReferenceMissing: "当前连接没有可用的凭据引用，密码未保存。",
         description: "为“{{name}}”输入本次 SSH 会话使用的凭据。",
@@ -719,6 +724,11 @@ export const resources = {
       },
       connectionAuthentication: {
         connect: "Connect",
+        keyboardInteractiveTitle: "Interactive Authentication",
+        keyboardInteractiveDescription:
+          'The server is requesting interactive authentication for "{{name}}".',
+        keyboardInteractiveWaiting: "Waiting for the server authentication prompt...",
+        startInteractive: "Start Authentication",
         credentialMode: "Password storage",
         credentialReferenceMissing:
           "This connection has no credential reference, so the password was not saved.",

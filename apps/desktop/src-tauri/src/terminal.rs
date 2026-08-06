@@ -6,8 +6,9 @@ use std::time::Duration;
 use bx_contracts::{ConnectionSettings, HostKeyInfo, SshConnectionStage};
 use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
-    authenticate_password_with_progress, authenticate_private_key_contents_with_progress,
-    probe_host_key, ClientSession, ShellEvent, SshEndpoint, SshError, SshShell, TerminalSize,
+    authenticate_keyboard_interactive_with_progress, authenticate_password_with_progress,
+    authenticate_private_key_contents_with_progress, probe_host_key, ClientSession,
+    KeyboardInteractivePrompt, ShellEvent, SshEndpoint, SshError, SshShell, TerminalSize,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -32,7 +33,13 @@ const OUTPUT_MAX_IN_FLIGHT_BATCHES: usize = 8;
 #[derive(Clone, Default)]
 pub(crate) struct TerminalSessionManager {
     sessions: Arc<Mutex<HashMap<String, mpsc::Sender<SessionCommand>>>>,
+    keyboard_prompts: Arc<Mutex<HashMap<String, PendingKeyboardPrompt>>>,
     activity: AppActivity,
+}
+
+struct PendingKeyboardPrompt {
+    owner: String,
+    sender: mpsc::Sender<Vec<String>>,
 }
 
 enum SessionCommand {
@@ -88,6 +95,21 @@ pub(crate) struct StartShellResponse {
     host_key: HostKeyInfo,
 }
 
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StartKeyboardInteractiveShellRequest {
+    attempt_id: String,
+    host: String,
+    port: u16,
+    username: String,
+    expected_fingerprint: String,
+    settings: ConnectionSettings,
+    columns: u32,
+    rows: u32,
+    pixel_width: u32,
+    pixel_height: u32,
+}
+
 #[derive(Clone, Serialize, Type)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum TerminalEvent {
@@ -99,6 +121,25 @@ pub(crate) enum TerminalEvent {
         code: CommandErrorCode,
         message: String,
     },
+}
+
+#[derive(Clone, Serialize, Type)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub(crate) enum KeyboardInteractiveEvent {
+    Prompt {
+        #[serde(rename = "attemptId")]
+        attempt_id: String,
+        name: String,
+        instructions: String,
+        prompts: Vec<KeyboardInteractivePromptItem>,
+    },
+}
+
+#[derive(Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct KeyboardInteractivePromptItem {
+    prompt: String,
+    echo: bool,
 }
 
 pub(crate) struct TerminalOutput(Vec<u8>);
@@ -309,6 +350,171 @@ pub(crate) async fn start_password_shell(
         .await
         .insert(session_id.clone(), command_tx);
 
+    let task_manager = manager.inner().clone();
+    let task_session_manager = session_manager.inner().clone();
+    let task_session_id = session_id.clone();
+    tauri::async_runtime::spawn(async move {
+        let _activity_guard = activity_guard;
+        run_session(
+            task_manager,
+            task_session_manager,
+            task_session_id,
+            session,
+            shell,
+            command_rx,
+            on_event,
+            on_output,
+        )
+        .await;
+    });
+
+    Ok(StartShellResponse {
+        session_id,
+        host_key,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn start_keyboard_interactive_shell(
+    window: WebviewWindow,
+    manager: State<'_, TerminalSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    request: StartKeyboardInteractiveShellRequest,
+    on_auth: Channel<KeyboardInteractiveEvent>,
+    on_state: Channel<SshConnectionEvent>,
+    on_event: Channel<TerminalEvent>,
+    on_output: Channel<TerminalOutput>,
+) -> Result<StartShellResponse, CommandError> {
+    let owner = window.label().to_owned();
+    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?
+        .with_connection_settings(request.settings);
+    let size = TerminalSize::with_pixels(
+        request.columns,
+        request.rows,
+        request.pixel_width,
+        request.pixel_height,
+    )?;
+    let cancellation =
+        session_manager.begin_attempt(&owner, &request.attempt_id, SessionKind::Terminal)?;
+    let (response_tx, response_rx) = mpsc::channel(1);
+    let response_rx = Arc::new(Mutex::new(response_rx));
+    manager
+        .register_keyboard_prompt(&owner, &request.attempt_id, response_tx)
+        .await?;
+    let _ = on_state.send(SshConnectionEvent {
+        attempt_id: request.attempt_id.clone(),
+        stage: SshConnectionStage::Created,
+    });
+
+    let attempt_id = request.attempt_id.clone();
+    let session = authenticate_keyboard_interactive_with_progress(
+        &endpoint,
+        &request.username,
+        &request.expected_fingerprint,
+        &cancellation,
+        |prompt: KeyboardInteractivePrompt| {
+            let _ = on_auth.send(KeyboardInteractiveEvent::Prompt {
+                attempt_id: attempt_id.clone(),
+                name: prompt.name,
+                instructions: prompt.instructions,
+                prompts: prompt
+                    .prompts
+                    .into_iter()
+                    .map(|item| KeyboardInteractivePromptItem {
+                        prompt: item.prompt,
+                        echo: item.echo,
+                    })
+                    .collect(),
+            });
+            let receiver = Arc::clone(&response_rx);
+            let cancellation = cancellation.clone();
+            async move {
+                let mut receiver = receiver.lock().await;
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+                    response = receiver.recv() => response.ok_or(SshError::ConnectionCancelled),
+                }
+            }
+        },
+        |stage| {
+            if let Ok(event) =
+                session_manager.transition_attempt(&owner, &request.attempt_id, stage)
+            {
+                let _ = on_state.send(event);
+            }
+        },
+    )
+    .await;
+    manager
+        .remove_keyboard_prompt(&owner, &request.attempt_id)
+        .await;
+
+    let session = match session {
+        Ok(session) => session,
+        Err(error) => {
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(error.into());
+        }
+    };
+    let host_key = session.host_key().clone();
+    let opening = session_manager.transition_attempt(
+        &owner,
+        &request.attempt_id,
+        SshConnectionStage::OpeningChannel,
+    )?;
+    let _ = on_state.send(opening);
+    let shell = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+        result = session.open_shell(size) => result,
+    };
+    let shell = match shell {
+        Ok(shell) => shell,
+        Err(error) => {
+            let _ = session.disconnect().await;
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+            );
+            return Err(error.into());
+        }
+    };
+    let (session_id, connected) =
+        match session_manager.complete_attempt(&owner, &request.attempt_id) {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = shell.close().await;
+                let _ = session.disconnect().await;
+                if let Some(event) = session_manager.finish_attempt(
+                    &owner,
+                    &request.attempt_id,
+                    SshConnectionStage::Failed,
+                ) {
+                    let _ = on_state.send(event);
+                }
+                return Err(error);
+            }
+        };
+    let _ = on_state.send(connected);
+    let (command_tx, command_rx) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let activity_guard = manager.activity.track_session();
+    manager
+        .sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), command_tx);
     let task_manager = manager.inner().clone();
     let task_session_manager = session_manager.inner().clone();
     let task_session_id = session_id.clone();
@@ -569,15 +775,83 @@ pub(crate) async fn close_terminal_session(
     result
 }
 
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn respond_keyboard_interactive(
+    window: WebviewWindow,
+    manager: State<'_, TerminalSessionManager>,
+    attempt_id: String,
+    responses: Vec<String>,
+) -> Result<(), CommandError> {
+    manager
+        .respond_keyboard_prompt(window.label(), &attempt_id, responses)
+        .await
+}
+
 impl TerminalSessionManager {
     pub(crate) fn with_activity(activity: AppActivity) -> Self {
         Self {
             sessions: Arc::default(),
+            keyboard_prompts: Arc::default(),
             activity,
         }
     }
 
+    async fn register_keyboard_prompt(
+        &self,
+        owner: &str,
+        attempt_id: &str,
+        sender: mpsc::Sender<Vec<String>>,
+    ) -> Result<(), CommandError> {
+        let mut prompts = self.keyboard_prompts.lock().await;
+        if prompts.contains_key(attempt_id) {
+            return Err(CommandError::new(
+                CommandErrorCode::ConnectionAttemptConflict,
+                "SSH keyboard-interactive prompt is already active",
+            ));
+        }
+        prompts.insert(
+            attempt_id.to_owned(),
+            PendingKeyboardPrompt {
+                owner: owner.to_owned(),
+                sender,
+            },
+        );
+        Ok(())
+    }
+
+    async fn remove_keyboard_prompt(&self, owner: &str, attempt_id: &str) {
+        let mut prompts = self.keyboard_prompts.lock().await;
+        if prompts
+            .get(attempt_id)
+            .is_some_and(|pending| pending.owner == owner)
+        {
+            prompts.remove(attempt_id);
+        }
+    }
+
+    async fn respond_keyboard_prompt(
+        &self,
+        owner: &str,
+        attempt_id: &str,
+        responses: Vec<String>,
+    ) -> Result<(), CommandError> {
+        let sender = self
+            .keyboard_prompts
+            .lock()
+            .await
+            .get(attempt_id)
+            .filter(|pending| pending.owner == owner)
+            .map(|pending| pending.sender.clone())
+            .ok_or_else(|| CommandError::session_not_found("keyboard-interactive prompt"))?;
+        sender
+            .send(responses)
+            .await
+            .map_err(|_| CommandError::session_closed("keyboard-interactive prompt"))
+    }
+
     pub(crate) async fn close_all(&self) {
+        self.keyboard_prompts.lock().await.clear();
         let senders = self
             .sessions
             .lock()
@@ -861,6 +1135,34 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.code, CommandErrorCode::SessionNotFound);
+    }
+
+    #[tokio::test]
+    async fn keyboard_prompt_answers_are_scoped_to_the_window_owner() {
+        let manager = TerminalSessionManager::default();
+        let (sender, mut receiver) = mpsc::channel(1);
+        manager
+            .register_keyboard_prompt("main", "attempt-1", sender)
+            .await
+            .unwrap();
+
+        let error = manager
+            .respond_keyboard_prompt("other", "attempt-1", vec!["secret".to_owned()])
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, CommandErrorCode::SessionNotFound);
+
+        manager
+            .respond_keyboard_prompt("main", "attempt-1", vec!["secret".to_owned()])
+            .await
+            .unwrap();
+        assert_eq!(receiver.recv().await, Some(vec!["secret".to_owned()]));
+
+        manager.remove_keyboard_prompt("main", "attempt-1").await;
+        assert!(manager
+            .respond_keyboard_prompt("main", "attempt-1", Vec::new())
+            .await
+            .is_err());
     }
 
     #[test]

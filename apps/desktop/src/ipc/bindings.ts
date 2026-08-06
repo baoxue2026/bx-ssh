@@ -65,6 +65,14 @@ async closeTerminalSession(sessionId: string) : Promise<Result<null, CommandErro
     else return { status: "error", error: e  as any };
 }
 },
+async respondKeyboardInteractive(attemptId: string, responses: string[]) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("respond_keyboard_interactive", { attemptId, responses }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listSftpDirectory(sessionId: string, path: string) : Promise<Result<RemoteDirectoryListing, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_sftp_directory", { sessionId, path }) };
@@ -294,6 +302,8 @@ export type ConnectionSettingsScope = { kind: "global" } | { kind: "group"; grou
 export type ConnectionSettingsSnapshot = { layers: ConnectionSettingsLayers; resolved: ConnectionSettings }
 export type ExitImpact = { activeSessions: number; activeTransfers: number }
 export type HostKeyInfo = { algorithm: string; fingerprintSha256: string }
+export type KeyboardInteractiveEvent = { type: "prompt"; attemptId: string; name: string; instructions: string; prompts: KeyboardInteractivePromptItem[] }
+export type KeyboardInteractivePromptItem = { prompt: string; echo: boolean }
 export type OpenSshDuplicateStrategy = "skip" | "overwrite"
 export type OpenSshImportError = "invalidPort" | "missingHost" | "missingUsername"
 export type OpenSshImportItem = { sourceId: string; alias: string; host: string; port: number; username: string; identityFile: string | null; duplicateConnectionId: string | null; duplicateConnectionName: string | null; errors: OpenSshImportError[]; warnings: OpenSshImportWarning[] }
@@ -307,6 +317,7 @@ export type RemoteFileEntry = { name: string; path: string; kind: RemoteFileKind
 export type RemoteFileKind = "directory" | "file" | "symlink" | "other"
 export type SshConnectionEvent = { attemptId: string; stage: SshConnectionStage }
 export type SshConnectionStage = "created" | "resolvingDns" | "connectingTcp" | "handshaking" | "authenticating" | "openingChannel" | "connected" | "closing" | "closed" | "cancelled" | "failed"
+export type StartKeyboardInteractiveShellRequest = { attemptId: string; host: string; port: number; username: string; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
 export type StartPrivateKeySftpRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: string | null; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }
 export type StartPrivateKeyShellRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: string | null; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
 export type StartSftpRequest = { attemptId: string; host: string; port: number; username: string; password: string; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }

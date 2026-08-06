@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -91,6 +92,19 @@ pub struct ClientSession {
     handle: client::Handle<HostKeyVerifier>,
     host_key: HostKeyInfo,
     negotiated_algorithms: SshNegotiatedAlgorithms,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyboardInteractivePrompt {
+    pub name: String,
+    pub instructions: String,
+    pub prompts: Vec<KeyboardInteractivePromptItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyboardInteractivePromptItem {
+    pub prompt: String,
+    pub echo: bool,
 }
 
 impl ClientSession {
@@ -212,6 +226,137 @@ where
             .disconnect(russh::Disconnect::ByApplication, "", "")
             .await;
         return Err(SshError::AuthenticationRejected { method: "password" });
+    }
+
+    Ok(ClientSession {
+        handle,
+        host_key,
+        negotiated_algorithms,
+    })
+}
+
+/// Authenticate using SSH keyboard-interactive (RFC 4256) prompts.
+///
+/// The callback is invoked once for every server prompt round. Answers are
+/// supplied by the caller and are never logged or retained by this crate.
+pub async fn authenticate_keyboard_interactive_with_progress<F, Fut>(
+    endpoint: &SshEndpoint,
+    username: &str,
+    expected_fingerprint: &str,
+    cancellation: &ConnectionCancellation,
+    mut on_prompt: F,
+    mut on_stage: impl FnMut(SshConnectionStage),
+) -> Result<ClientSession, SshError>
+where
+    F: FnMut(KeyboardInteractivePrompt) -> Fut,
+    Fut: Future<Output = Result<Vec<String>, SshError>>,
+{
+    validate_username(username)?;
+    let fingerprint = HostFingerprint::parse(expected_fingerprint)?;
+    let (mut handle, host_key, negotiated_algorithms) =
+        connect(endpoint, Some(fingerprint), cancellation, &mut on_stage).await?;
+
+    on_stage(SshConnectionStage::Authenticating);
+    let reply = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => {
+            let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
+            return Err(SshError::ConnectionCancelled);
+        }
+        result = time::timeout(
+            endpoint.operation_timeout(),
+            handle.authenticate_keyboard_interactive_start(username, None::<String>),
+        ) => result,
+    };
+    let mut reply = match reply {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            return Err(SshError::AuthenticationFailed(error));
+        }
+        Err(_) => {
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            return Err(SshError::AuthenticationTimeout);
+        }
+    };
+
+    loop {
+        let response = match reply {
+            russh::client::KeyboardInteractiveAuthResponse::Success => break,
+            russh::client::KeyboardInteractiveAuthResponse::Failure { .. } => {
+                let _ = handle
+                    .disconnect(russh::Disconnect::ByApplication, "", "")
+                    .await;
+                return Err(SshError::AuthenticationRejected {
+                    method: "keyboard-interactive",
+                });
+            }
+            russh::client::KeyboardInteractiveAuthResponse::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            } => {
+                let prompt = KeyboardInteractivePrompt {
+                    name,
+                    instructions,
+                    prompts: prompts
+                        .into_iter()
+                        .map(|item| KeyboardInteractivePromptItem {
+                            prompt: item.prompt,
+                            echo: item.echo,
+                        })
+                        .collect(),
+                };
+                let answers = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => {
+                        let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
+                        return Err(SshError::ConnectionCancelled);
+                    }
+                    answers = on_prompt(prompt) => answers,
+                };
+                match answers {
+                    Ok(answers) => answers,
+                    Err(error) => {
+                        let _ = handle
+                            .disconnect(russh::Disconnect::ByApplication, "", "")
+                            .await;
+                        return Err(error);
+                    }
+                }
+            }
+        };
+
+        let next_reply = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => {
+                let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
+                return Err(SshError::ConnectionCancelled);
+            }
+            result = time::timeout(
+                endpoint.operation_timeout(),
+                handle.authenticate_keyboard_interactive_respond(response),
+            ) => result,
+        };
+        reply = match next_reply {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => {
+                let _ = handle
+                    .disconnect(russh::Disconnect::ByApplication, "", "")
+                    .await;
+                return Err(SshError::AuthenticationFailed(error));
+            }
+            Err(_) => {
+                let _ = handle
+                    .disconnect(russh::Disconnect::ByApplication, "", "")
+                    .await;
+                return Err(SshError::AuthenticationTimeout);
+            }
+        };
     }
 
     Ok(ClientSession {
