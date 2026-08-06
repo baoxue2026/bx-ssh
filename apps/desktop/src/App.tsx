@@ -3758,6 +3758,8 @@ function commandErrorText(
       return t("errors.keepAliveFailed");
     case "clipboard_unavailable":
       return t("terminal.clipboardUnavailable");
+    case "terminal_output_unavailable":
+      return t("terminal.outputUnavailable");
     case "invalid_external_url":
       return t("terminal.externalLinkInvalid");
     case "external_link_open_failed":

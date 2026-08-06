@@ -44,6 +44,7 @@ pub(crate) enum CommandErrorCode {
     TransportError,
     SessionNotFound,
     SessionClosed,
+    TerminalOutputUnavailable,
     UpdateNotAvailable,
     UpdateChanged,
     UpdateSignatureInvalid,

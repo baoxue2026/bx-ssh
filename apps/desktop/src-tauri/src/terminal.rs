@@ -29,6 +29,7 @@ const COMMAND_QUEUE_CAPACITY: usize = 128;
 const OUTPUT_BATCH_MAX_BYTES: usize = 64 * 1024;
 const OUTPUT_BATCH_MAX_DELAY: Duration = Duration::from_millis(8);
 const OUTPUT_MAX_IN_FLIGHT_BATCHES: usize = 8;
+const OUTPUT_ACK_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Default)]
 pub(crate) struct TerminalSessionManager {
@@ -52,8 +53,13 @@ enum SessionCommand {
 struct TerminalOutputFlow {
     pending: Vec<u8>,
     pending_since: Option<Instant>,
-    in_flight: VecDeque<u64>,
+    in_flight: VecDeque<InFlightOutput>,
     next_sequence: u64,
+}
+
+struct InFlightOutput {
+    sequence: u64,
+    sent_at: Instant,
 }
 
 #[derive(Deserialize, Type)]
@@ -925,17 +931,23 @@ async fn run_session(
     let mut close_completion = None;
     let mut output = TerminalOutputFlow::new();
     let mut failed = false;
+    let mut transport_finished = false;
+    let mut discard_pending_output = false;
 
     loop {
         let flush_deadline = output.flush_deadline();
+        let acknowledgement_deadline = output.acknowledgement_deadline();
         tokio::select! {
             biased;
-            transport = session.wait_for_transport() => {
-                if let Err(error) = transport {
-                    send_error(&on_event, error);
-                    failed = true;
+            transport = session.wait_for_transport(), if !transport_finished => {
+                match transport {
+                    Ok(()) => transport_finished = true,
+                    Err(error) => {
+                        send_error(&on_event, error);
+                        failed = true;
+                        break;
+                    }
                 }
-                break;
             }
             command = commands.recv() => {
                 match command {
@@ -958,6 +970,7 @@ async fn run_session(
                     }
                     Some(SessionCommand::Close(completion)) => {
                         close_completion = completion;
+                        discard_pending_output = true;
                         if let Err(error) = shell.close().await {
                             send_error(&on_event, error);
                             failed = true;
@@ -965,6 +978,7 @@ async fn run_session(
                         break;
                     }
                     None => {
+                        discard_pending_output = true;
                         if let Err(error) = shell.close().await {
                             send_error(&on_event, error);
                             failed = true;
@@ -972,6 +986,20 @@ async fn run_session(
                         break;
                     }
                 }
+            }
+            _ = wait_for_flush(flush_deadline), if flush_deadline.is_some() => {
+                if output.flush(&on_output).is_err() {
+                    send_output_channel_error(&on_event);
+                    failed = true;
+                    discard_pending_output = true;
+                    break;
+                }
+            }
+            _ = wait_for_flush(acknowledgement_deadline), if acknowledgement_deadline.is_some() => {
+                send_output_channel_error(&on_event);
+                failed = true;
+                discard_pending_output = true;
+                break;
             }
             event = shell.next_event(), if output.can_read() => {
                 match event {
@@ -981,6 +1009,9 @@ async fn run_session(
                         if output.should_flush()
                             && output.flush(&on_output).is_err()
                         {
+                            send_output_channel_error(&on_event);
+                            failed = true;
+                            discard_pending_output = true;
                             break;
                         }
                     }
@@ -995,21 +1026,20 @@ async fn run_session(
                     }
                 }
             }
-            _ = wait_for_flush(flush_deadline), if flush_deadline.is_some() => {
-                if output.flush(&on_output).is_err() {
-                    break;
-                }
-            }
         }
     }
 
-    let _ = output.flush(&on_output);
-    if !failed {
-        let _ = on_event.send(TerminalEvent::Exited {
-            code: exit_code,
-            signal: exit_signal,
-        });
+    if !discard_pending_output && output.has_pending() {
+        match output.flush(&on_output) {
+            Ok(true) => {}
+            Ok(false) | Err(_) if !failed => {
+                send_output_channel_error(&on_event);
+                failed = true;
+            }
+            Ok(false) | Err(_) => {}
+        }
     }
+    send_terminal_completion(&on_event, failed, exit_code, exit_signal);
     manager.sessions.lock().await.remove(&session_id);
     session_manager.remove_session(&session_id, SessionKind::Terminal);
     drop(shell);
@@ -1047,7 +1077,15 @@ impl TerminalOutputFlow {
     }
 
     fn can_read(&self) -> bool {
+        self.can_flush() && self.pending.len() < OUTPUT_BATCH_MAX_BYTES
+    }
+
+    fn can_flush(&self) -> bool {
         self.in_flight.len() < OUTPUT_MAX_IN_FLIGHT_BATCHES
+    }
+
+    fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
     }
 
     fn push(&mut self, data: Vec<u8>) {
@@ -1065,24 +1103,41 @@ impl TerminalOutputFlow {
     }
 
     fn flush_deadline(&self) -> Option<Instant> {
+        if !self.can_flush() {
+            return None;
+        }
         self.pending_since
             .map(|started| started + OUTPUT_BATCH_MAX_DELAY)
     }
 
-    fn flush(&mut self, channel: &Channel<TerminalOutput>) -> tauri::Result<()> {
-        if self.pending.is_empty() {
-            return Ok(());
+    fn acknowledgement_deadline(&self) -> Option<Instant> {
+        self.in_flight
+            .front()
+            .map(|batch| batch.sent_at + OUTPUT_ACK_TIMEOUT)
+    }
+
+    fn flush(&mut self, channel: &Channel<TerminalOutput>) -> tauri::Result<bool> {
+        if self.pending.is_empty() || !self.can_flush() {
+            return Ok(false);
         }
 
-        let data = std::mem::replace(
+        let mut data = std::mem::replace(
             &mut self.pending,
             Vec::with_capacity(OUTPUT_BATCH_MAX_BYTES),
         );
+        if data.len() > OUTPUT_BATCH_MAX_BYTES {
+            self.pending = data.split_off(OUTPUT_BATCH_MAX_BYTES);
+        }
         channel.send(TerminalOutput(data))?;
-        self.pending_since = None;
-        self.in_flight.push_back(self.next_sequence);
+        if self.pending.is_empty() {
+            self.pending_since = None;
+        }
+        self.in_flight.push_back(InFlightOutput {
+            sequence: self.next_sequence,
+            sent_at: Instant::now(),
+        });
         self.next_sequence += 1;
-        Ok(())
+        Ok(true)
     }
 
     fn acknowledge(&mut self, sequence: u64) {
@@ -1093,7 +1148,7 @@ impl TerminalOutputFlow {
         while self
             .in_flight
             .front()
-            .is_some_and(|in_flight| *in_flight <= sequence)
+            .is_some_and(|in_flight| in_flight.sequence <= sequence)
         {
             self.in_flight.pop_front();
         }
@@ -1115,12 +1170,31 @@ fn send_error(channel: &Channel<TerminalEvent>, error: SshError) {
     });
 }
 
+fn send_output_channel_error(channel: &Channel<TerminalEvent>) {
+    let _ = channel.send(TerminalEvent::Error {
+        code: CommandErrorCode::TerminalOutputUnavailable,
+        message: "terminal output delivery stopped before it could be acknowledged".to_owned(),
+    });
+}
+
+fn send_terminal_completion(
+    channel: &Channel<TerminalEvent>,
+    failed: bool,
+    code: Option<u32>,
+    signal: Option<String>,
+) {
+    if !failed {
+        let _ = channel.send(TerminalEvent::Exited { code, signal });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex as StdMutex};
 
     use super::{
-        SessionCommand, TerminalOutputFlow, TerminalSessionManager, OUTPUT_BATCH_MAX_BYTES,
+        send_output_channel_error, send_terminal_completion, SessionCommand, TerminalOutputFlow,
+        TerminalSessionManager, OUTPUT_ACK_TIMEOUT, OUTPUT_BATCH_MAX_BYTES,
         OUTPUT_MAX_IN_FLIGHT_BATCHES,
     };
     use crate::command_error::CommandErrorCode;
@@ -1206,10 +1280,103 @@ mod tests {
         flow.flush(&channel).unwrap();
 
         flow.acknowledge(2);
-        assert_eq!(flow.in_flight.front(), Some(&1));
+        assert_eq!(flow.in_flight.front().map(|batch| batch.sequence), Some(1));
 
         flow.acknowledge(1);
         assert!(flow.in_flight.is_empty());
+    }
+
+    #[test]
+    fn splits_oversized_output_without_exceeding_the_ack_window() {
+        let delivered = Arc::new(StdMutex::new(Vec::new()));
+        let delivered_for_channel = delivered.clone();
+        let channel = Channel::new(move |body| {
+            if let InvokeResponseBody::Raw(data) = body {
+                delivered_for_channel.lock().unwrap().push(data);
+            }
+            Ok(())
+        });
+        let mut flow = TerminalOutputFlow::new();
+        let total_bytes = OUTPUT_BATCH_MAX_BYTES * (OUTPUT_MAX_IN_FLIGHT_BATCHES + 1) + 17;
+        flow.push(vec![0x5a; total_bytes]);
+
+        for _ in 0..OUTPUT_MAX_IN_FLIGHT_BATCHES {
+            assert!(flow.flush(&channel).unwrap());
+        }
+        assert!(!flow.can_flush());
+        assert!(!flow.can_read());
+        assert!(!flow.flush(&channel).unwrap());
+        assert_eq!(flow.in_flight.len(), OUTPUT_MAX_IN_FLIGHT_BATCHES);
+        assert_eq!(
+            delivered.lock().unwrap().len(),
+            OUTPUT_MAX_IN_FLIGHT_BATCHES
+        );
+
+        flow.acknowledge(1);
+        assert!(flow.flush(&channel).unwrap());
+        assert_eq!(flow.pending.len(), 17);
+        flow.acknowledge(2);
+        assert!(flow.flush(&channel).unwrap());
+        assert!(!flow.has_pending());
+
+        let delivered = delivered.lock().unwrap();
+        assert_eq!(delivered.len(), OUTPUT_MAX_IN_FLIGHT_BATCHES + 2);
+        assert!(delivered
+            .iter()
+            .all(|batch| batch.len() <= OUTPUT_BATCH_MAX_BYTES));
+        assert_eq!(delivered.iter().map(Vec::len).sum::<usize>(), total_bytes);
+    }
+
+    #[test]
+    fn tracks_the_oldest_unacknowledged_batch_deadline() {
+        let channel = Channel::new(|_| Ok(()));
+        let mut flow = TerminalOutputFlow::new();
+        flow.push(b"terminal output".to_vec());
+        assert!(flow.flush(&channel).unwrap());
+
+        let oldest = flow.in_flight.front().unwrap();
+        assert_eq!(
+            flow.acknowledgement_deadline(),
+            Some(oldest.sent_at + OUTPUT_ACK_TIMEOUT)
+        );
+
+        flow.acknowledge(oldest.sequence);
+        assert!(flow.acknowledgement_deadline().is_none());
+    }
+
+    #[test]
+    fn output_channel_failure_suppresses_exit_and_releases_its_capture() {
+        let captured = Arc::new(());
+        let captured_by_channel = captured.clone();
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let events_for_channel = events.clone();
+        let event_channel = Channel::new(move |body| {
+            if let InvokeResponseBody::Json(data) = body {
+                events_for_channel.lock().unwrap().push(data);
+            }
+            Ok(())
+        });
+        let mut flow = TerminalOutputFlow::new();
+        flow.push(b"undeliverable output".to_vec());
+
+        {
+            let output_channel = Channel::new(move |_| {
+                let _ = Arc::strong_count(&captured_by_channel);
+                Err(std::io::Error::other("output channel closed").into())
+            });
+            assert!(flow.flush(&output_channel).is_err());
+            assert!(flow.in_flight.is_empty());
+            assert_eq!(flow.next_sequence, 1);
+            send_output_channel_error(&event_channel);
+            send_terminal_completion(&event_channel, true, Some(0), None);
+            assert_eq!(Arc::strong_count(&captured), 2);
+        }
+
+        assert_eq!(Arc::strong_count(&captured), 1);
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(events[0].contains("terminal_output_unavailable"));
+        assert!(!events[0].contains("exited"));
     }
 
     #[tokio::test]

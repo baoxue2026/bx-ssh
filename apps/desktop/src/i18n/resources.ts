@@ -487,6 +487,7 @@ export const resources = {
         protocol: "SSH / PTY",
         resetState: "重置终端状态",
         selectAll: "选择全部内容",
+        outputUnavailable: "终端输出通道已中断，请重新连接",
         type: "终端类型",
       },
       sftp: {
@@ -1090,6 +1091,8 @@ export const resources = {
         protocol: "SSH / PTY",
         resetState: "Reset Terminal State",
         selectAll: "Select All Content",
+        outputUnavailable:
+          "Terminal output delivery stopped. Reconnect the session.",
         type: "Terminal type",
       },
       sftp: {
