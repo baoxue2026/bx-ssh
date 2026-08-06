@@ -4,6 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
 import "@xterm/xterm/css/xterm.css";
 import { MONOSPACE_FONT_STACK } from "../ui/fontStacks";
+import { TERMINAL_THEME } from "./terminalAppearance";
 
 export interface TerminalViewport {
   columns: number;
@@ -61,25 +62,13 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         convertEol: false,
         cursorBlink: true,
         cursorStyle: "block",
+        drawBoldTextInBrightColors: true,
         fontFamily: MONOSPACE_FONT_STACK,
         fontSize: 13,
         lineHeight: 1.15,
+        minimumContrastRatio: 1,
         scrollback: 100_000,
-        theme: {
-          background: "#0a0a0a",
-          foreground: "#d6d6d6",
-          cursor: "#d1faf5",
-          cursorAccent: "#0a0a0a",
-          selectionBackground: "#0d948899",
-          black: "#151515",
-          red: "#e06c75",
-          green: "#8fca75",
-          yellow: "#e5c07b",
-          blue: "#5eead4",
-          magenta: "#c678dd",
-          cyan: "#5eead4",
-          white: "#d6d6d6",
-        },
+        theme: TERMINAL_THEME,
       });
       const fitAddon = new FitAddon();
       terminal.loadAddon(fitAddon);
