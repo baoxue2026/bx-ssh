@@ -959,6 +959,37 @@ export function App() {
     }
   };
 
+  const reconnectSession = async () => {
+    if (
+      connectionState !== "disconnected" ||
+      !activeSessionTab ||
+      connectionFlowPendingRef.current
+    ) {
+      return;
+    }
+
+    const connectionId =
+      loadedConnectionIdRef.current ?? activeSessionTab.connectionId;
+    const saved = connectionId
+      ? connectionCatalog.connections.find(
+          (item) => item.config.id === connectionId,
+        )
+      : undefined;
+    if (saved) {
+      await loadSavedConnection(saved);
+      return;
+    }
+
+    // Unsaved direct connections retain only the endpoint and host trust.
+    // Authentication is deliberately requested again after a disconnect.
+    setConnectionState(hostKey ? "ready" : "idle");
+    setConnectionLaunchStep(
+      launchAuthMethod === "keyboardInteractive"
+        ? "keyboardInteractive"
+        : "password",
+    );
+  };
+
   const recordLoadedConnectionSuccess = async () => {
     const id = loadedConnectionIdRef.current;
     if (!id) return;
@@ -1151,7 +1182,7 @@ export function App() {
       setSessionCloseError(null);
       if (event.type === "error") {
         setErrorMessage(commandErrorText(event.code, event.message, t));
-        setConnectionState("failed");
+        setConnectionState("disconnected");
         return;
       }
 
@@ -2552,6 +2583,19 @@ export function App() {
                 block
               >
                 {t("connection.cancel")}
+              </Button>
+            ) :
+              !activeSessionId &&
+                connectionState === "disconnected" &&
+                activeSessionTab ? (
+              <Button
+                type="primary"
+                icon={<RefreshCw size={15} />}
+                disabled={busy}
+                onClick={() => void reconnectSession()}
+                block
+              >
+                {t("connection.reconnect")}
               </Button>
             ) : !activeSessionId ? (
               <Button
