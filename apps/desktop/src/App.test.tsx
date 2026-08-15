@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   },
   terminalReset: vi.fn(),
   terminalClearScrollback: vi.fn(),
+  terminalOpenSearch: vi.fn(),
   terminalPaste: vi.fn(),
   terminalSelection: "",
   terminalSelectAll: vi.fn(),
@@ -85,6 +86,7 @@ vi.mock("./components/TerminalPane", async () => {
         }),
         focus: vi.fn(),
         getSelection: () => mocks.terminalSelection,
+        openSearch: mocks.terminalOpenSearch,
         paste: mocks.terminalPaste,
         reset: mocks.terminalReset,
         selectAll: mocks.terminalSelectAll,
@@ -126,6 +128,7 @@ describe("App", { timeout: 15_000 }, () => {
     mocks.window.toggleMaximize.mockClear();
     mocks.terminalReset.mockReset();
     mocks.terminalClearScrollback.mockReset();
+    mocks.terminalOpenSearch.mockReset();
     mocks.terminalPaste.mockReset();
     mocks.terminalSelection = "";
     mocks.terminalSelectAll.mockReset();

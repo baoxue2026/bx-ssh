@@ -552,7 +552,11 @@ export function App() {
       }
 
       if (!event.shiftKey) return;
-      if (event.key.toLowerCase() === "u") {
+      if (event.key.toLowerCase() === "f") {
+        if (workspaceMode !== "terminal" || !activeSessionTab) return;
+        event.preventDefault();
+        terminalRef.current?.openSearch();
+      } else if (event.key.toLowerCase() === "u") {
         event.preventDefault();
         setUpdateRequestId((current) => current + 1);
       } else if (event.key.toLowerCase() === "q") {
@@ -565,7 +569,7 @@ export function App() {
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [selectWorkspaceMode]);
+  }, [activeSessionTab, selectWorkspaceMode, workspaceMode]);
 
   useEffect(() => {
     let disposed = false;
@@ -2869,6 +2873,17 @@ export function App() {
                       : t("sftp.notConnected")}
                   </span>
                   <div className="terminal-toolbar-actions">
+                    <Tooltip
+                      title={`${t("terminal.search.label")} (Ctrl+Shift+F)`}
+                    >
+                      <Button
+                        aria-label={t("terminal.search.label")}
+                        icon={<Search size={14} />}
+                        size="small"
+                        type="text"
+                        onClick={() => terminalRef.current?.openSearch()}
+                      />
+                    </Tooltip>
                     <Tooltip
                       title={`${t("terminal.copySelection")} (Ctrl+Shift+C)`}
                     >

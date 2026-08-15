@@ -1,5 +1,12 @@
 import { createRef } from "react";
-import { act, cleanup, render } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalPane, type TerminalHandle } from "./TerminalPane";
 
@@ -28,10 +35,20 @@ interface MockFitAddonInstance {
   fit: ReturnType<typeof vi.fn>;
 }
 
+interface MockSearchAddonInstance {
+  clearDecorations: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+  emitResults(event: { resultCount: number; resultIndex: number }): void;
+  findNext: ReturnType<typeof vi.fn>;
+  findPrevious: ReturnType<typeof vi.fn>;
+}
+
 const xtermMocks = vi.hoisted(() => ({
   dataDisposables: [] as Array<{ dispose: ReturnType<typeof vi.fn> }>,
   fitAddons: [] as MockFitAddonInstance[],
   linkHandlers: [] as Array<(event: MouseEvent, url: string) => void>,
+  searchAddons: [] as MockSearchAddonInstance[],
+  searchResultDisposables: [] as Array<{ dispose: ReturnType<typeof vi.fn> }>,
   selectionDisposables: [] as Array<{ dispose: ReturnType<typeof vi.fn> }>,
   terminals: [] as MockTerminalInstance[],
   terminalOptions: [] as Array<Record<string, unknown>>,
@@ -105,6 +122,35 @@ vi.mock("@xterm/addon-fit", () => ({
   },
 }));
 
+vi.mock("@xterm/addon-search", () => ({
+  SearchAddon: class MockSearchAddon implements MockSearchAddonInstance {
+    clearDecorations = vi.fn();
+    dispose = vi.fn();
+    findNext = vi.fn(() => true);
+    findPrevious = vi.fn(() => true);
+    private resultHandler:
+      ((event: { resultCount: number; resultIndex: number }) => void) | null =
+      null;
+
+    constructor() {
+      xtermMocks.searchAddons.push(this);
+    }
+
+    onDidChangeResults(
+      handler: (event: { resultCount: number; resultIndex: number }) => void,
+    ) {
+      this.resultHandler = handler;
+      const disposable = { dispose: vi.fn() };
+      xtermMocks.searchResultDisposables.push(disposable);
+      return disposable;
+    }
+
+    emitResults(event: { resultCount: number; resultIndex: number }) {
+      this.resultHandler?.(event);
+    }
+  },
+}));
+
 vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: class MockWebLinksAddon {
     constructor(handler: (event: MouseEvent, url: string) => void) {
@@ -114,7 +160,14 @@ vi.mock("@xterm/addon-web-links", () => ({
 }));
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, options?: { current?: number; total?: number }) =>
+      key === "terminal.search.results" &&
+      options?.current !== undefined &&
+      options.total !== undefined
+        ? `${options.current} / ${options.total}`
+        : key,
+  }),
 }));
 
 class MockResizeObserver implements ResizeObserver {
@@ -143,6 +196,8 @@ describe("TerminalPane", () => {
     xtermMocks.dataDisposables.length = 0;
     xtermMocks.fitAddons.length = 0;
     xtermMocks.linkHandlers.length = 0;
+    xtermMocks.searchAddons.length = 0;
+    xtermMocks.searchResultDisposables.length = 0;
     xtermMocks.selectionDisposables.length = 0;
     xtermMocks.terminals.length = 0;
     xtermMocks.terminalOptions.length = 0;
@@ -185,7 +240,10 @@ describe("TerminalPane", () => {
       />,
     );
     const terminalContainer = container.firstElementChild as HTMLDivElement;
-    Object.defineProperties(terminalContainer, {
+    const terminalSurface = terminalContainer.querySelector(
+      ".terminal-surface",
+    ) as HTMLDivElement;
+    Object.defineProperties(terminalSurface, {
       clientWidth: { configurable: true, value: 960 },
       clientHeight: { configurable: true, value: 600 },
     });
@@ -390,6 +448,10 @@ describe("TerminalPane", () => {
 
     expect(observer.disconnect).toHaveBeenCalledTimes(1);
     expect(xtermMocks.dataDisposables[0].dispose).toHaveBeenCalledTimes(1);
+    expect(xtermMocks.searchResultDisposables[0].dispose).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(xtermMocks.searchAddons[0].dispose).toHaveBeenCalledTimes(1);
     expect(xtermMocks.selectionDisposables[0].dispose).toHaveBeenCalledTimes(1);
     expect(terminal.dispose).toHaveBeenCalledTimes(1);
     expect(animationFrames).toHaveLength(0);
@@ -413,6 +475,100 @@ describe("TerminalPane", () => {
 
     expect(xtermMocks.fitAddons[0].fit).toHaveBeenCalledTimes(1);
     expect(onResize).toHaveBeenCalledTimes(1);
+  });
+
+  it("searches the terminal buffer with navigation and matching options", () => {
+    render(<TerminalPane connected onData={vi.fn()} onResize={vi.fn()} />);
+
+    const shortcut = new KeyboardEvent("keydown", {
+      cancelable: true,
+      ctrlKey: true,
+      key: "f",
+      shiftKey: true,
+    });
+    act(() => {
+      expect(xtermMocks.terminals[0].emitKey(shortcut)).toBe(false);
+    });
+    expect(shortcut.defaultPrevented).toBe(true);
+    const search = screen.getByRole("search", {
+      name: "terminal.search.label",
+    });
+    const input = screen.getByRole("textbox", {
+      name: "terminal.search.input",
+    });
+    const addon = xtermMocks.searchAddons[0];
+
+    fireEvent.change(input, { target: { value: "error" } });
+    expect(addon.findNext).toHaveBeenLastCalledWith(
+      "error",
+      expect.objectContaining({
+        caseSensitive: false,
+        regex: false,
+      }),
+    );
+    act(() => addon.emitResults({ resultCount: 3, resultIndex: 1 }));
+    expect(within(search).getByRole("status")).toHaveTextContent("2 / 3");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "terminal.search.caseSensitive" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "terminal.search.regex" }),
+    );
+    expect(addon.findNext).toHaveBeenLastCalledWith(
+      "error",
+      expect.objectContaining({
+        caseSensitive: true,
+        regex: true,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "terminal.search.previous" }),
+    );
+    expect(addon.findPrevious).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({ caseSensitive: true, regex: true }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "terminal.search.next" }),
+    );
+    expect(addon.findNext).toHaveBeenLastCalledWith(
+      "error",
+      expect.objectContaining({ incremental: false }),
+    );
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("search")).not.toBeInTheDocument();
+    expect(addon.clearDecorations).toHaveBeenCalled();
+  });
+
+  it("reports invalid regular expressions and allows closing with the close button", () => {
+    const ref = createRef<TerminalHandle>();
+    render(
+      <TerminalPane ref={ref} connected onData={vi.fn()} onResize={vi.fn()} />,
+    );
+
+    act(() => ref.current?.openSearch());
+    const input = screen.getByRole("textbox", {
+      name: "terminal.search.input",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "terminal.search.regex" }),
+    );
+    fireEvent.change(input, { target: { value: "[" } });
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "terminal.search.invalidRegex",
+    );
+    expect(xtermMocks.searchAddons[0].findNext).not.toHaveBeenCalledWith(
+      "[",
+      expect.anything(),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "terminal.search.close" }),
+    );
+    expect(screen.queryByRole("search")).not.toBeInTheDocument();
   });
 });
 
