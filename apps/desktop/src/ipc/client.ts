@@ -8,6 +8,8 @@ import {
   type ConnectionSettingsOverride,
   type HostKeyInfo,
   type KeyboardInteractiveEvent,
+  type LocalDirectoryListing,
+  type LocalFileEntry,
   type OpenSshImportRequest,
   type ProbeHostRequest,
   type Result,
@@ -223,6 +225,10 @@ export const ipc = {
     unwrap(() => commands.hashRemoteSftpFile(sessionId, remotePath)),
   closeSftpSession: (sessionId: string) =>
     unwrapVoid(() => commands.closeSftpSession(sessionId)),
+  listLocalDirectory: (path: string): Promise<LocalDirectoryListing> =>
+    unwrap(() => commands.listLocalDirectory({ path })),
+  statLocalPath: (path: string): Promise<LocalFileEntry> =>
+    unwrap(() => commands.statLocalPath({ path })),
   setWebviewMemoryUsage: (low: boolean) =>
     unwrapVoid(() => commands.setWebviewMemoryUsage(low)),
   checkForUpdate: () => unwrap(() => commands.checkForUpdate()),

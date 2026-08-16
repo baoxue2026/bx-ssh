@@ -13,6 +13,11 @@ pub(crate) enum CommandErrorCode {
     InvalidFingerprint,
     InvalidTerminalSize,
     InvalidRemotePath,
+    InvalidLocalPath,
+    LocalPathNotFound,
+    LocalPathNotDirectory,
+    LocalPathPermissionDenied,
+    LocalPathIoError,
     InvalidLocalFile,
     LocalTargetExists,
     RemoteTargetExists,
@@ -100,6 +105,10 @@ impl CommandError {
             CommandErrorCode::SessionClosed,
             format!("{kind} session is already closed"),
         )
+    }
+
+    pub(crate) fn local_path(code: CommandErrorCode, message: impl Into<String>) -> Self {
+        Self::new(code, message)
     }
 
     pub(crate) fn update(code: CommandErrorCode, message: impl Into<String>) -> Self {

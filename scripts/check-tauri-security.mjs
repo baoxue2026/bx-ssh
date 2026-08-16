@@ -34,6 +34,8 @@ const reviewedApplicationCommands = [
   "download_sftp_file",
   "hash_remote_sftp_file",
   "close_sftp_session",
+  "list_local_directory",
+  "stat_local_path",
   "set_webview_memory_usage",
   "check_for_update",
   "install_update",

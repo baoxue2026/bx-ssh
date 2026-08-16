@@ -88,6 +88,35 @@ pub struct RemoteDirectoryListing {
     pub entries: Vec<RemoteFileEntry>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum LocalFileKind {
+    Directory,
+    File,
+    Symlink,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalFileEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: LocalFileKind,
+    pub size: u64,
+    pub modified_at: Option<u64>,
+    pub readonly: bool,
+    pub hidden: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalDirectoryListing {
+    pub path: String,
+    pub parent_path: Option<String>,
+    pub entries: Vec<LocalFileEntry>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferSummary {
@@ -100,7 +129,8 @@ pub struct TransferSummary {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppInfo, HostKeyInfo, RemoteFileEntry, RemoteFileKind, SshConnectionStage, TransferSummary,
+        AppInfo, HostKeyInfo, LocalDirectoryListing, LocalFileEntry, LocalFileKind,
+        RemoteFileEntry, RemoteFileKind, SshConnectionStage, TransferSummary,
     };
 
     #[test]
@@ -154,5 +184,28 @@ mod tests {
         assert_eq!(entry.kind, RemoteFileKind::File);
         assert_eq!(entry.permissions, Some(0o640));
         assert_eq!(summary.bytes_per_second, 51_200);
+    }
+
+    #[test]
+    fn serializes_local_file_contracts_with_stable_path_types() {
+        let entry = LocalFileEntry {
+            name: "Downloads".to_owned(),
+            path: "C:\\Users\\bxssh\\Downloads".to_owned(),
+            kind: LocalFileKind::Directory,
+            size: 0,
+            modified_at: Some(1_700_000_000),
+            readonly: false,
+            hidden: false,
+        };
+        let listing = LocalDirectoryListing {
+            path: "C:\\Users\\bxssh".to_owned(),
+            parent_path: Some("C:\\Users".to_owned()),
+            entries: vec![entry],
+        };
+
+        let serialized = serde_json::to_value(listing).unwrap();
+        assert_eq!(serialized["parentPath"], "C:\\Users");
+        assert_eq!(serialized["entries"][0]["kind"], "directory");
+        assert_eq!(serialized["entries"][0]["readonly"], false);
     }
 }

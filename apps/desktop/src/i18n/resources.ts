@@ -601,6 +601,11 @@ export const resources = {
         authenticationRejected: "服务器拒绝了私钥认证，请确认公钥和账户权限。",
         legacyRsaSignatureOnly:
           "服务器仅提供已弃用的 SHA-1 RSA 签名，连接已阻止。",
+        invalidLocalPath: "本地路径为空或包含无效字符。",
+        localPathNotFound: "本地路径不存在或已被移除。",
+        localPathNotDirectory: "本地路径不是目录。",
+        localPathPermissionDenied: "没有权限访问该本地路径。",
+        localPathIoError: "读取本地路径时发生 I/O 错误。",
       },
       feedback: {
         loading: "正在加载",
@@ -1260,6 +1265,13 @@ export const resources = {
           "The server rejected private-key authentication. Verify the public key and account permissions.",
         legacyRsaSignatureOnly:
           "The server only offers the deprecated SHA-1 RSA signature, so the connection was blocked.",
+        invalidLocalPath:
+          "The local path is empty or contains invalid characters.",
+        localPathNotFound: "The local path does not exist or was removed.",
+        localPathNotDirectory: "The local path is not a directory.",
+        localPathPermissionDenied:
+          "You do not have permission to access this local path.",
+        localPathIoError: "An I/O error occurred while reading the local path.",
       },
       feedback: {
         loading: "Loading",

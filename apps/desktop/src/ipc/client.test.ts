@@ -118,6 +118,37 @@ describe("IPC client", () => {
     });
   });
 
+  it("uses the controlled local file service commands", async () => {
+    const listing = {
+      path: "C:\\Users\\bxssh",
+      parentPath: "C:\\Users",
+      entries: [],
+    };
+    mocks.invoke.mockResolvedValue(listing);
+
+    await expect(ipc.listLocalDirectory("C:\\Users\\bxssh")).resolves.toEqual(
+      listing,
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("list_local_directory", {
+      request: { path: "C:\\Users\\bxssh" },
+    });
+
+    const entry = {
+      name: "notes.txt",
+      path: "C:\\Users\\bxssh\\notes.txt",
+      kind: "file",
+      size: 10,
+      modifiedAt: 1_700_000_000,
+      readonly: false,
+      hidden: false,
+    };
+    mocks.invoke.mockResolvedValue(entry);
+    await expect(ipc.statLocalPath(entry.path)).resolves.toEqual(entry);
+    expect(mocks.invoke).toHaveBeenCalledWith("stat_local_path", {
+      request: { path: entry.path },
+    });
+  });
+
   it("uses generated connection mutation commands", async () => {
     const config = {
       id: "connection-1",
@@ -286,7 +317,9 @@ describe("IPC client", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("read_clipboard_text");
 
     mocks.invoke.mockResolvedValueOnce(null);
-    await expect(ipc.writeClipboardText("echo bx-ssh")).resolves.toBeUndefined();
+    await expect(
+      ipc.writeClipboardText("echo bx-ssh"),
+    ).resolves.toBeUndefined();
     expect(mocks.invoke).toHaveBeenCalledWith("write_clipboard_text", {
       text: "echo bx-ssh",
     });

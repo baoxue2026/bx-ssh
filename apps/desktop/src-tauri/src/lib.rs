@@ -16,6 +16,7 @@ mod connections;
 mod desktop_shell;
 mod external_links;
 mod lifecycle;
+mod local_files;
 mod openssh_import;
 mod platform;
 mod private_keys;
@@ -36,6 +37,7 @@ use connections::{
 use desktop_shell::AppMenuAction;
 use external_links::open_external_url;
 use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
+use local_files::{list_local_directory, stat_local_path};
 use openssh_import::{import_openssh_connections, preview_openssh_config};
 use platform::set_webview_memory_usage;
 use session_manager::{cancel_ssh_connection, SshSessionManager};
@@ -84,6 +86,8 @@ fn command_builder() -> Builder<tauri::Wry> {
             platform::set_webview_memory_usage,
             update::check_for_update,
             lifecycle::confirm_app_exit,
+            local_files::list_local_directory,
+            local_files::stat_local_path,
             connections::list_connections,
             connections::get_connection,
             connections::save_connection,
@@ -231,6 +235,8 @@ pub fn run() {
             check_for_update,
             install_update,
             confirm_app_exit,
+            list_local_directory,
+            stat_local_path,
             list_connections,
             get_connection,
             save_connection,

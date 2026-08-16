@@ -3989,6 +3989,16 @@ function commandErrorText(
       return t("errors.authenticationRejected");
     case "legacy_rsa_signature_only":
       return t("errors.legacyRsaSignatureOnly");
+    case "invalid_local_path":
+      return t("errors.invalidLocalPath");
+    case "local_path_not_found":
+      return t("errors.localPathNotFound");
+    case "local_path_not_directory":
+      return t("errors.localPathNotDirectory");
+    case "local_path_permission_denied":
+      return t("errors.localPathPermissionDenied");
+    case "local_path_io_error":
+      return t("errors.localPathIoError");
     case "keep_alive_failed":
       return t("errors.keepAliveFailed");
     case "clipboard_unavailable":
