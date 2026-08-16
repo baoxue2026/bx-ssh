@@ -1465,6 +1465,27 @@ select {
   font-size: 9px;
 }
 
+.session-tab-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.session-tab-action.ant-btn {
+  width: 19px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0;
+}
+
+.session-tab-rename-input.ant-input {
+  width: 100%;
+  min-width: 0;
+  height: 21px;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
 .session-tab-close.ant-btn {
   width: 21px;
   min-width: 21px;

@@ -69,7 +69,11 @@ import {
 } from "./components/ConnectionLaunchDialog";
 import { ConnectionWorkspaceEmptyState } from "./components/ConnectionWorkspaceEmptyState";
 import { OpenSshImportDialog } from "./components/OpenSshImportDialog";
-import { SessionTabBar, type SessionTab } from "./components/SessionTabBar";
+import {
+  SessionTabBar,
+  type SessionTab,
+  type SessionTabStatus,
+} from "./components/SessionTabBar";
 import { SettingsView } from "./components/SettingsView";
 import {
   TerminalPane,
@@ -275,6 +279,7 @@ export function App() {
   const [activeSessionTab, setActiveSessionTab] = useState<SessionTab | null>(
     null,
   );
+  const [sessionTabs, setSessionTabs] = useState<SessionTab[]>([]);
   const [connectionLaunchStep, setConnectionLaunchStep] =
     useState<ConnectionLaunchStep>();
   const [keyboardInteractivePrompt, setKeyboardInteractivePrompt] = useState<
@@ -335,6 +340,7 @@ export function App() {
   const connectionAttemptRef = useRef(0);
   const activeConnectionAttemptIdRef = useRef<string | null>(null);
   const connectionFlowPendingRef = useRef(false);
+  const terminalSessionIdsRef = useRef(new Map<string, string>());
   const sessionTabSequenceRef = useRef(0);
   const sftpOperationGenerationRef = useRef(0);
   const sessionCloseCancelButtonRef = useRef<HTMLButtonElement>(null);
@@ -348,6 +354,52 @@ export function App() {
     (error: unknown) => errorText(error, t),
     [t],
   );
+
+  const visibleSessionTabs = useMemo(() => {
+    if (!activeSessionTab) return sessionTabs;
+    return sessionTabs.map((tab) =>
+      tab.clientId === activeSessionTab.clientId
+        ? {
+            ...tab,
+            status: connectionState as SessionTabStatus,
+            statusLabel: connectionLabel(connectionState, connectionStage, t),
+          }
+        : tab,
+    );
+  }, [activeSessionTab, connectionStage, connectionState, sessionTabs, t]);
+
+  const renameSessionTab = (tab: SessionTab, name: string) => {
+    setSessionTabs((current) =>
+      current.map((item) =>
+        item.clientId === tab.clientId ? { ...item, name } : item,
+      ),
+    );
+    setActiveSessionTab((current) =>
+      current?.clientId === tab.clientId ? { ...current, name } : current,
+    );
+  };
+
+  const moveSessionTab = (tab: SessionTab, direction: "left" | "right") => {
+    setSessionTabs((current) => {
+      const index = current.findIndex((item) => item.clientId === tab.clientId);
+      const target = direction === "left" ? index - 1 : index + 1;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const updated = [...current];
+      [updated[index], updated[target]] = [updated[target], updated[index]];
+      return updated;
+    });
+  };
+
+  const selectSessionTab = (tab: SessionTab) => {
+    if (tab.clientId === activeSessionTab?.clientId) return;
+    setActiveSessionTab(tab);
+    setWorkspaceMode("terminal");
+    setLoadedConnectionId(tab.connectionId);
+    loadedConnectionIdRef.current = tab.connectionId;
+    setConnectionState(tab.status);
+    setConnectionStage(null);
+    setErrorMessage(null);
+  };
   const sessionTerminalFontSize =
     sessionTerminalFontOverride !== null &&
     activeSessionTab !== null &&
@@ -659,6 +711,11 @@ export function App() {
       if (activeSessionId) {
         void ipc.closeTerminalSession(activeSessionId);
       }
+      const knownSessionIds = new Set(terminalSessionIdsRef.current.values());
+      if (activeSessionId) knownSessionIds.delete(activeSessionId);
+      for (const knownSessionId of knownSessionIds) {
+        void ipc.closeTerminalSession(knownSessionId);
+      }
       const activeSftpSessionId = sftpSessionIdRef.current;
       if (activeSftpSessionId) {
         void ipc.closeSftpSession(activeSftpSessionId);
@@ -720,11 +777,7 @@ export function App() {
 
   const connectionLaunchBlocked = () =>
     connectionFlowPendingRef.current ||
-    ["probing", "connecting", "connected", "closing"].includes(
-      connectionStateRef.current,
-    ) ||
-    sessionIdRef.current !== null ||
-    sftpSessionIdRef.current !== null;
+    ["probing", "connecting", "closing"].includes(connectionStateRef.current);
 
   const beginConnectionFlow = async (
     config: ConnectionConfig,
@@ -736,12 +789,21 @@ export function App() {
 
     const request = ++connectionAttemptRef.current;
     connectionFlowPendingRef.current = true;
+    const duplicateCount = sessionTabs.filter(
+      (item) => item.connectionId === config.id,
+    ).length;
     const tab: SessionTab = {
       clientId: `session-tab-${++sessionTabSequenceRef.current}`,
       connectionId: config.id,
       endpoint: `${config.username}@${config.host}:${config.port}`,
-      name: config.name,
+      name:
+        duplicateCount > 0
+          ? `${config.name} (${duplicateCount + 1})`
+          : config.name,
+      status: "probing",
+      statusLabel: t("status.probing"),
     };
+    setSessionTabs((current) => [...current, tab]);
     setActiveSessionTab(tab);
     setWorkspaceMode("terminal");
     setHost(config.host);
@@ -1368,6 +1430,12 @@ export function App() {
       }
 
       sessionIdRef.current = response.sessionId;
+      if (activeSessionTab) {
+        terminalSessionIdsRef.current.set(
+          activeSessionTab.clientId,
+          response.sessionId,
+        );
+      }
       scheduleNormalMemoryUsage();
       setSessionId(response.sessionId);
       setHostKey(response.hostKey);
@@ -1547,9 +1615,24 @@ export function App() {
     setHostKey(null);
     setConnectionState("idle");
     setConnectionStage(null);
-    setActiveSessionTab(null);
-    setLoadedConnectionId(null);
-    loadedConnectionIdRef.current = null;
+    const cancelledTabId = activeSessionTab?.clientId;
+    const remainingTabs = cancelledTabId
+      ? sessionTabs.filter((tab) => tab.clientId !== cancelledTabId)
+      : sessionTabs;
+    if (cancelledTabId) terminalSessionIdsRef.current.delete(cancelledTabId);
+    const nextTab = remainingTabs.at(-1) ?? null;
+    setSessionTabs(remainingTabs);
+    setActiveSessionTab(nextTab);
+    const nextSessionId = nextTab
+      ? (terminalSessionIdsRef.current.get(nextTab.clientId) ?? null)
+      : null;
+    sessionIdRef.current = nextSessionId;
+    setSessionId(nextSessionId);
+    setLoadedConnectionId(nextTab?.connectionId ?? null);
+    loadedConnectionIdRef.current = nextTab?.connectionId ?? null;
+    if (nextTab) {
+      setConnectionState(nextSessionId ? nextTab.status : "disconnected");
+    }
     setConnectionSettings(DEFAULT_CONNECTION_SETTINGS);
   };
 
@@ -1645,9 +1728,24 @@ export function App() {
     setSessionCloseOpen(false);
     setSessionClosePending(false);
     setSessionCloseError(null);
-    setActiveSessionTab(null);
-    setLoadedConnectionId(null);
-    loadedConnectionIdRef.current = null;
+    const closingTabId = activeSessionTab?.clientId;
+    const remainingTabs = closingTabId
+      ? sessionTabs.filter((tab) => tab.clientId !== closingTabId)
+      : sessionTabs;
+    if (closingTabId) terminalSessionIdsRef.current.delete(closingTabId);
+    const nextTab = remainingTabs.at(-1) ?? null;
+    setSessionTabs(remainingTabs);
+    setActiveSessionTab(nextTab);
+    const nextSessionId = nextTab
+      ? (terminalSessionIdsRef.current.get(nextTab.clientId) ?? null)
+      : null;
+    sessionIdRef.current = nextSessionId;
+    setSessionId(nextSessionId);
+    setLoadedConnectionId(nextTab?.connectionId ?? null);
+    loadedConnectionIdRef.current = nextTab?.connectionId ?? null;
+    if (nextTab) {
+      setConnectionState(nextSessionId ? nextTab.status : "disconnected");
+    }
     setHostKey(null);
     setTrusted(false);
     setPassword("");
@@ -1668,6 +1766,21 @@ export function App() {
 
     setSessionCloseError(null);
     setSessionCloseOpen(true);
+  };
+
+  const closeSessionTab = (tab: SessionTab) => {
+    if (tab.clientId === activeSessionTab?.clientId) {
+      requestSessionClose();
+      return;
+    }
+    const terminalSessionId = terminalSessionIdsRef.current.get(tab.clientId);
+    if (terminalSessionId) {
+      terminalSessionIdsRef.current.delete(tab.clientId);
+      void ipc.closeTerminalSession(terminalSessionId).catch(() => undefined);
+    }
+    setSessionTabs((current) =>
+      current.filter((item) => item.clientId !== tab.clientId),
+    );
   };
 
   const confirmSessionClose = async () => {
@@ -2901,16 +3014,22 @@ export function App() {
         )}
 
         <main
-          className={`session-workspace${activeSessionTab ? " has-session-tab" : ""}`}
+          className={`session-workspace${sessionTabs.length ? " has-session-tab" : ""}`}
         >
-          {activeSessionTab && (
+          {sessionTabs.length > 0 && (
             <SessionTabBar
-              closing={connectionState === "closing"}
-              connectionState={connectionState}
+              activeClientId={activeSessionTab?.clientId ?? ""}
+              closingClientId={
+                connectionState === "closing"
+                  ? activeSessionTab?.clientId
+                  : undefined
+              }
               disabled={busy || connectionLaunchStep !== undefined}
-              statusLabel={connectionLabel(connectionState, connectionStage, t)}
-              tab={activeSessionTab}
-              onClose={requestSessionClose}
+              tabs={visibleSessionTabs}
+              onClose={closeSessionTab}
+              onMove={moveSessionTab}
+              onRename={renameSessionTab}
+              onSelect={selectSessionTab}
             />
           )}
           <div className="session-workspace-content">

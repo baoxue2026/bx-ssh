@@ -215,8 +215,14 @@ export const resources = {
           "请通过可信渠道核对该指纹。继续后，认证请求仍会校验同一指纹，防止连接期间被替换。",
       },
       sessionTabs: {
+        confirmRename: "确认重命名会话",
         closeNamed: "关闭会话 {{name}}",
         label: "SSH 会话",
+        moveLeft: "向左移动",
+        moveLeftNamed: "向左移动会话 {{name}}",
+        moveRight: "向右移动",
+        moveRightNamed: "向右移动会话 {{name}}",
+        renameNamed: "重命名会话 {{name}}",
       },
       sessionClose: {
         activeSessions_one: "{{count}} 个活动连接",
@@ -835,8 +841,14 @@ export const resources = {
           "Verify this fingerprint through a trusted channel. Authentication will enforce the same fingerprint to prevent replacement during connection setup.",
       },
       sessionTabs: {
+        confirmRename: "Confirm session rename",
         closeNamed: "Close session {{name}}",
         label: "SSH sessions",
+        moveLeft: "Move left",
+        moveLeftNamed: "Move session {{name}} left",
+        moveRight: "Move right",
+        moveRightNamed: "Move session {{name}} right",
+        renameNamed: "Rename session {{name}}",
       },
       sessionClose: {
         activeSessions_one: "{{count}} active connection",
