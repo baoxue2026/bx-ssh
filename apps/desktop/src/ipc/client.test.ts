@@ -149,6 +149,26 @@ describe("IPC client", () => {
     });
   });
 
+  it("uses the remote SFTP stat command", async () => {
+    const entry = {
+      name: "notes.txt",
+      path: "/tmp/notes.txt",
+      kind: "file",
+      size: 10,
+      modifiedAt: 1_700_000_000,
+      permissions: 0o640,
+    };
+    mocks.invoke.mockResolvedValue(entry);
+
+    await expect(
+      ipc.statSftpPath("sftp-session-1", "/tmp/notes.txt"),
+    ).resolves.toEqual(entry);
+    expect(mocks.invoke).toHaveBeenCalledWith("stat_sftp_path", {
+      sessionId: "sftp-session-1",
+      path: "/tmp/notes.txt",
+    });
+  });
+
   it("uses generated connection mutation commands", async () => {
     const config = {
       id: "connection-1",

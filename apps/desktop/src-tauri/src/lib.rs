@@ -43,7 +43,8 @@ use platform::set_webview_memory_usage;
 use session_manager::{cancel_ssh_connection, SshSessionManager};
 use sftp::{
     close_sftp_session, download_sftp_file, hash_remote_sftp_file, list_sftp_directory,
-    start_password_sftp, start_private_key_sftp, upload_sftp_file, SftpSessionManager,
+    start_password_sftp, start_private_key_sftp, stat_sftp_path, upload_sftp_file,
+    SftpSessionManager,
 };
 use terminal::{
     acknowledge_terminal_output, close_terminal_session, get_known_host, probe_ssh_host,
@@ -79,6 +80,7 @@ fn command_builder() -> Builder<tauri::Wry> {
             terminal::close_terminal_session,
             terminal::respond_keyboard_interactive,
             sftp::list_sftp_directory,
+            sftp::stat_sftp_path,
             sftp::upload_sftp_file,
             sftp::download_sftp_file,
             sftp::hash_remote_sftp_file,
@@ -226,6 +228,7 @@ pub fn run() {
             start_password_sftp,
             start_private_key_sftp,
             list_sftp_directory,
+            stat_sftp_path,
             upload_sftp_file,
             download_sftp_file,
             hash_remote_sftp_file,

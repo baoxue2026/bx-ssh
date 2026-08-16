@@ -30,6 +30,7 @@ const reviewedApplicationCommands = [
   "close_terminal_session",
   "start_password_sftp",
   "list_sftp_directory",
+  "stat_sftp_path",
   "upload_sftp_file",
   "download_sftp_file",
   "hash_remote_sftp_file",

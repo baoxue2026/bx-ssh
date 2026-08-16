@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bx_contracts::{
-    ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, SshConnectionStage, TransferSummary,
+    ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, RemoteFileEntry, SshConnectionStage,
+    TransferSummary,
 };
 use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
@@ -362,6 +363,21 @@ pub(crate) async fn list_sftp_directory(
     let session = manager.get(&session_id).await?;
     let session = session.lock().await;
     Ok(session.sftp.list_directory(&path).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn stat_sftp_path(
+    window: WebviewWindow,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    path: String,
+) -> Result<RemoteFileEntry, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let session = session.lock().await;
+    Ok(session.sftp.stat_path(&path).await?)
 }
 
 #[tauri::command]

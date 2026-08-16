@@ -3,8 +3,11 @@ import { Button, Input, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 import {
   ArrowUp,
+  ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   Download,
+  Eye,
   File,
   Folder,
   FolderOpen,
@@ -21,11 +24,15 @@ export interface SftpTransferResult {
 
 interface SftpPaneProps {
   busy: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
   connected: boolean;
   directory: RemoteDirectoryListing | null;
   endpoint: string;
   transferResult: SftpTransferResult | null;
   onDownload(remotePath: string, localPath: string): Promise<void>;
+  onBack(): Promise<void>;
+  onForward(): Promise<void>;
   onNavigate(path: string): Promise<void>;
   onRefresh(): Promise<void>;
   onUpload(localPath: string, remotePath: string): Promise<void>;
@@ -33,11 +40,15 @@ interface SftpPaneProps {
 
 export function SftpPane({
   busy,
+  canGoBack,
+  canGoForward,
   connected,
   directory,
   endpoint,
   transferResult,
   onDownload,
+  onBack,
+  onForward,
   onNavigate,
   onRefresh,
   onUpload,
@@ -48,6 +59,7 @@ export function SftpPane({
   const [remoteUploadPath, setRemoteUploadPath] = useState("");
   const [remoteDownloadPath, setRemoteDownloadPath] = useState("");
   const [localDownloadPath, setLocalDownloadPath] = useState("");
+  const [showHidden, setShowHidden] = useState(false);
 
   const pathInput = pathDraft ?? directory?.path ?? ".";
   const parentPath = directory ? remoteParentPath(directory.path) : ".";
@@ -60,6 +72,22 @@ export function SftpPane({
     <section className="sftp-pane" aria-label={t("sftp.aria")}>
       <div className="sftp-toolbar">
         <div className="sftp-path-controls">
+          <Tooltip title={t("sftp.back")}>
+            <Button
+              aria-label={t("sftp.back")}
+              icon={<ArrowLeft size={15} />}
+              disabled={!connected || busy || !canGoBack}
+              onClick={() => void onBack()}
+            />
+          </Tooltip>
+          <Tooltip title={t("sftp.forward")}>
+            <Button
+              aria-label={t("sftp.forward")}
+              icon={<ArrowRight size={15} />}
+              disabled={!connected || busy || !canGoForward}
+              onClick={() => void onForward()}
+            />
+          </Tooltip>
           <Tooltip title={t("sftp.parentDirectory")}>
             <Button
               aria-label={t("sftp.parentDirectory")}
@@ -84,6 +112,15 @@ export function SftpPane({
               onClick={() => void onRefresh()}
             />
           </Tooltip>
+          <Tooltip title={t("sftp.showHidden")}>
+            <Button
+              aria-label={t("sftp.showHidden")}
+              icon={<Eye size={15} />}
+              type={showHidden ? "primary" : "default"}
+              disabled={!connected || busy}
+              onClick={() => setShowHidden((current) => !current)}
+            />
+          </Tooltip>
         </div>
         <span className="endpoint-label">
           {connected ? endpoint : t("sftp.notConnected")}
@@ -101,62 +138,68 @@ export function SftpPane({
             </tr>
           </thead>
           <tbody>
-            {directory?.entries.map((entry) => (
-              <tr
-                key={entry.path}
-                tabIndex={0}
-                onClick={() => {
-                  if (entry.kind === "file") {
-                    setRemoteDownloadPath(entry.path);
-                  }
-                }}
-                onDoubleClick={() => {
-                  if (entry.kind === "directory") {
-                    void navigate(entry.path);
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    if (entry.kind === "directory") {
-                      void navigate(entry.path);
-                    } else if (entry.kind === "file") {
+            {directory?.entries
+              .filter((entry) => showHidden || !entry.name.startsWith("."))
+              .map((entry) => (
+                <tr
+                  key={entry.path}
+                  tabIndex={0}
+                  onClick={() => {
+                    if (entry.kind === "file") {
                       setRemoteDownloadPath(entry.path);
                     }
-                  }
-                }}
-              >
-                <td>
-                  <span className="sftp-file-name">
-                    {entry.kind === "directory" ? (
-                      <Folder size={15} />
-                    ) : (
-                      <File size={15} />
+                  }}
+                  onDoubleClick={() => {
+                    if (entry.kind === "directory") {
+                      void navigate(entry.path);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      if (entry.kind === "directory") {
+                        void navigate(entry.path);
+                      } else if (entry.kind === "file") {
+                        setRemoteDownloadPath(entry.path);
+                      }
+                    }
+                  }}
+                >
+                  <td>
+                    <span className="sftp-file-name">
+                      {entry.kind === "directory" ? (
+                        <Folder size={15} />
+                      ) : (
+                        <File size={15} />
+                      )}
+                      <span>{entry.name}</span>
+                    </span>
+                  </td>
+                  <td>
+                    {entry.kind === "directory" ? "" : formatBytes(entry.size)}
+                  </td>
+                  <td>
+                    {formatModifiedTime(
+                      entry.modifiedAt,
+                      i18n.resolvedLanguage ?? "zh-CN",
                     )}
-                    <span>{entry.name}</span>
-                  </span>
-                </td>
-                <td>
-                  {entry.kind === "directory" ? "" : formatBytes(entry.size)}
-                </td>
-                <td>
-                  {formatModifiedTime(
-                    entry.modifiedAt,
-                    i18n.resolvedLanguage ?? "zh-CN",
-                  )}
-                </td>
-                <td>{formatPermissions(entry.permissions)}</td>
-              </tr>
-            ))}
+                  </td>
+                  <td>{formatPermissions(entry.permissions)}</td>
+                </tr>
+              ))}
           </tbody>
         </table>
 
-        {connected && directory?.entries.length === 0 && (
-          <EmptyState
-            className="sftp-empty"
-            icon={<FolderOpen size={34} strokeWidth={1.3} />}
-            title={t("sftp.empty")}
-          />
-        )}
+        {connected &&
+          directory &&
+          directory.entries.filter(
+            (entry) => showHidden || !entry.name.startsWith("."),
+          ).length === 0 && (
+            <EmptyState
+              className="sftp-empty"
+              icon={<FolderOpen size={34} strokeWidth={1.3} />}
+              title={t("sftp.empty")}
+            />
+          )}
         {!connected && (
           <EmptyState
             className="sftp-empty"

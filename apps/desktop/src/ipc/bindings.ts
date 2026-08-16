@@ -105,6 +105,14 @@ async listSftpDirectory(sessionId: string, path: string) : Promise<Result<Remote
     else return { status: "error", error: e  as any };
 }
 },
+async statSftpPath(sessionId: string, path: string) : Promise<Result<RemoteFileEntry, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stat_sftp_path", { sessionId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async uploadSftpFile(sessionId: string, localPath: string, remotePath: string, language: string) : Promise<Result<TransferSummary, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("upload_sftp_file", { sessionId, localPath, remotePath, language }) };

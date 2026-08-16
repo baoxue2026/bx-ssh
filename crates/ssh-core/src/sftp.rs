@@ -65,6 +65,24 @@ impl SftpClient {
         })
     }
 
+    pub async fn stat_path(&self, path: &str) -> Result<RemoteFileEntry, SshError> {
+        let canonical_path = self.canonicalize(path).await?;
+        let metadata = self.session.metadata(canonical_path.clone()).await?;
+        let name = Path::new(&canonical_path)
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| canonical_path.clone());
+        Ok(RemoteFileEntry {
+            name,
+            path: canonical_path,
+            kind: remote_file_kind(metadata.file_type()),
+            size: metadata.len(),
+            modified_at: metadata.mtime.map(u64::from),
+            permissions: metadata.permissions.map(|mode| mode & 0o7777),
+        })
+    }
+
     pub async fn upload_file(
         &self,
         local_path: impl AsRef<Path>,

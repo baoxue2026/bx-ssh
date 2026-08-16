@@ -203,6 +203,8 @@ export const ipc = {
     ),
   listSftpDirectory: (sessionId: string, path: string) =>
     unwrap(() => commands.listSftpDirectory(sessionId, path)),
+  statSftpPath: (sessionId: string, path: string) =>
+    unwrap(() => commands.statSftpPath(sessionId, path)),
   uploadSftpFile: (
     sessionId: string,
     localPath: string,

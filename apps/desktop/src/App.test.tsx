@@ -1393,6 +1393,107 @@ describe("App", { timeout: 15_000 }, () => {
     });
   });
 
+  it("keeps SFTP back and forward history across directory navigation", async () => {
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-history",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: {
+            path: "/home/bxssh",
+            entries: [
+              {
+                name: "logs",
+                path: "/home/bxssh/logs",
+                kind: "directory",
+                size: 4096,
+                modifiedAt: null,
+                permissions: 493,
+              },
+            ],
+          },
+        });
+      }
+      if (command === "list_sftp_directory") {
+        const path = (args as { path: string }).path;
+        return Promise.resolve({
+          path,
+          entries: [],
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    await screen.findByText("logs");
+
+    fireEvent.doubleClick(screen.getByText("logs"));
+    await waitFor(() => {
+      expect(commandCalls("list_sftp_directory")).toHaveLength(1);
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("list_sftp_directory", {
+      sessionId: "sftp-history",
+      path: "/home/bxssh/logs",
+    });
+    expect(screen.getByLabelText("远端路径")).toHaveValue("/home/bxssh/logs");
+    expect(
+      screen.getByRole("button", { name: "返回上一个远端目录" }),
+    ).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "返回上一个远端目录" }));
+    await waitFor(() => {
+      expect(commandCalls("list_sftp_directory")).toHaveLength(2);
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("list_sftp_directory", {
+      sessionId: "sftp-history",
+      path: "/home/bxssh",
+    });
+    expect(screen.getByLabelText("远端路径")).toHaveValue("/home/bxssh");
+    expect(
+      screen.getByRole("button", { name: "返回上一个远端目录" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "前进到下一个远端目录" }),
+    ).toBeEnabled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "前进到下一个远端目录" }),
+    );
+    await waitFor(() => {
+      expect(commandCalls("list_sftp_directory")).toHaveLength(3);
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("list_sftp_directory", {
+      sessionId: "sftp-history",
+      path: "/home/bxssh/logs",
+    });
+    expect(screen.getByLabelText("远端路径")).toHaveValue("/home/bxssh/logs");
+  });
+
   it("confirms the active session and transfer impact before closing SFTP", async () => {
     let resolveUpload: ((value: unknown) => void) | undefined;
     const upload = new Promise((resolve) => {

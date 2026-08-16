@@ -157,6 +157,13 @@ interface SessionTerminalFontOverride {
   sessionKey: string;
 }
 
+interface SftpNavigationHistory {
+  back: string[];
+  forward: string[];
+}
+
+type SftpNavigationIntent = "push" | "back" | "forward" | "refresh";
+
 const fallbackInfo: AppInfo = {
   name: "BX SSH",
   version: "0.1.0",
@@ -230,6 +237,10 @@ export function App() {
   const [sftpSessionId, setSftpSessionId] = useState<string | null>(null);
   const [sftpDirectory, setSftpDirectory] =
     useState<RemoteDirectoryListing | null>(null);
+  const [sftpNavigation, setSftpNavigation] = useState<SftpNavigationHistory>({
+    back: [],
+    forward: [],
+  });
   const [sftpBusy, setSftpBusy] = useState(false);
   const [sftpTransferActive, setSftpTransferActive] = useState(false);
   const [sftpTransferResult, setSftpTransferResult] =
@@ -1523,6 +1534,7 @@ export function App() {
       scheduleNormalMemoryUsage();
       setSftpSessionId(response.sessionId);
       setSftpDirectory(response.directory);
+      setSftpNavigation({ back: [], forward: [] });
       setHostKey(response.hostKey);
       setConnectionState("connected");
       void recordLoadedConnectionSuccess();
@@ -1722,6 +1734,7 @@ export function App() {
     sftpSessionIdRef.current = null;
     setSftpSessionId(null);
     setSftpDirectory(null);
+    setSftpNavigation({ back: [], forward: [] });
     setSftpBusy(false);
     setSftpTransferActive(false);
     setSftpTransferResult(null);
@@ -1853,11 +1866,15 @@ export function App() {
     setSessionCloseError(null);
   };
 
-  const navigateSftp = async (path: string) => {
+  const navigateSftp = async (
+    path: string,
+    intent: SftpNavigationIntent = "push",
+  ) => {
     const activeSessionId = sftpSessionIdRef.current;
     if (!activeSessionId) {
       return;
     }
+    const currentPath = sftpDirectory?.path ?? null;
     const operationGeneration = sftpOperationGenerationRef.current;
 
     setSftpBusy(true);
@@ -1871,6 +1888,37 @@ export function App() {
         return;
       }
       setSftpDirectory(directory);
+      if (intent !== "refresh") {
+        setSftpNavigation((current) => {
+          if (intent === "back") {
+            const previousPath = current.back.at(-1);
+            if (!previousPath || !currentPath || previousPath === currentPath) {
+              return current;
+            }
+            return {
+              back: current.back.slice(0, -1),
+              forward: [...current.forward, currentPath],
+            };
+          }
+          if (intent === "forward") {
+            const nextPath = current.forward.at(-1);
+            if (!nextPath || !currentPath || nextPath === currentPath) {
+              return current;
+            }
+            return {
+              back: [...current.back, currentPath],
+              forward: current.forward.slice(0, -1),
+            };
+          }
+          if (!currentPath || directory.path === currentPath) {
+            return current;
+          }
+          return {
+            back: [...current.back, currentPath],
+            forward: [],
+          };
+        });
+      }
     } catch (error) {
       if (operationGeneration === sftpOperationGenerationRef.current) {
         setErrorMessage(localizedErrorText(error));
@@ -1882,8 +1930,22 @@ export function App() {
     }
   };
 
+  const goBackSftp = async () => {
+    const path = sftpNavigation.back.at(-1);
+    if (path) {
+      await navigateSftp(path, "back");
+    }
+  };
+
+  const goForwardSftp = async () => {
+    const path = sftpNavigation.forward.at(-1);
+    if (path) {
+      await navigateSftp(path, "forward");
+    }
+  };
+
   const refreshSftp = async () => {
-    await navigateSftp(sftpDirectory?.path ?? ".");
+    await navigateSftp(sftpDirectory?.path ?? ".", "refresh");
   };
 
   const uploadSftp = async (localPath: string, remotePath: string) => {
@@ -3206,10 +3268,14 @@ export function App() {
               <section className="sftp-workspace">
                 <SftpPane
                   busy={sftpBusy}
+                  canGoBack={sftpNavigation.back.length > 0}
+                  canGoForward={sftpNavigation.forward.length > 0}
                   connected={connected}
                   directory={sftpDirectory}
                   endpoint={`${username}@${host}:${port}`}
                   transferResult={sftpTransferResult}
+                  onBack={goBackSftp}
+                  onForward={goForwardSftp}
                   onNavigate={navigateSftp}
                   onRefresh={refreshSftp}
                   onUpload={uploadSftp}
