@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Button, Input, InputNumber, Select } from "antd";
+import { Button, Input, InputNumber, Select, Switch } from "antd";
 import {
   CheckCircle2,
   Download,
@@ -246,10 +246,19 @@ function SettingsContent({
           >
             <Select
               aria-label={t("settings.rows.terminalFont")}
-              className="settings-control is-readonly"
-              disabled
-              value="Cascadia Mono"
-              options={[{ label: "Cascadia Mono", value: "Cascadia Mono" }]}
+              className="settings-control"
+              value={preferences.terminalAppearance.fontFamily}
+              options={[
+                { label: "Cascadia Mono", value: "cascadiaMono" },
+                { label: "Cascadia Code", value: "cascadiaCode" },
+                { label: "Consolas", value: "consolas" },
+              ]}
+              onChange={(fontFamily) =>
+                preferences.setTerminalAppearance({
+                  ...preferences.terminalAppearance,
+                  fontFamily,
+                })
+              }
             />
           </SettingsRow>
           <SettingsRow
@@ -260,8 +269,17 @@ function SettingsContent({
               aria-label={t("settings.rows.terminalFontSize")}
               className="settings-number"
               controls={false}
-              disabled
-              value={13}
+              max={20}
+              min={10}
+              value={preferences.terminalAppearance.fontSize}
+              onChange={(fontSize) => {
+                if (fontSize !== null) {
+                  preferences.setTerminalAppearance({
+                    ...preferences.terminalAppearance,
+                    fontSize,
+                  });
+                }
+              }}
             />
           </SettingsRow>
           <SettingsRow
@@ -276,6 +294,74 @@ function SettingsContent({
               options={[
                 { label: t("settings.values.standard"), value: "standard" },
               ]}
+            />
+          </SettingsRow>
+        </SettingsSection>
+        <SettingsSection title={t("settings.sections.terminalAppearance")}>
+          <SettingsRow
+            title={t("settings.rows.terminalCursorStyle")}
+            description={t("settings.descriptions.terminalCursorStyle")}
+          >
+            <Select
+              aria-label={t("settings.rows.terminalCursorStyle")}
+              className="settings-control"
+              value={preferences.terminalAppearance.cursorStyle}
+              options={[
+                {
+                  label: t("settings.values.cursorBlock"),
+                  value: "block",
+                },
+                {
+                  label: t("settings.values.cursorUnderline"),
+                  value: "underline",
+                },
+                { label: t("settings.values.cursorBar"), value: "bar" },
+              ]}
+              onChange={(cursorStyle) =>
+                preferences.setTerminalAppearance({
+                  ...preferences.terminalAppearance,
+                  cursorStyle,
+                })
+              }
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={t("settings.rows.terminalCursorBlink")}
+            description={t("settings.descriptions.terminalCursorBlink")}
+          >
+            <Switch
+              aria-label={t("settings.rows.terminalCursorBlink")}
+              checked={preferences.terminalAppearance.cursorBlink}
+              onChange={(cursorBlink) =>
+                preferences.setTerminalAppearance({
+                  ...preferences.terminalAppearance,
+                  cursorBlink,
+                })
+              }
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={t("settings.rows.terminalColorScheme")}
+            description={t("settings.descriptions.terminalColorScheme")}
+          >
+            <Select
+              aria-label={t("settings.rows.terminalColorScheme")}
+              className="settings-control"
+              value={preferences.terminalAppearance.colorScheme}
+              options={[
+                { label: t("settings.values.bxDark"), value: "bxDark" },
+                {
+                  label: t("settings.values.solarizedDark"),
+                  value: "solarizedDark",
+                },
+                { label: t("settings.values.bxLight"), value: "bxLight" },
+              ]}
+              onChange={(colorScheme) =>
+                preferences.setTerminalAppearance({
+                  ...preferences.terminalAppearance,
+                  colorScheme,
+                })
+              }
             />
           </SettingsRow>
         </SettingsSection>

@@ -1537,6 +1537,17 @@ select {
   color: var(--text-secondary);
 }
 
+.terminal-toolbar-actions .terminal-font-size.ant-btn {
+  width: 28px;
+  min-width: 28px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.terminal-toolbar-actions .terminal-font-size.ant-btn:disabled {
+  color: var(--text-muted);
+}
+
 .terminal-stage {
   position: relative;
   min-width: 0;

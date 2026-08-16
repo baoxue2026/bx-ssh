@@ -52,6 +52,8 @@ import {
   Unplug,
   Wifi,
   WifiOff,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -75,6 +77,11 @@ import {
   type TerminalViewport,
 } from "./components/TerminalPane";
 import { shouldSkipApplicationShortcut } from "./components/terminalKeyboard";
+import {
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
+  type TerminalAppearancePreferences,
+} from "./components/terminalAppearance";
 import {
   parseExternalHttpLink,
   terminalPasteDetails,
@@ -141,6 +148,11 @@ interface PendingTerminalPaste extends TerminalPasteDetails {
   text: string;
 }
 
+interface SessionTerminalFontOverride {
+  fontSize: number;
+  sessionKey: string;
+}
+
 const fallbackInfo: AppInfo = {
   name: "BX SSH",
   version: "0.1.0",
@@ -169,7 +181,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "bx-ssh.sidebar-collapsed";
 
 export function App() {
   const { t } = useTranslation();
-  const { language } = useUiPreferences();
+  const { language, terminalAppearance } = useUiPreferences();
   const [appInfo, setAppInfo] = useState(fallbackInfo);
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(22);
@@ -188,6 +200,8 @@ export function App() {
     useState<SshConnectionStage | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [terminalSelection, setTerminalSelection] = useState("");
+  const [sessionTerminalFontOverride, setSessionTerminalFontOverride] =
+    useState<SessionTerminalFontOverride | null>(null);
   const [terminalClipboardPending, setTerminalClipboardPending] =
     useState(false);
   const [terminalInteractionError, setTerminalInteractionError] = useState<
@@ -333,6 +347,19 @@ export function App() {
   const localizedErrorText = useCallback(
     (error: unknown) => errorText(error, t),
     [t],
+  );
+  const sessionTerminalFontSize =
+    sessionTerminalFontOverride !== null &&
+    activeSessionTab !== null &&
+    sessionTerminalFontOverride.sessionKey === activeSessionTab.clientId
+      ? sessionTerminalFontOverride.fontSize
+      : terminalAppearance.fontSize;
+  const effectiveTerminalAppearance = useMemo<TerminalAppearancePreferences>(
+    () => ({
+      ...terminalAppearance,
+      fontSize: sessionTerminalFontSize,
+    }),
+    [sessionTerminalFontSize, terminalAppearance],
   );
 
   const loadConnectionCatalog = useCallback(async () => {
@@ -1935,6 +1962,29 @@ export function App() {
     terminalRef.current?.focus();
   };
 
+  const adjustSessionTerminalFontSize = (delta: number) => {
+    const sessionKey = activeSessionTab?.clientId;
+    if (!sessionKey) return;
+
+    setSessionTerminalFontOverride((current) => {
+      const currentFontSize =
+        current?.sessionKey === sessionKey
+          ? current.fontSize
+          : terminalAppearance.fontSize;
+      return {
+        sessionKey,
+        fontSize: Math.min(
+          TERMINAL_FONT_SIZE_MAX,
+          Math.max(TERMINAL_FONT_SIZE_MIN, currentFontSize + delta),
+        ),
+      };
+    });
+  };
+
+  const resetSessionTerminalFontSize = () => {
+    setSessionTerminalFontOverride(null);
+  };
+
   const requestExternalTerminalLink = (value: string) => {
     const link = parseExternalHttpLink(value);
     if (!link) {
@@ -1983,6 +2033,10 @@ export function App() {
 
   const busy = ["probing", "connecting", "closing"].includes(connectionState);
   const connected = connectionState === "connected";
+  const sessionFontSizeOverridden =
+    sessionTerminalFontOverride !== null &&
+    activeSessionTab !== null &&
+    sessionTerminalFontOverride.sessionKey === activeSessionTab.clientId;
   const activeSessionId =
     workspaceMode === "terminal" ? sessionId : sftpSessionId;
   const currentSessionCloseImpact = {
@@ -2884,6 +2938,52 @@ export function App() {
                         onClick={() => terminalRef.current?.openSearch()}
                       />
                     </Tooltip>
+                    <Tooltip title={t("terminal.decreaseFontSize")}>
+                      <Button
+                        aria-label={t("terminal.decreaseFontSize")}
+                        disabled={
+                          sessionTerminalFontSize <= TERMINAL_FONT_SIZE_MIN
+                        }
+                        icon={<ZoomOut size={14} />}
+                        size="small"
+                        type="text"
+                        onClick={() => adjustSessionTerminalFontSize(-1)}
+                      />
+                    </Tooltip>
+                    <Tooltip
+                      title={
+                        sessionFontSizeOverridden
+                          ? t("terminal.resetFontSize", {
+                              size: terminalAppearance.fontSize,
+                            })
+                          : t("terminal.currentFontSize")
+                      }
+                    >
+                      <Button
+                        aria-label={t("terminal.fontSizeValue", {
+                          size: sessionTerminalFontSize,
+                        })}
+                        className="terminal-font-size"
+                        disabled={!sessionFontSizeOverridden}
+                        size="small"
+                        type="text"
+                        onClick={resetSessionTerminalFontSize}
+                      >
+                        {sessionTerminalFontSize}
+                      </Button>
+                    </Tooltip>
+                    <Tooltip title={t("terminal.increaseFontSize")}>
+                      <Button
+                        aria-label={t("terminal.increaseFontSize")}
+                        disabled={
+                          sessionTerminalFontSize >= TERMINAL_FONT_SIZE_MAX
+                        }
+                        icon={<ZoomIn size={14} />}
+                        size="small"
+                        type="text"
+                        onClick={() => adjustSessionTerminalFontSize(1)}
+                      />
+                    </Tooltip>
                     <Tooltip
                       title={`${t("terminal.copySelection")} (Ctrl+Shift+C)`}
                     >
@@ -2931,6 +3031,7 @@ export function App() {
                     <TerminalPane
                       key={activeSessionTab?.clientId ?? "terminal-empty"}
                       ref={terminalRef}
+                      appearance={effectiveTerminalAppearance}
                       connected={connected}
                       sessionKey={activeSessionTab?.clientId}
                       onCopySelection={(selection) =>

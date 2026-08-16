@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import type { TerminalAppearancePreferences } from "./components/terminalAppearance";
 import i18n from "./i18n";
 import { UiPreferencesProvider } from "./ui/preferences";
 
@@ -37,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   terminalSelectAll: vi.fn(),
   terminalProps: undefined as
     | {
+        appearance?: TerminalAppearancePreferences;
         onOpenLink?(url: string): void;
         onPasteRequest?(): void;
         onSelectionChange?(selection: string): void;
@@ -213,6 +215,20 @@ describe("App", { timeout: 15_000 }, () => {
     expect(
       within(settings).getByRole("heading", { name: "常规" }),
     ).toBeVisible();
+
+    fireEvent.click(within(settings).getByRole("button", { name: "终端" }));
+    const terminalFontSize = within(settings).getByRole("spinbutton", {
+      name: "字号",
+    });
+    expect(terminalFontSize).toBeEnabled();
+    fireEvent.change(terminalFontSize, { target: { value: "16" } });
+    await waitFor(() =>
+      expect(mocks.terminalProps?.appearance?.fontSize).toBe(16),
+    );
+    fireEvent.click(within(settings).getByRole("switch", { name: "光标闪烁" }));
+    await waitFor(() =>
+      expect(mocks.terminalProps?.appearance?.cursorBlink).toBe(false),
+    );
 
     fireEvent.click(within(settings).getByRole("button", { name: "安全" }));
     expect(
@@ -1559,6 +1575,25 @@ describe("App", { timeout: 15_000 }, () => {
       ).not.toBeInTheDocument(),
     );
 
+    expect(mocks.terminalProps?.appearance?.fontSize).toBe(13);
+    const increaseFontSize = screen.getByRole("button", {
+      name: "放大当前会话字号",
+    });
+    expect(increaseFontSize).toBeEnabled();
+    fireEvent.click(increaseFontSize);
+    await screen.findByRole("button", { name: "当前会话字号 14" });
+    await waitFor(() =>
+      expect(mocks.terminalProps?.appearance?.fontSize).toBe(14),
+    );
+    expect(
+      JSON.parse(localStorage.getItem("bx-ssh.terminal-appearance") ?? "null")
+        .fontSize,
+    ).toBe(13);
+    fireEvent.click(screen.getByRole("button", { name: "当前会话字号 14" }));
+    await waitFor(() =>
+      expect(mocks.terminalProps?.appearance?.fontSize).toBe(13),
+    );
+
     const disconnect = screen.getByRole("button", { name: "断开" });
     fireEvent.click(disconnect);
     expect(commandCalls("close_terminal_session")).toHaveLength(0);
@@ -1594,7 +1629,7 @@ describe("App", { timeout: 15_000 }, () => {
         screen.queryByRole("tab", { name: /生产服务器/ }),
       ).not.toBeInTheDocument();
     });
-  });
+  }, 30_000);
 
   it("probes the host before launching a saved private-key connection", async () => {
     const saved = savedConnectionDetails();

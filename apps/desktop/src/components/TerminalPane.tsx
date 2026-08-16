@@ -14,8 +14,12 @@ import { Terminal } from "@xterm/xterm";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "@xterm/xterm/css/xterm.css";
-import { MONOSPACE_FONT_STACK } from "../ui/fontStacks";
-import { TERMINAL_THEME } from "./terminalAppearance";
+import {
+  DEFAULT_TERMINAL_APPEARANCE,
+  terminalFontStack,
+  terminalTheme,
+  type TerminalAppearancePreferences,
+} from "./terminalAppearance";
 
 export interface TerminalViewport {
   columns: number;
@@ -38,6 +42,7 @@ export interface TerminalHandle {
 }
 
 interface TerminalPaneProps {
+  appearance?: TerminalAppearancePreferences;
   connected: boolean;
   sessionKey?: string;
   onData(data: string): void;
@@ -72,6 +77,7 @@ const SEARCH_DECORATIONS: NonNullable<ISearchOptions["decorations"]> = {
 export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
   function TerminalPane(
     {
+      appearance = DEFAULT_TERMINAL_APPEARANCE,
       connected,
       sessionKey,
       onCopySelection,
@@ -89,6 +95,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
     const fitAddonRef = useRef<FitAddon | null>(null);
     const searchAddonRef = useRef<SearchAddon | null>(null);
     const searchInputRef = useRef<InputRef>(null);
+    const initialAppearanceRef = useRef(appearance);
     const connectedRef = useRef(connected);
     const onCopySelectionRef = useRef(onCopySelection);
     const onDataRef = useRef(onData);
@@ -135,19 +142,20 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         return;
       }
       disposedRef.current = false;
+      const initialAppearance = initialAppearanceRef.current;
 
       const terminal = new Terminal({
         allowProposedApi: false,
         convertEol: false,
-        cursorBlink: true,
-        cursorStyle: "block",
+        cursorBlink: initialAppearance.cursorBlink,
+        cursorStyle: initialAppearance.cursorStyle,
         drawBoldTextInBrightColors: true,
-        fontFamily: MONOSPACE_FONT_STACK,
-        fontSize: 13,
+        fontFamily: terminalFontStack(initialAppearance.fontFamily),
+        fontSize: initialAppearance.fontSize,
         lineHeight: 1.15,
         minimumContrastRatio: 1,
         scrollback: 100_000,
-        theme: TERMINAL_THEME,
+        theme: terminalTheme(initialAppearance.colorScheme),
       });
       const fitAddon = new FitAddon();
       const searchAddon = new SearchAddon();
@@ -255,6 +263,23 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         searchAddonRef.current = null;
       };
     }, []);
+
+    useEffect(() => {
+      const terminal = terminalRef.current;
+      const container = containerRef.current;
+      const fitAddon = fitAddonRef.current;
+      if (!terminal || !container || !fitAddon) {
+        return;
+      }
+
+      terminal.options.fontFamily = terminalFontStack(appearance.fontFamily);
+      terminal.options.fontSize = appearance.fontSize;
+      terminal.options.cursorBlink = appearance.cursorBlink;
+      terminal.options.cursorStyle = appearance.cursorStyle;
+      terminal.options.theme = terminalTheme(appearance.colorScheme);
+      fitAddon.fit();
+      onResizeRef.current(viewportFor(terminal, container));
+    }, [appearance, onResizeRef]);
 
     const runSearch = useCallback(
       (direction: SearchDirection, incremental = false) => {
@@ -388,6 +413,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         data-session-key={sessionKey}
         role="application"
         aria-label={t("terminal.aria")}
+        style={{ background: terminalTheme(appearance.colorScheme).background }}
       >
         <div ref={containerRef} className="terminal-surface" />
         {searchOpen && (

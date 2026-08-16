@@ -1,6 +1,6 @@
 import { Terminal } from "@xterm/xterm";
 import { afterEach, describe, expect, it } from "vitest";
-import { TERMINAL_THEME } from "./terminalAppearance";
+import { TERMINAL_THEMES, terminalFontStack } from "./terminalAppearance";
 
 const terminals: Terminal[] = [];
 
@@ -10,29 +10,39 @@ afterEach(() => {
 
 describe("terminal compatibility", () => {
   it("keeps all 16 configured ANSI colors distinct", () => {
-    const colors = [
-      TERMINAL_THEME.black,
-      TERMINAL_THEME.red,
-      TERMINAL_THEME.green,
-      TERMINAL_THEME.yellow,
-      TERMINAL_THEME.blue,
-      TERMINAL_THEME.magenta,
-      TERMINAL_THEME.cyan,
-      TERMINAL_THEME.white,
-      TERMINAL_THEME.brightBlack,
-      TERMINAL_THEME.brightRed,
-      TERMINAL_THEME.brightGreen,
-      TERMINAL_THEME.brightYellow,
-      TERMINAL_THEME.brightBlue,
-      TERMINAL_THEME.brightMagenta,
-      TERMINAL_THEME.brightCyan,
-      TERMINAL_THEME.brightWhite,
-    ];
+    for (const theme of Object.values(TERMINAL_THEMES)) {
+      const colors = [
+        theme.black,
+        theme.red,
+        theme.green,
+        theme.yellow,
+        theme.blue,
+        theme.magenta,
+        theme.cyan,
+        theme.white,
+        theme.brightBlack,
+        theme.brightRed,
+        theme.brightGreen,
+        theme.brightYellow,
+        theme.brightBlue,
+        theme.brightMagenta,
+        theme.brightCyan,
+        theme.brightWhite,
+      ];
 
-    expect(colors.every((color) => /^#[0-9a-f]{6}$/i.test(color ?? ""))).toBe(
-      true,
-    );
-    expect(new Set(colors)).toHaveLength(16);
+      expect(colors.every((color) => /^#[0-9a-f]{6}$/i.test(color ?? ""))).toBe(
+        true,
+      );
+      expect(new Set(colors)).toHaveLength(16);
+    }
+  });
+
+  it("keeps an offline monospace fallback for every font choice", () => {
+    expect(terminalFontStack("cascadiaMono")).toContain("Cascadia Mono");
+    expect(terminalFontStack("cascadiaCode")).toContain("Cascadia Code");
+    expect(terminalFontStack("consolas")).toContain("Consolas");
+    expect(terminalFontStack("cascadiaCode")).toContain("monospace");
+    expect(terminalFontStack("consolas")).toContain("monospace");
   });
 
   it("parses ANSI, 256-color and True Color sequences", async () => {

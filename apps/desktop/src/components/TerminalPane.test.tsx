@@ -9,6 +9,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalPane, type TerminalHandle } from "./TerminalPane";
+import {
+  DEFAULT_TERMINAL_APPEARANCE,
+  TERMINAL_THEMES,
+} from "./terminalAppearance";
 
 interface MockTerminalInstance {
   attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
@@ -21,6 +25,7 @@ interface MockTerminalInstance {
   onData: ReturnType<typeof vi.fn>;
   onSelectionChange: ReturnType<typeof vi.fn>;
   open: ReturnType<typeof vi.fn>;
+  options: Record<string, unknown>;
   paste: ReturnType<typeof vi.fn>;
   reset: ReturnType<typeof vi.fn>;
   selectAll: ReturnType<typeof vi.fn>;
@@ -64,6 +69,7 @@ vi.mock("@xterm/xterm", () => ({
     focus = vi.fn();
     getSelection = vi.fn(() => this.selection);
     open = vi.fn();
+    options: Record<string, unknown>;
     paste = vi.fn();
     reset = vi.fn();
     selectAll = vi.fn();
@@ -92,8 +98,9 @@ vi.mock("@xterm/xterm", () => ({
     });
 
     constructor(options: Record<string, unknown>) {
+      this.options = { ...options };
       xtermMocks.terminals.push(this);
-      xtermMocks.terminalOptions.push(options);
+      xtermMocks.terminalOptions.push(this.options);
     }
 
     loadAddon() {}
@@ -475,6 +482,47 @@ describe("TerminalPane", () => {
 
     expect(xtermMocks.fitAddons[0].fit).toHaveBeenCalledTimes(1);
     expect(onResize).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies global terminal appearance changes without recreating xterm", () => {
+    const onResize = vi.fn();
+    const { rerender } = render(
+      <TerminalPane
+        appearance={DEFAULT_TERMINAL_APPEARANCE}
+        connected
+        onData={vi.fn()}
+        onResize={onResize}
+      />,
+    );
+    const terminal = xtermMocks.terminals[0];
+
+    rerender(
+      <TerminalPane
+        appearance={{
+          colorScheme: "bxLight",
+          cursorBlink: false,
+          cursorStyle: "bar",
+          fontFamily: "consolas",
+          fontSize: 17,
+        }}
+        connected
+        onData={vi.fn()}
+        onResize={onResize}
+      />,
+    );
+
+    expect(xtermMocks.terminals).toHaveLength(1);
+    expect(terminal.options).toMatchObject({
+      cursorBlink: false,
+      cursorStyle: "bar",
+      fontSize: 17,
+      theme: TERMINAL_THEMES.bxLight,
+    });
+    expect(terminal.options.fontFamily).toContain("Consolas");
+    expect(screen.getByRole("application")).toHaveStyle({
+      background: TERMINAL_THEMES.bxLight.background,
+    });
+    expect(onResize).toHaveBeenCalled();
   });
 
   it("searches the terminal buffer with navigation and matching options", () => {
