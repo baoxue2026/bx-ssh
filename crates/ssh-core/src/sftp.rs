@@ -3,13 +3,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use std::{fmt::Write as _, io};
 
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+
 use bx_contracts::{RemoteDirectoryListing, RemoteFileEntry, RemoteFileKind, TransferSummary};
 use russh::client;
 use russh_sftp::client::{Config, SftpSession};
-use russh_sftp::protocol::FileType;
+use russh_sftp::protocol::{FileType, OpenFlags};
 use sha2::{Digest, Sha256};
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+#[cfg(windows)]
+use windows::core::PCWSTR;
+#[cfg(windows)]
+use windows::Win32::Storage::FileSystem::MoveFileW;
 
 use crate::SshError;
 
@@ -101,17 +108,19 @@ impl SftpClient {
 
         let temporary_path = temporary_remote_path(remote_path);
         let mut local_file = File::open(local_path).await?;
-        let mut remote_file = self.session.create(temporary_path.clone()).await?;
+        let mut remote_file = self
+            .session
+            .open_with_flags(
+                temporary_path.clone(),
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            )
+            .await?;
         let started_at = Instant::now();
         let result = copy_and_hash(&mut local_file, &mut remote_file).await;
 
         let summary = match result {
             Ok((bytes, sha256)) => {
                 if let Err(error) = remote_file.shutdown().await {
-                    let _ = self.session.remove_file(&temporary_path).await;
-                    return Err(error.into());
-                }
-                if let Err(error) = self.session.rename(&temporary_path, remote_path).await {
                     let _ = self.session.remove_file(&temporary_path).await;
                     return Err(error.into());
                 }
@@ -124,19 +133,31 @@ impl SftpClient {
             }
         };
 
-        let remote_summary = match self.hash_remote_file(remote_path).await {
+        let remote_summary = match self.hash_remote_file(&temporary_path).await {
             Ok(summary) => summary,
             Err(error) => {
-                let _ = self.session.remove_file(remote_path).await;
+                let _ = self.session.remove_file(&temporary_path).await;
                 return Err(error);
             }
         };
-        if summary.bytes != remote_summary.bytes || summary.sha256 != remote_summary.sha256 {
-            let _ = self.session.remove_file(remote_path).await;
-            return Err(SshError::TransferIntegrityMismatch {
-                expected: summary.sha256,
-                actual: remote_summary.sha256,
-            });
+        if let Err(error) = verify_transfer_integrity(&summary, &remote_summary) {
+            let _ = self.session.remove_file(&temporary_path).await;
+            return Err(error);
+        }
+        match self.session.try_exists(remote_path).await {
+            Ok(false) => {}
+            Ok(true) => {
+                let _ = self.session.remove_file(&temporary_path).await;
+                return Err(SshError::RemoteTargetExists);
+            }
+            Err(error) => {
+                let _ = self.session.remove_file(&temporary_path).await;
+                return Err(error.into());
+            }
+        }
+        if let Err(error) = self.session.rename(&temporary_path, remote_path).await {
+            let _ = self.session.remove_file(&temporary_path).await;
+            return Err(error.into());
         }
 
         Ok(summary)
@@ -181,10 +202,6 @@ impl SftpClient {
                     return Err(error.into());
                 }
                 drop(local_file);
-                if let Err(error) = fs::rename(&temporary_path, local_path).await {
-                    let _ = fs::remove_file(&temporary_path).await;
-                    return Err(error.into());
-                }
                 transfer_summary(bytes, sha256, started_at)
             }
             Err(error) => {
@@ -194,19 +211,20 @@ impl SftpClient {
             }
         };
 
-        let local_summary = match hash_local_file(local_path).await {
+        let local_summary = match hash_local_file(&temporary_path).await {
             Ok(summary) => summary,
             Err(error) => {
-                let _ = fs::remove_file(local_path).await;
+                let _ = fs::remove_file(&temporary_path).await;
                 return Err(error);
             }
         };
-        if summary.bytes != local_summary.bytes || summary.sha256 != local_summary.sha256 {
-            let _ = fs::remove_file(local_path).await;
-            return Err(SshError::TransferIntegrityMismatch {
-                expected: summary.sha256,
-                actual: local_summary.sha256,
-            });
+        if let Err(error) = verify_transfer_integrity(&summary, &local_summary) {
+            let _ = fs::remove_file(&temporary_path).await;
+            return Err(error);
+        }
+        if let Err(error) = publish_local_file(&temporary_path, local_path).await {
+            let _ = fs::remove_file(&temporary_path).await;
+            return Err(error);
         }
 
         Ok(summary)
@@ -270,6 +288,60 @@ async fn hash_local_file(path: &Path) -> Result<TransferSummary, SshError> {
     let started_at = Instant::now();
     let (bytes, sha256) = copy_and_hash(&mut file, &mut sink).await?;
     Ok(transfer_summary(bytes, sha256, started_at))
+}
+
+fn verify_transfer_integrity(
+    expected: &TransferSummary,
+    actual: &TransferSummary,
+) -> Result<(), SshError> {
+    if expected.bytes == actual.bytes && expected.sha256 == actual.sha256 {
+        return Ok(());
+    }
+    Err(SshError::TransferIntegrityMismatch {
+        expected: expected.sha256.clone(),
+        actual: actual.sha256.clone(),
+    })
+}
+
+#[cfg(windows)]
+async fn publish_local_file(temporary_path: &Path, target_path: &Path) -> Result<(), SshError> {
+    let temporary_path = temporary_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let target_path = target_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    unsafe {
+        MoveFileW(
+            PCWSTR(temporary_path.as_ptr()),
+            PCWSTR(target_path.as_ptr()),
+        )
+    }
+    .map_err(|error| {
+        let os_error = (error.code().0 as u32 & 0xffff) as i32;
+        map_local_publish_error(io::Error::from_raw_os_error(os_error))
+    })
+}
+
+#[cfg(not(windows))]
+async fn publish_local_file(temporary_path: &Path, target_path: &Path) -> Result<(), SshError> {
+    fs::hard_link(temporary_path, target_path)
+        .await
+        .map_err(map_local_publish_error)?;
+    let _ = fs::remove_file(temporary_path).await;
+    Ok(())
+}
+
+fn map_local_publish_error(error: io::Error) -> SshError {
+    if error.kind() == io::ErrorKind::AlreadyExists {
+        SshError::LocalTargetExists
+    } else {
+        SshError::TransferIo(error)
+    }
 }
 
 fn validate_remote_path(path: &str) -> Result<&str, SshError> {
@@ -342,10 +414,15 @@ fn sftp_config() -> Config {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use bx_contracts::RemoteFileKind;
+    use bx_contracts::{RemoteFileKind, TransferSummary};
+    use tokio::fs;
 
-    use super::{file_kind_order, sftp_config, temporary_local_path, validate_remote_path};
+    use super::{
+        file_kind_order, publish_local_file, sftp_config, temporary_local_path,
+        validate_remote_path, verify_transfer_integrity,
+    };
     use crate::SshError;
 
     #[test]
@@ -386,5 +463,58 @@ mod tests {
         assert_eq!(config.max_packet_len, 32 * 1024);
         assert_eq!(config.max_concurrent_writes, 64);
         assert_eq!(config.request_timeout_secs, 30);
+    }
+
+    #[test]
+    fn accepts_matching_integrity_and_rejects_mismatches() {
+        let expected = transfer_summary(12, "abc");
+        assert!(verify_transfer_integrity(&expected, &expected).is_ok());
+
+        let error = verify_transfer_integrity(&expected, &transfer_summary(12, "def"))
+            .expect_err("different checksums must fail validation");
+        assert!(matches!(error, SshError::TransferIntegrityMismatch { .. }));
+    }
+
+    #[tokio::test]
+    async fn publishes_local_downloads_without_overwriting_an_existing_target() {
+        let sequence = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "bx-ssh-publish-test-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).await.unwrap();
+        let target = directory.join("archive.tar");
+        let temporary = temporary_local_path(&target).unwrap();
+        fs::write(&temporary, b"verified").await.unwrap();
+
+        publish_local_file(&temporary, &target).await.unwrap();
+        assert_eq!(fs::read(&target).await.unwrap(), b"verified");
+        assert!(!fs::try_exists(&temporary).await.unwrap());
+
+        let conflicting_temporary = temporary_local_path(&target).unwrap();
+        fs::write(&conflicting_temporary, b"replacement")
+            .await
+            .unwrap();
+        let error = publish_local_file(&conflicting_temporary, &target)
+            .await
+            .expect_err("publishing must not replace an existing target");
+        assert!(matches!(error, SshError::LocalTargetExists));
+        assert_eq!(fs::read(&target).await.unwrap(), b"verified");
+
+        fs::remove_file(&conflicting_temporary).await.unwrap();
+        fs::remove_file(&target).await.unwrap();
+        fs::remove_dir(&directory).await.unwrap();
+    }
+
+    fn transfer_summary(bytes: u64, sha256: &str) -> TransferSummary {
+        TransferSummary {
+            bytes,
+            elapsed_ms: 1,
+            bytes_per_second: bytes * 1000,
+            sha256: sha256.to_owned(),
+        }
     }
 }

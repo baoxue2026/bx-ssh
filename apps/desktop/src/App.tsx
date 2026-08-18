@@ -349,6 +349,7 @@ export function App() {
     startWidth: number;
   } | null>(null);
   const sftpSessionIdRef = useRef<string | null>(null);
+  const localDirectoryRef = useRef<LocalDirectoryListing | null>(null);
   const inputQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resizeTimerRef = useRef<number | null>(null);
   const memoryUsageTimerRef = useRef<number | null>(null);
@@ -1965,6 +1966,7 @@ export function App() {
         if (operationGeneration !== localOperationGenerationRef.current) {
           return;
         }
+        localDirectoryRef.current = directory;
         setLocalDirectory(directory);
       } catch (error) {
         if (operationGeneration === localOperationGenerationRef.current) {
@@ -2068,6 +2070,10 @@ export function App() {
         return;
       }
       setSftpTransferResult({ direction: "download", summary });
+      const currentLocalPath = localDirectoryRef.current?.path;
+      if (currentLocalPath) {
+        await navigateLocal(currentLocalPath);
+      }
     } catch (error) {
       if (operationGeneration === sftpOperationGenerationRef.current) {
         setErrorMessage(localizedErrorText(error));
@@ -4116,6 +4122,18 @@ function commandErrorText(
       return t("errors.localPathPermissionDenied");
     case "local_path_io_error":
       return t("errors.localPathIoError");
+    case "invalid_local_file":
+      return t("errors.invalidLocalFile");
+    case "local_target_exists":
+      return t("errors.localTargetExists");
+    case "remote_target_exists":
+      return t("errors.remoteTargetExists");
+    case "transfer_integrity_mismatch":
+      return t("errors.transferIntegrityMismatch");
+    case "sftp_error":
+      return t("errors.sftpOperation");
+    case "transfer_io_error":
+      return t("errors.transferIo");
     case "keep_alive_failed":
       return t("errors.keepAliveFailed");
     case "clipboard_unavailable":

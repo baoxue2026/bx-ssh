@@ -1448,6 +1448,191 @@ describe("App", { timeout: 15_000 }, () => {
     );
   });
 
+  it("refreshes the current local directory after a successful download", async () => {
+    let localDirectoryLoads = 0;
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "list_local_directory") {
+        localDirectoryLoads += 1;
+        const path = (args as { request: { path: string } }).request.path;
+        return Promise.resolve({
+          path: path === "." ? "C:\\work" : path,
+          parentPath: "C:\\",
+          entries:
+            localDirectoryLoads > 1
+              ? [
+                  {
+                    name: "release.zip",
+                    path: "C:\\work\\release.zip",
+                    kind: "file",
+                    size: 1024,
+                    modifiedAt: 1_700_000_000,
+                    readonly: false,
+                    hidden: false,
+                  },
+                ]
+              : [],
+        });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-download",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: { path: "/home/bxssh", entries: [] },
+        });
+      }
+      if (command === "download_sftp_file") {
+        return Promise.resolve({
+          bytes: 1024,
+          elapsedMs: 10,
+          bytesPerSecond: 102_400,
+          sha256: "a".repeat(64),
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("list_local_directory", {
+        request: { path: "." },
+      });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    await screen.findByText("目录为空");
+
+    fireEvent.change(screen.getByLabelText("下载远端源文件"), {
+      target: { value: "/home/bxssh/release.zip" },
+    });
+    fireEvent.change(screen.getByLabelText("下载本地目标"), {
+      target: { value: "C:\\work\\release.zip" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "下载" }));
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("download_sftp_file", {
+        sessionId: "sftp-download",
+        remotePath: "/home/bxssh/release.zip",
+        localPath: "C:\\work\\release.zip",
+        language: "zh-CN",
+      });
+      expect(mocks.invoke).toHaveBeenCalledWith("list_local_directory", {
+        request: { path: "C:\\work" },
+      });
+    });
+    expect(await screen.findByText("release.zip")).toBeVisible();
+  });
+
+  it("shows localized errors for protected SFTP transfer failures", async () => {
+    let uploadAttempts = 0;
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "list_local_directory") {
+        return Promise.resolve({
+          path: "C:\\work",
+          parentPath: "C:\\",
+          entries: [],
+        });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-errors",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: { path: "/home/bxssh", entries: [] },
+        });
+      }
+      if (command === "upload_sftp_file") {
+        uploadAttempts += 1;
+        return Promise.reject(
+          uploadAttempts === 1
+            ? {
+                code: "remote_target_exists",
+                message: "remote transfer target already exists",
+                stage: null,
+              }
+            : {
+                code: "transfer_integrity_mismatch",
+                message: "file transfer integrity check failed",
+                stage: null,
+              },
+        );
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    await screen.findByText("目录为空");
+
+    fireEvent.change(screen.getByLabelText("上传本地源文件"), {
+      target: { value: "C:\\work\\release.zip" },
+    });
+    fireEvent.change(screen.getByLabelText("上传远端目标"), {
+      target: { value: "/home/bxssh/release.zip" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+    expect(
+      await screen.findByText("远端目标文件已存在，未覆盖原文件。"),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+    expect(
+      await screen.findByText("文件传输校验失败，未保留不完整的目标文件。"),
+    ).toBeVisible();
+  });
+
   it("keeps SFTP back and forward history across directory navigation", async () => {
     mocks.invoke.mockImplementation((command: string, args?: unknown) => {
       if (command === "app_info") {

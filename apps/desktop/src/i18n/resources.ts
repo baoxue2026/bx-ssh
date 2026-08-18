@@ -618,6 +618,12 @@ export const resources = {
         localPathNotDirectory: "本地路径不是目录。",
         localPathPermissionDenied: "没有权限访问该本地路径。",
         localPathIoError: "读取本地路径时发生 I/O 错误。",
+        invalidLocalFile: "请选择可读取的本地普通文件。",
+        localTargetExists: "本地目标文件已存在，未覆盖原文件。",
+        remoteTargetExists: "远端目标文件已存在，未覆盖原文件。",
+        sftpOperation: "SFTP 文件操作失败，未发布不完整的目标文件。",
+        transferIntegrityMismatch: "文件传输校验失败，未保留不完整的目标文件。",
+        transferIo: "文件传输发生 I/O 错误，未发布不完整的目标文件。",
       },
       feedback: {
         loading: "正在加载",
@@ -1296,6 +1302,17 @@ export const resources = {
         localPathPermissionDenied:
           "You do not have permission to access this local path.",
         localPathIoError: "An I/O error occurred while reading the local path.",
+        invalidLocalFile: "Select a readable regular local file.",
+        localTargetExists:
+          "The local target already exists. The original file was not overwritten.",
+        remoteTargetExists:
+          "The remote target already exists. The original file was not overwritten.",
+        sftpOperation:
+          "The SFTP operation failed. No incomplete target file was published.",
+        transferIntegrityMismatch:
+          "File verification failed. The incomplete target file was not kept.",
+        transferIo:
+          "A file transfer I/O error occurred. No incomplete target file was published.",
       },
       feedback: {
         loading: "Loading",
