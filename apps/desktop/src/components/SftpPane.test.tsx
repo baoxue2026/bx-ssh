@@ -1,7 +1,16 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../i18n";
-import type { RemoteDirectoryListing } from "../ipc/bindings";
+import type {
+  LocalDirectoryListing,
+  RemoteDirectoryListing,
+} from "../ipc/bindings";
 import { SftpPane } from "./SftpPane";
 
 const directory: RemoteDirectoryListing = {
@@ -26,6 +35,49 @@ const directory: RemoteDirectoryListing = {
   ],
 };
 
+const localDirectory: LocalDirectoryListing = {
+  path: "C:\\work",
+  parentPath: "C:\\",
+  entries: [
+    {
+      name: "assets",
+      path: "C:\\work\\assets",
+      kind: "directory",
+      size: 0,
+      modifiedAt: null,
+      readonly: false,
+      hidden: false,
+    },
+    {
+      name: "upload.txt",
+      path: "C:\\work\\upload.txt",
+      kind: "file",
+      size: 20,
+      modifiedAt: null,
+      readonly: false,
+      hidden: false,
+    },
+    {
+      name: ".local-env",
+      path: "C:\\work\\.local-env",
+      kind: "file",
+      size: 4,
+      modifiedAt: null,
+      readonly: false,
+      hidden: true,
+    },
+    {
+      name: "archive.bin",
+      path: "C:\\work\\archive.bin",
+      kind: "file",
+      size: 3,
+      modifiedAt: null,
+      readonly: false,
+      hidden: false,
+    },
+  ],
+};
+
 function renderPane(
   overrides: Partial<React.ComponentProps<typeof SftpPane>> = {},
 ) {
@@ -37,10 +89,14 @@ function renderPane(
       connected
       directory={directory}
       endpoint="bx@example.com:22"
+      localBusy={false}
+      localDirectory={null}
       transferResult={null}
       onBack={async () => undefined}
       onDownload={async () => undefined}
       onForward={async () => undefined}
+      onLocalNavigate={async () => undefined}
+      onLocalRefresh={async () => undefined}
       onNavigate={async () => undefined}
       onRefresh={async () => undefined}
       onUpload={async () => undefined}
@@ -82,13 +138,77 @@ describe("SftpPane", () => {
   });
 
   it("hides dot files by default and reveals them on demand", () => {
-    renderPane();
+    renderPane({ localDirectory });
 
     expect(screen.getByText("notes.txt")).toBeVisible();
     expect(screen.queryByText(".env")).not.toBeInTheDocument();
+    expect(screen.queryByText(".local-env")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "显示隐藏文件" }));
 
     expect(screen.getByText(".env")).toBeVisible();
+    expect(screen.getByText(".local-env")).toBeVisible();
+  });
+
+  it("keeps local and remote selection independent and fills transfer paths", () => {
+    renderPane({ localDirectory });
+
+    const localPanel = screen.getByRole("region", { name: "本地文件" });
+    const remotePanel = screen.getByRole("region", { name: "远端文件" });
+    fireEvent.click(within(localPanel).getByText("upload.txt"));
+
+    expect(
+      within(localPanel).getByRole("row", { name: /upload\.txt/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("上传本地源文件")).toHaveValue(
+      "C:\\work\\upload.txt",
+    );
+    expect(screen.getByLabelText("上传远端目标")).toHaveValue(
+      "/home/bx/upload.txt",
+    );
+    expect(
+      within(remotePanel).getByRole("row", { name: /notes\.txt/ }),
+    ).toHaveAttribute("aria-selected", "false");
+
+    fireEvent.click(within(remotePanel).getByText("notes.txt"));
+
+    expect(
+      within(remotePanel).getByRole("row", { name: /notes\.txt/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("下载远端源文件")).toHaveValue(
+      "/home/bx/notes.txt",
+    );
+    expect(screen.getByLabelText("下载本地目标")).toHaveValue(
+      "C:\\work\\notes.txt",
+    );
+    expect(
+      within(localPanel).getByRole("row", { name: /upload\.txt/ }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("sorts each panel independently by a selected column", () => {
+    renderPane({ localDirectory });
+    const localPanel = screen.getByRole("region", { name: "本地文件" });
+    const localSizeHeader = within(localPanel).getByRole("button", {
+      name: "大小",
+    });
+
+    fireEvent.click(localSizeHeader);
+
+    const rows = within(localPanel).getAllByRole("row");
+    expect(rows[1]).toHaveAccessibleName(/assets/);
+    expect(rows[2]).toHaveAccessibleName(/archive\.bin/);
+    expect(rows[3]).toHaveAccessibleName(/upload\.txt/);
+  });
+
+  it("accepts a local path entered in the address field", () => {
+    const onLocalNavigate = vi.fn(async () => undefined);
+    renderPane({ localDirectory, onLocalNavigate });
+    const pathInput = screen.getByRole("textbox", { name: "本地路径" });
+
+    fireEvent.change(pathInput, { target: { value: "C:\\other" } });
+    fireEvent.keyDown(pathInput, { key: "Enter", code: "Enter" });
+
+    expect(onLocalNavigate).toHaveBeenCalledWith("C:\\other");
   });
 });

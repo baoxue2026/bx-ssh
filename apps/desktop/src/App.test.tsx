@@ -1393,6 +1393,61 @@ describe("App", { timeout: 15_000 }, () => {
     });
   });
 
+  it("loads and navigates the controlled local file browser", async () => {
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_local_directory") {
+        const path = (args as { request: { path: string } }).request.path;
+        return Promise.resolve(
+          path === "."
+            ? {
+                path: "C:\\work",
+                parentPath: "C:\\",
+                entries: [
+                  {
+                    name: "releases",
+                    path: "C:\\work\\releases",
+                    kind: "directory",
+                    size: 0,
+                    modifiedAt: null,
+                    readonly: false,
+                    hidden: false,
+                  },
+                ],
+              }
+            : {
+                path,
+                parentPath: "C:\\work",
+                entries: [],
+              },
+        );
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    expect(await screen.findByText("releases")).toBeVisible();
+    expect(mocks.invoke).toHaveBeenCalledWith("list_local_directory", {
+      request: { path: "." },
+    });
+
+    fireEvent.doubleClick(screen.getByText("releases"));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("list_local_directory", {
+        request: { path: "C:\\work\\releases" },
+      });
+    });
+    expect(screen.getByRole("textbox", { name: "本地路径" })).toHaveValue(
+      "C:\\work\\releases",
+    );
+  });
+
   it("keeps SFTP back and forward history across directory navigation", async () => {
     mocks.invoke.mockImplementation((command: string, args?: unknown) => {
       if (command === "app_info") {

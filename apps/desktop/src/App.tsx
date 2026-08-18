@@ -114,6 +114,7 @@ import type {
   ExitImpact,
   HostKeyInfo,
   KeyboardInteractiveEvent,
+  LocalDirectoryListing,
   OpenSshImportPreview,
   OpenSshImportRequest,
   RemoteDirectoryListing,
@@ -237,6 +238,9 @@ export function App() {
   const [sftpSessionId, setSftpSessionId] = useState<string | null>(null);
   const [sftpDirectory, setSftpDirectory] =
     useState<RemoteDirectoryListing | null>(null);
+  const [localDirectory, setLocalDirectory] =
+    useState<LocalDirectoryListing | null>(null);
+  const [localBusy, setLocalBusy] = useState(false);
   const [sftpNavigation, setSftpNavigation] = useState<SftpNavigationHistory>({
     back: [],
     forward: [],
@@ -354,6 +358,8 @@ export function App() {
   const terminalSessionIdsRef = useRef(new Map<string, string>());
   const sessionTabSequenceRef = useRef(0);
   const sftpOperationGenerationRef = useRef(0);
+  const localOperationGenerationRef = useRef(0);
+  const localDirectoryLoadRef = useRef(false);
   const sessionCloseCancelButtonRef = useRef<HTMLButtonElement>(null);
   const terminalPasteCancelButtonRef = useRef<HTMLButtonElement>(null);
   const externalLinkCancelButtonRef = useRef<HTMLButtonElement>(null);
@@ -708,6 +714,7 @@ export function App() {
   useEffect(
     () => () => {
       connectionAttemptRef.current += 1;
+      localOperationGenerationRef.current += 1;
       const activeAttemptId = activeConnectionAttemptIdRef.current;
       if (activeAttemptId) {
         void ipc.cancelSshConnection(activeAttemptId);
@@ -1947,6 +1954,46 @@ export function App() {
   const refreshSftp = async () => {
     await navigateSftp(sftpDirectory?.path ?? ".", "refresh");
   };
+
+  const navigateLocal = useCallback(
+    async (path: string) => {
+      const operationGeneration = ++localOperationGenerationRef.current;
+      setLocalBusy(true);
+      setErrorMessage(null);
+      try {
+        const directory = await ipc.listLocalDirectory(path);
+        if (operationGeneration !== localOperationGenerationRef.current) {
+          return;
+        }
+        setLocalDirectory(directory);
+      } catch (error) {
+        if (operationGeneration === localOperationGenerationRef.current) {
+          setErrorMessage(localizedErrorText(error));
+        }
+      } finally {
+        if (operationGeneration === localOperationGenerationRef.current) {
+          setLocalBusy(false);
+        }
+      }
+    },
+    [localizedErrorText],
+  );
+
+  const refreshLocal = async () => {
+    await navigateLocal(localDirectory?.path ?? ".");
+  };
+
+  useEffect(() => {
+    if (workspaceMode !== "sftp") {
+      localDirectoryLoadRef.current = false;
+      return;
+    }
+    if (localDirectory || localDirectoryLoadRef.current) {
+      return;
+    }
+    localDirectoryLoadRef.current = true;
+    void navigateLocal(".");
+  }, [localDirectory, navigateLocal, workspaceMode]);
 
   const uploadSftp = async (localPath: string, remotePath: string) => {
     const activeSessionId = sftpSessionIdRef.current;
@@ -3273,9 +3320,13 @@ export function App() {
                   connected={connected}
                   directory={sftpDirectory}
                   endpoint={`${username}@${host}:${port}`}
+                  localBusy={localBusy}
+                  localDirectory={localDirectory}
                   transferResult={sftpTransferResult}
                   onBack={goBackSftp}
                   onForward={goForwardSftp}
+                  onLocalNavigate={navigateLocal}
+                  onLocalRefresh={refreshLocal}
                   onNavigate={navigateSftp}
                   onRefresh={refreshSftp}
                   onUpload={uploadSftp}
