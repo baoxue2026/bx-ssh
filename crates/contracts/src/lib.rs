@@ -126,11 +126,21 @@ pub struct TransferSummary {
     pub sha256: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferBatchSummary {
+    pub files: u64,
+    pub directories: u64,
+    pub bytes: u64,
+    pub elapsed_ms: u64,
+    pub bytes_per_second: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         AppInfo, HostKeyInfo, LocalDirectoryListing, LocalFileEntry, LocalFileKind,
-        RemoteFileEntry, RemoteFileKind, SshConnectionStage, TransferSummary,
+        RemoteFileEntry, RemoteFileKind, SshConnectionStage, TransferBatchSummary, TransferSummary,
     };
 
     #[test]
@@ -184,6 +194,18 @@ mod tests {
         assert_eq!(entry.kind, RemoteFileKind::File);
         assert_eq!(entry.permissions, Some(0o640));
         assert_eq!(summary.bytes_per_second, 51_200);
+
+        let batch = TransferBatchSummary {
+            files: 2,
+            directories: 3,
+            bytes: 2048,
+            elapsed_ms: 40,
+            bytes_per_second: 51_200,
+        };
+        let serialized = serde_json::to_value(batch).unwrap();
+        assert_eq!(serialized["files"], 2);
+        assert_eq!(serialized["directories"], 3);
+        assert_eq!(serialized["bytesPerSecond"], 51_200);
     }
 
     #[test]

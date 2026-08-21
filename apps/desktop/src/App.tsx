@@ -247,6 +247,7 @@ export function App() {
   });
   const [sftpBusy, setSftpBusy] = useState(false);
   const [sftpTransferActive, setSftpTransferActive] = useState(false);
+  const [sftpTransferId, setSftpTransferId] = useState<string | null>(null);
   const [sftpTransferResult, setSftpTransferResult] =
     useState<SftpTransferResult | null>(null);
   const [sessionCloseOpen, setSessionCloseOpen] = useState(false);
@@ -1227,7 +1228,7 @@ export function App() {
   };
 
   const beginSshConnectionAttempt = () => {
-    const attemptId = createConnectionAttemptId();
+    const attemptId = createRandomOperationId();
     activeConnectionAttemptIdRef.current = attemptId;
     setConnectionStage("created");
     return attemptId;
@@ -1745,6 +1746,7 @@ export function App() {
     setSftpNavigation({ back: [], forward: [] });
     setSftpBusy(false);
     setSftpTransferActive(false);
+    setSftpTransferId(null);
     setSftpTransferResult(null);
     setSessionCloseOpen(false);
     setSessionClosePending(false);
@@ -2009,12 +2011,30 @@ export function App() {
     setErrorMessage(null);
     setSftpTransferResult(null);
     try {
-      const summary = await ipc.uploadSftpFile(
-        activeSessionId,
-        localPath,
-        remotePath,
-        language,
-      );
+      const source = await ipc.statLocalPath(localPath);
+      if (source.kind !== "file" && source.kind !== "directory") {
+        throw new IpcError(
+          "unsupported_transfer_entry",
+          `unsupported local transfer entry: ${localPath}`,
+        );
+      }
+      const transferId =
+        source.kind === "directory" ? createRandomOperationId() : null;
+      setSftpTransferId(transferId);
+      const summary = transferId
+        ? await ipc.uploadSftpDirectory(
+            activeSessionId,
+            transferId,
+            localPath,
+            remotePath,
+            language,
+          )
+        : await ipc.uploadSftpFile(
+            activeSessionId,
+            localPath,
+            remotePath,
+            language,
+          );
       if (
         operationGeneration !== sftpOperationGenerationRef.current ||
         sftpSessionIdRef.current !== activeSessionId
@@ -2041,6 +2061,7 @@ export function App() {
       if (operationGeneration === sftpOperationGenerationRef.current) {
         setSftpBusy(false);
         setSftpTransferActive(false);
+        setSftpTransferId(null);
       }
     }
   };
@@ -2057,12 +2078,30 @@ export function App() {
     setErrorMessage(null);
     setSftpTransferResult(null);
     try {
-      const summary = await ipc.downloadSftpFile(
-        activeSessionId,
-        remotePath,
-        localPath,
-        language,
-      );
+      const source = await ipc.statSftpPath(activeSessionId, remotePath);
+      if (source.kind !== "file" && source.kind !== "directory") {
+        throw new IpcError(
+          "unsupported_transfer_entry",
+          `unsupported remote transfer entry: ${remotePath}`,
+        );
+      }
+      const transferId =
+        source.kind === "directory" ? createRandomOperationId() : null;
+      setSftpTransferId(transferId);
+      const summary = transferId
+        ? await ipc.downloadSftpDirectory(
+            activeSessionId,
+            transferId,
+            remotePath,
+            localPath,
+            language,
+          )
+        : await ipc.downloadSftpFile(
+            activeSessionId,
+            remotePath,
+            localPath,
+            language,
+          );
       if (
         operationGeneration !== sftpOperationGenerationRef.current ||
         sftpSessionIdRef.current !== activeSessionId
@@ -2082,7 +2121,18 @@ export function App() {
       if (operationGeneration === sftpOperationGenerationRef.current) {
         setSftpBusy(false);
         setSftpTransferActive(false);
+        setSftpTransferId(null);
       }
+    }
+  };
+
+  const cancelSftpTransfer = async () => {
+    const transferId = sftpTransferId;
+    if (!transferId) return;
+    try {
+      await ipc.cancelSftpTransfer(transferId);
+    } catch (error) {
+      setErrorMessage(localizedErrorText(error));
     }
   };
 
@@ -3329,6 +3379,7 @@ export function App() {
                   localBusy={localBusy}
                   localDirectory={localDirectory}
                   transferResult={sftpTransferResult}
+                  transferId={sftpTransferId}
                   onBack={goBackSftp}
                   onForward={goForwardSftp}
                   onLocalNavigate={navigateLocal}
@@ -3337,6 +3388,7 @@ export function App() {
                   onRefresh={refreshSftp}
                   onUpload={uploadSftp}
                   onDownload={downloadSftp}
+                  onCancelTransfer={cancelSftpTransfer}
                 />
                 {!connected && connectionState === "idle" && !hostKey && (
                   <ConnectionWorkspaceEmptyState
@@ -4124,12 +4176,22 @@ function commandErrorText(
       return t("errors.localPathIoError");
     case "invalid_local_file":
       return t("errors.invalidLocalFile");
+    case "invalid_local_directory":
+      return t("errors.invalidLocalDirectory");
+    case "invalid_remote_directory":
+      return t("errors.invalidRemoteDirectory");
+    case "unsupported_transfer_entry":
+      return t("errors.unsupportedTransferEntry");
     case "local_target_exists":
       return t("errors.localTargetExists");
     case "remote_target_exists":
       return t("errors.remoteTargetExists");
     case "transfer_integrity_mismatch":
       return t("errors.transferIntegrityMismatch");
+    case "transfer_cancelled":
+      return t("errors.transferCancelled");
+    case "transfer_cleanup_failed":
+      return t("errors.transferCleanupFailed");
     case "sftp_error":
       return t("errors.sftpOperation");
     case "transfer_io_error":
@@ -4156,7 +4218,7 @@ function isClosedSessionError(error: unknown): boolean {
   );
 }
 
-function createConnectionAttemptId(): string {
+function createRandomOperationId(): string {
   if (typeof globalThis.crypto.randomUUID === "function") {
     return globalThis.crypto.randomUUID();
   }

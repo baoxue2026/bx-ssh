@@ -129,6 +129,30 @@ async downloadSftpFile(sessionId: string, remotePath: string, localPath: string,
     else return { status: "error", error: e  as any };
 }
 },
+async uploadSftpDirectory(sessionId: string, transferId: string, localPath: string, remotePath: string, language: string) : Promise<Result<TransferBatchSummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upload_sftp_directory", { sessionId, transferId, localPath, remotePath, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async downloadSftpDirectory(sessionId: string, transferId: string, remotePath: string, localPath: string, language: string) : Promise<Result<TransferBatchSummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_sftp_directory", { sessionId, transferId, remotePath, localPath, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelSftpTransfer(transferId: string) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_sftp_transfer", { transferId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async hashRemoteSftpFile(sessionId: string, remotePath: string) : Promise<Result<TransferSummary, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("hash_remote_sftp_file", { sessionId, remotePath }) };
@@ -337,7 +361,7 @@ export type AppInfo = { name: string; version: string }
 export type AppMenuAction = "show-terminal" | "show-sftp" | "check-for-updates"
 export type AuthMethod = "password" | "privateKey" | "keyboardInteractive"
 export type CommandError = { code: CommandErrorCode; message: string; stage: SshConnectionStage | null }
-export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_path" | "local_path_not_found" | "local_path_not_directory" | "local_path_permission_denied" | "local_path_io_error" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "dns_lookup_timeout" | "dns_lookup_failed" | "tcp_connect_timeout" | "connection_refused" | "network_unreachable" | "tcp_connect_failed" | "handshake_timeout" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "keep_alive_failed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "terminal_output_unavailable" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "credential_store_locked" | "credential_store_unavailable" | "credential_store_failed" | "invalid_credential" | "clipboard_unavailable" | "invalid_external_url" | "external_link_open_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
+export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_path" | "local_path_not_found" | "local_path_not_directory" | "local_path_permission_denied" | "local_path_io_error" | "invalid_local_file" | "invalid_local_directory" | "invalid_remote_directory" | "unsupported_transfer_entry" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "transfer_cancelled" | "transfer_cleanup_failed" | "connect_timeout" | "dns_lookup_timeout" | "dns_lookup_failed" | "tcp_connect_timeout" | "connection_refused" | "network_unreachable" | "tcp_connect_failed" | "handshake_timeout" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "invalid_transfer_id" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "keep_alive_failed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "terminal_output_unavailable" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "credential_store_locked" | "credential_store_unavailable" | "credential_store_failed" | "invalid_credential" | "clipboard_unavailable" | "invalid_external_url" | "external_link_open_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
 export type ConnectionCatalog = { groups: ConnectionGroup[]; connections: ConnectionListItem[] }
 export type ConnectionConfig = { id: string; groupId: string | null; name: string; host: string; port: number; username: string; notes: string | null; color: string | null; authMethod: AuthMethod; credentialRef: string | null; keyReferenceId: string | null }
 export type ConnectionDetails = { connection: ConnectionListItem; settings: ConnectionSettingsSnapshot }
@@ -350,12 +374,12 @@ export type ConnectionSettingsScope = { kind: "global" } | { kind: "group"; grou
 export type ConnectionSettingsSnapshot = { layers: ConnectionSettingsLayers; resolved: ConnectionSettings }
 export type ExitImpact = { activeSessions: number; activeTransfers: number }
 export type HostKeyInfo = { algorithm: string; fingerprintSha256: string }
+export type KeyboardInteractiveEvent = { type: "prompt"; attemptId: string; name: string; instructions: string; prompts: KeyboardInteractivePromptItem[] }
+export type KeyboardInteractivePromptItem = { prompt: string; echo: boolean }
 export type LocalDirectoryListing = { path: string; parentPath: string | null; entries: LocalFileEntry[] }
 export type LocalFileEntry = { name: string; path: string; kind: LocalFileKind; size: number; modifiedAt: number | null; readonly: boolean; hidden: boolean }
 export type LocalFileKind = "directory" | "file" | "symlink" | "other"
 export type LocalPathRequest = { path: string }
-export type KeyboardInteractiveEvent = { type: "prompt"; attemptId: string; name: string; instructions: string; prompts: KeyboardInteractivePromptItem[] }
-export type KeyboardInteractivePromptItem = { prompt: string; echo: boolean }
 export type OpenSshDuplicateStrategy = "skip" | "overwrite"
 export type OpenSshImportError = "invalidPort" | "missingHost" | "missingUsername"
 export type OpenSshImportItem = { sourceId: string; alias: string; host: string; port: number; username: string; identityFile: string | null; duplicateConnectionId: string | null; duplicateConnectionName: string | null; errors: OpenSshImportError[]; warnings: OpenSshImportWarning[] }
@@ -377,6 +401,7 @@ export type StartSftpResponse = { sessionId: string; hostKey: HostKeyInfo; direc
 export type StartShellRequest = { attemptId: string; host: string; port: number; username: string; password: string; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
 export type StartShellResponse = { sessionId: string; hostKey: HostKeyInfo }
 export type TerminalEvent = { type: "exited"; code: number | null; signal: string | null } | { type: "error"; code: CommandErrorCode; message: string }
+export type TransferBatchSummary = { files: number; directories: number; bytes: number; elapsedMs: number; bytesPerSecond: number }
 export type TransferSummary = { bytes: number; elapsedMs: number; bytesPerSecond: number; sha256: string }
 export type TrustHostFingerprintRequest = { host: string; port: number; hostKey: HostKeyInfo }
 export type UpdateEvent = { type: "started"; contentLength: number | null } | { type: "progress"; chunkLength: number } | { type: "verified" }

@@ -541,6 +541,8 @@ export const resources = {
         downloadLocalPlaceholder: "本地目标路径",
         downloadRemoteLabel: "下载远端源文件",
         downloadRemotePlaceholder: "远端源文件路径",
+        directoryTransferActive: "目录传输进行中",
+        batchTransferSummary: "{{files}} 个文件，{{directories}} 个目录",
         empty: "目录为空",
         forward: "前进到下一个远端目录",
         modified: "修改时间",
@@ -619,10 +621,16 @@ export const resources = {
         localPathPermissionDenied: "没有权限访问该本地路径。",
         localPathIoError: "读取本地路径时发生 I/O 错误。",
         invalidLocalFile: "请选择可读取的本地普通文件。",
+        invalidLocalDirectory: "请选择可读取的本地目录。",
+        invalidRemoteDirectory: "请选择可读取的远端目录。",
+        unsupportedTransferEntry: "目录包含暂不支持传输的软链接或特殊文件。",
         localTargetExists: "本地目标文件已存在，未覆盖原文件。",
         remoteTargetExists: "远端目标文件已存在，未覆盖原文件。",
         sftpOperation: "SFTP 文件操作失败，未发布不完整的目标文件。",
         transferIntegrityMismatch: "文件传输校验失败，未保留不完整的目标文件。",
+        transferCancelled: "目录传输已取消，本批次创建的目标内容已回滚。",
+        transferCleanupFailed:
+          "目录传输失败，且未能完整清理目标目录，请手动检查目标路径。",
         transferIo: "文件传输发生 I/O 错误，未发布不完整的目标文件。",
       },
       feedback: {
@@ -1208,6 +1216,8 @@ export const resources = {
         downloadLocalPlaceholder: "Local destination path",
         downloadRemoteLabel: "Download remote source",
         downloadRemotePlaceholder: "Remote source path",
+        directoryTransferActive: "Directory transfer in progress",
+        batchTransferSummary: "{{files}} files, {{directories}} directories",
         empty: "Directory is empty",
         forward: "Go forward to the next remote directory",
         modified: "Modified",
@@ -1303,6 +1313,10 @@ export const resources = {
           "You do not have permission to access this local path.",
         localPathIoError: "An I/O error occurred while reading the local path.",
         invalidLocalFile: "Select a readable regular local file.",
+        invalidLocalDirectory: "Select a readable local directory.",
+        invalidRemoteDirectory: "Select a readable remote directory.",
+        unsupportedTransferEntry:
+          "The directory contains a symbolic link or special file that is not supported yet.",
         localTargetExists:
           "The local target already exists. The original file was not overwritten.",
         remoteTargetExists:
@@ -1311,6 +1325,10 @@ export const resources = {
           "The SFTP operation failed. No incomplete target file was published.",
         transferIntegrityMismatch:
           "File verification failed. The incomplete target file was not kept.",
+        transferCancelled:
+          "The directory transfer was cancelled and the targets created by this batch were rolled back.",
+        transferCleanupFailed:
+          "The directory transfer failed and the target directory could not be fully cleaned up. Check the target path manually.",
         transferIo:
           "A file transfer I/O error occurred. No incomplete target file was published.",
       },

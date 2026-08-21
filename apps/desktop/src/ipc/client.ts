@@ -223,6 +223,40 @@ export const ipc = {
     unwrap(() =>
       commands.downloadSftpFile(sessionId, remotePath, localPath, language),
     ),
+  uploadSftpDirectory: (
+    sessionId: string,
+    transferId: string,
+    localPath: string,
+    remotePath: string,
+    language: string,
+  ) =>
+    unwrap(() =>
+      commands.uploadSftpDirectory(
+        sessionId,
+        transferId,
+        localPath,
+        remotePath,
+        language,
+      ),
+    ),
+  downloadSftpDirectory: (
+    sessionId: string,
+    transferId: string,
+    remotePath: string,
+    localPath: string,
+    language: string,
+  ) =>
+    unwrap(() =>
+      commands.downloadSftpDirectory(
+        sessionId,
+        transferId,
+        remotePath,
+        localPath,
+        language,
+      ),
+    ),
+  cancelSftpTransfer: (transferId: string) =>
+    unwrap(() => commands.cancelSftpTransfer(transferId)),
   hashRemoteSftpFile: (sessionId: string, remotePath: string) =>
     unwrap(() => commands.hashRemoteSftpFile(sessionId, remotePath)),
   closeSftpSession: (sessionId: string) =>

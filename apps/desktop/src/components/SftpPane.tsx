@@ -23,13 +23,14 @@ import type {
   LocalFileEntry,
   RemoteDirectoryListing,
   RemoteFileEntry,
+  TransferBatchSummary,
   TransferSummary,
 } from "../ipc/bindings";
 import { EmptyState, LoadingState } from "./Feedback";
 
 export interface SftpTransferResult {
   direction: "upload" | "download";
-  summary: TransferSummary;
+  summary: TransferSummary | TransferBatchSummary;
 }
 
 interface SftpPaneProps {
@@ -42,6 +43,7 @@ interface SftpPaneProps {
   localBusy: boolean;
   localDirectory: LocalDirectoryListing | null;
   transferResult: SftpTransferResult | null;
+  transferId: string | null;
   onDownload(remotePath: string, localPath: string): Promise<void>;
   onBack(): Promise<void>;
   onForward(): Promise<void>;
@@ -50,6 +52,7 @@ interface SftpPaneProps {
   onNavigate(path: string): Promise<void>;
   onRefresh(): Promise<void>;
   onUpload(localPath: string, remotePath: string): Promise<void>;
+  onCancelTransfer(): Promise<void>;
 }
 
 export function SftpPane({
@@ -62,6 +65,7 @@ export function SftpPane({
   localBusy,
   localDirectory,
   transferResult,
+  transferId,
   onDownload,
   onBack,
   onForward,
@@ -70,6 +74,7 @@ export function SftpPane({
   onNavigate,
   onRefresh,
   onUpload,
+  onCancelTransfer,
 }: SftpPaneProps) {
   const { i18n, t } = useTranslation();
   const [pathDraft, setPathDraft] = useState<string | null>(null);
@@ -126,7 +131,7 @@ export function SftpPane({
 
   const selectLocalEntry = (entry: LocalFileEntry) => {
     setSelectedLocalPath(entry.path);
-    if (entry.kind === "file") {
+    if (entry.kind === "file" || entry.kind === "directory") {
       setLocalUploadPath(entry.path);
       setRemoteUploadPath(joinRemotePath(directory?.path ?? ".", entry.name));
     }
@@ -134,7 +139,7 @@ export function SftpPane({
 
   const selectRemoteEntry = (entry: RemoteFileEntry) => {
     setSelectedRemotePath(entry.path);
-    if (entry.kind === "file") {
+    if (entry.kind === "file" || entry.kind === "directory") {
       setRemoteDownloadPath(entry.path);
       setLocalDownloadPath(
         joinLocalPath(localDirectory?.path ?? ".", entry.name),
@@ -517,6 +522,19 @@ export function SftpPane({
           </Button>
         </div>
 
+        {transferId && (
+          <div
+            className="sftp-transfer-active"
+            role="status"
+            aria-live="polite"
+          >
+            <span>{t("sftp.directoryTransferActive")}</span>
+            <Button size="small" danger onClick={() => void onCancelTransfer()}>
+              {t("common.cancel")}
+            </Button>
+          </div>
+        )}
+
         {transferResult && (
           <div
             className="sftp-transfer-result"
@@ -531,7 +549,16 @@ export function SftpPane({
             </span>
             <strong>{formatBytes(transferResult.summary.bytes)}</strong>
             <span>{formatBytes(transferResult.summary.bytesPerSecond)}/s</span>
-            <code>{transferResult.summary.sha256}</code>
+            {"sha256" in transferResult.summary ? (
+              <code>{transferResult.summary.sha256}</code>
+            ) : (
+              <span>
+                {t("sftp.batchTransferSummary", {
+                  files: transferResult.summary.files,
+                  directories: transferResult.summary.directories,
+                })}
+              </span>
+            )}
           </div>
         )}
       </div>

@@ -1505,6 +1505,16 @@ describe("App", { timeout: 15_000 }, () => {
           sha256: "a".repeat(64),
         });
       }
+      if (command === "stat_sftp_path") {
+        return Promise.resolve({
+          name: "release.zip",
+          path: "/home/bxssh/release.zip",
+          kind: "file",
+          size: 1024,
+          modifiedAt: null,
+          permissions: 0o644,
+        });
+      }
       return Promise.resolve();
     });
     renderApp();
@@ -1599,6 +1609,17 @@ describe("App", { timeout: 15_000 }, () => {
               },
         );
       }
+      if (command === "stat_local_path") {
+        return Promise.resolve({
+          name: "release.zip",
+          path: "C:\\work\\release.zip",
+          kind: "file",
+          size: 1024,
+          modifiedAt: null,
+          readonly: false,
+          hidden: false,
+        });
+      }
       return Promise.resolve();
     });
     renderApp();
@@ -1631,6 +1652,98 @@ describe("App", { timeout: 15_000 }, () => {
     expect(
       await screen.findByText("文件传输校验失败，未保留不完整的目标文件。"),
     ).toBeVisible();
+  });
+
+  it("starts and cancels a recursive directory upload with one transfer ID", async () => {
+    const directoryUpload = new Promise(() => undefined);
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "list_local_directory") {
+        return Promise.resolve({
+          path: "C:\\work",
+          parentPath: "C:\\",
+          entries: [],
+        });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-directory",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: { path: "/home/bxssh", entries: [] },
+        });
+      }
+      if (command === "stat_local_path") {
+        return Promise.resolve({
+          name: "releases",
+          path: "C:\\work\\releases",
+          kind: "directory",
+          size: 0,
+          modifiedAt: null,
+          readonly: false,
+          hidden: false,
+        });
+      }
+      if (command === "upload_sftp_directory") {
+        return directoryUpload;
+      }
+      if (command === "cancel_sftp_transfer") {
+        return Promise.resolve(true);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    await screen.findByText("目录为空");
+
+    fireEvent.change(screen.getByLabelText("上传本地源文件"), {
+      target: { value: "C:\\work\\releases" },
+    });
+    fireEvent.change(screen.getByLabelText("上传远端目标"), {
+      target: { value: "/home/bxssh/releases" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    expect(await screen.findByText("目录传输进行中")).toBeVisible();
+    const uploadCall = commandCalls("upload_sftp_directory")[0][1] as {
+      transferId: string;
+    };
+    expect(uploadCall.transferId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /取\s*消/ }));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("cancel_sftp_transfer", {
+        transferId: uploadCall.transferId,
+      });
+    });
   });
 
   it("keeps SFTP back and forward history across directory navigation", async () => {
@@ -1763,6 +1876,17 @@ describe("App", { timeout: 15_000 }, () => {
       }
       if (command === "upload_sftp_file") {
         return upload;
+      }
+      if (command === "stat_local_path") {
+        return Promise.resolve({
+          name: "release.zip",
+          path: "D:\\release.zip",
+          kind: "file",
+          size: 1024,
+          modifiedAt: null,
+          readonly: false,
+          hidden: false,
+        });
       }
       return Promise.resolve();
     });

@@ -52,12 +52,22 @@ pub enum SshError {
     InvalidRemotePath,
     #[error("local transfer path must reference a regular file")]
     InvalidLocalFile,
+    #[error("local transfer path must reference a directory")]
+    InvalidLocalDirectory,
+    #[error("remote transfer path must reference a directory")]
+    InvalidRemoteDirectory,
+    #[error("directory transfer does not support this entry: {path}")]
+    UnsupportedTransferEntry { path: String },
     #[error("local transfer target already exists")]
     LocalTargetExists,
     #[error("remote transfer target already exists")]
     RemoteTargetExists,
     #[error("file transfer integrity check failed: expected {expected}, received {actual}")]
     TransferIntegrityMismatch { expected: String, actual: String },
+    #[error("file transfer was cancelled")]
+    TransferCancelled,
+    #[error("directory transfer failed and cleanup also failed: transfer: {transfer}; cleanup: {cleanup}")]
+    TransferCleanupFailed { transfer: String, cleanup: String },
     #[error("{request} request was rejected by the SSH server")]
     ChannelRequestRejected { request: &'static str },
     #[error("SSH channel closed while waiting for the {request} response")]
@@ -119,9 +129,14 @@ impl SshError {
             | Self::InvalidTerminalSize
             | Self::InvalidRemotePath
             | Self::InvalidLocalFile
+            | Self::InvalidLocalDirectory
+            | Self::InvalidRemoteDirectory
+            | Self::UnsupportedTransferEntry { .. }
             | Self::LocalTargetExists
             | Self::RemoteTargetExists
             | Self::TransferIntegrityMismatch { .. }
+            | Self::TransferCancelled
+            | Self::TransferCleanupFailed { .. }
             | Self::Sftp(_)
             | Self::TransferIo(_)
             | Self::KeepAliveFailed

@@ -169,6 +169,57 @@ describe("IPC client", () => {
     });
   });
 
+  it("uses recursive SFTP transfer commands and cancellation", async () => {
+    const summary = {
+      files: 2,
+      directories: 3,
+      bytes: 2048,
+      elapsedMs: 10,
+      bytesPerSecond: 204_800,
+    };
+    mocks.invoke.mockResolvedValue(summary);
+
+    await expect(
+      ipc.uploadSftpDirectory(
+        "sftp-session-1",
+        "transfer-1",
+        "C:\\source",
+        "/tmp/source",
+        "zh-CN",
+      ),
+    ).resolves.toEqual(summary);
+    expect(mocks.invoke).toHaveBeenCalledWith("upload_sftp_directory", {
+      sessionId: "sftp-session-1",
+      transferId: "transfer-1",
+      localPath: "C:\\source",
+      remotePath: "/tmp/source",
+      language: "zh-CN",
+    });
+
+    await expect(
+      ipc.downloadSftpDirectory(
+        "sftp-session-1",
+        "transfer-1",
+        "/tmp/source",
+        "C:\\download",
+        "zh-CN",
+      ),
+    ).resolves.toEqual(summary);
+    expect(mocks.invoke).toHaveBeenCalledWith("download_sftp_directory", {
+      sessionId: "sftp-session-1",
+      transferId: "transfer-1",
+      remotePath: "/tmp/source",
+      localPath: "C:\\download",
+      language: "zh-CN",
+    });
+
+    mocks.invoke.mockResolvedValue(true);
+    await expect(ipc.cancelSftpTransfer("transfer-1")).resolves.toBe(true);
+    expect(mocks.invoke).toHaveBeenCalledWith("cancel_sftp_transfer", {
+      transferId: "transfer-1",
+    });
+  });
+
   it("uses generated connection mutation commands", async () => {
     const config = {
       id: "connection-1",

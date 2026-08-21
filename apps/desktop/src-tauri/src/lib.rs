@@ -42,9 +42,9 @@ use openssh_import::{import_openssh_connections, preview_openssh_config};
 use platform::set_webview_memory_usage;
 use session_manager::{cancel_ssh_connection, SshSessionManager};
 use sftp::{
-    close_sftp_session, download_sftp_file, hash_remote_sftp_file, list_sftp_directory,
-    start_password_sftp, start_private_key_sftp, stat_sftp_path, upload_sftp_file,
-    SftpSessionManager,
+    cancel_sftp_transfer, close_sftp_session, download_sftp_directory, download_sftp_file,
+    hash_remote_sftp_file, list_sftp_directory, start_password_sftp, start_private_key_sftp,
+    stat_sftp_path, upload_sftp_directory, upload_sftp_file, SftpSessionManager,
 };
 use terminal::{
     acknowledge_terminal_output, close_terminal_session, get_known_host, probe_ssh_host,
@@ -83,6 +83,9 @@ fn command_builder() -> Builder<tauri::Wry> {
             sftp::stat_sftp_path,
             sftp::upload_sftp_file,
             sftp::download_sftp_file,
+            sftp::upload_sftp_directory,
+            sftp::download_sftp_directory,
+            sftp::cancel_sftp_transfer,
             sftp::hash_remote_sftp_file,
             sftp::close_sftp_session,
             platform::set_webview_memory_usage,
@@ -117,6 +120,7 @@ fn command_builder() -> Builder<tauri::Wry> {
         .typ::<sftp::StartSftpRequest>()
         .typ::<sftp::StartPrivateKeySftpRequest>()
         .typ::<sftp::StartSftpResponse>()
+        .typ::<bx_contracts::TransferBatchSummary>()
         .typ::<session_manager::SshConnectionEvent>()
         .typ::<update::UpdateEvent>()
         .typ::<AppMenuAction>()
@@ -231,6 +235,9 @@ pub fn run() {
             stat_sftp_path,
             upload_sftp_file,
             download_sftp_file,
+            upload_sftp_directory,
+            download_sftp_directory,
+            cancel_sftp_transfer,
             hash_remote_sftp_file,
             close_sftp_session,
             cancel_ssh_connection,

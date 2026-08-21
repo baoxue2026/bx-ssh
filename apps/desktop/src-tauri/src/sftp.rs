@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use bx_contracts::{
     ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, RemoteFileEntry, SshConnectionStage,
-    TransferSummary,
+    TransferBatchSummary, TransferSummary,
 };
 use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
     authenticate_password_with_progress, authenticate_private_key_contents_with_progress,
-    ClientSession, SftpClient, SshEndpoint, SshError,
+    ClientSession, ConnectionCancellation, SftpClient, SshEndpoint, SshError,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -27,7 +27,14 @@ use crate::session_manager::{SessionKind, SshConnectionEvent, SshSessionManager}
 #[derive(Clone, Default)]
 pub(crate) struct SftpSessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<ManagedSftpSession>>>>>,
+    transfers: Arc<Mutex<HashMap<String, ManagedSftpTransfer>>>,
     activity: AppActivity,
+}
+
+struct ManagedSftpTransfer {
+    owner: String,
+    session_id: String,
+    cancellation: ConnectionCancellation,
 }
 
 struct ManagedSftpSession {
@@ -440,6 +447,90 @@ pub(crate) async fn download_sftp_file(
     Ok(summary)
 }
 
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn upload_sftp_directory(
+    window: WebviewWindow,
+    app: AppHandle,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    transfer_id: String,
+    local_path: String,
+    remote_path: String,
+    language: String,
+) -> Result<TransferBatchSummary, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let cancellation = manager
+        .begin_transfer(window.label(), &session_id, &transfer_id)
+        .await?;
+    let _transfer_guard = manager.activity.track_transfer();
+    let result = {
+        let session = session.lock().await;
+        session
+            .sftp
+            .upload_directory(PathBuf::from(local_path), &remote_path, &cancellation)
+            .await
+    };
+    manager.finish_transfer(&transfer_id).await;
+    let summary = result?;
+    notify_transfer_completed(
+        &app,
+        localized_transfer_title(&language, "目录上传完成", "Directory upload complete"),
+        &remote_path,
+    );
+    Ok(summary)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn download_sftp_directory(
+    window: WebviewWindow,
+    app: AppHandle,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    transfer_id: String,
+    remote_path: String,
+    local_path: String,
+    language: String,
+) -> Result<TransferBatchSummary, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let cancellation = manager
+        .begin_transfer(window.label(), &session_id, &transfer_id)
+        .await?;
+    let _transfer_guard = manager.activity.track_transfer();
+    let result = {
+        let session = session.lock().await;
+        session
+            .sftp
+            .download_directory(&remote_path, PathBuf::from(local_path), &cancellation)
+            .await
+    };
+    manager.finish_transfer(&transfer_id).await;
+    let summary = result?;
+    notify_transfer_completed(
+        &app,
+        localized_transfer_title(&language, "目录下载完成", "Directory download complete"),
+        &remote_path,
+    );
+    Ok(summary)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn cancel_sftp_transfer(
+    window: WebviewWindow,
+    manager: State<'_, SftpSessionManager>,
+    transfer_id: String,
+) -> Result<bool, CommandError> {
+    Ok(manager.cancel_transfer(window.label(), &transfer_id).await)
+}
+
 fn notify_transfer_completed(app: &AppHandle, title: &str, path: &str) {
     let window_is_focused = app
         .get_webview_window("main")
@@ -484,6 +575,7 @@ pub(crate) async fn close_sftp_session(
     session_id: String,
 ) -> Result<(), CommandError> {
     session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    manager.cancel_session_transfers(&session_id).await;
     let session = manager
         .sessions
         .lock()
@@ -531,11 +623,13 @@ impl SftpSessionManager {
     pub(crate) fn with_activity(activity: AppActivity) -> Self {
         Self {
             sessions: Arc::default(),
+            transfers: Arc::default(),
             activity,
         }
     }
 
     pub(crate) async fn close_all(&self) {
+        self.cancel_all_transfers().await;
         let sessions = self
             .sessions
             .lock()
@@ -545,10 +639,7 @@ impl SftpSessionManager {
             .collect::<Vec<_>>();
 
         for session in sessions {
-            let Ok(session) = Arc::try_unwrap(session) else {
-                continue;
-            };
-            let mut session = session.into_inner();
+            let mut session = session.lock().await;
             let _ = session.sftp.close().await;
             if let Some(ssh) = session.ssh.take() {
                 let _ = ssh.disconnect().await;
@@ -564,11 +655,81 @@ impl SftpSessionManager {
             .cloned()
             .ok_or_else(|| CommandError::session_not_found("SFTP"))
     }
+
+    async fn begin_transfer(
+        &self,
+        owner: &str,
+        session_id: &str,
+        transfer_id: &str,
+    ) -> Result<ConnectionCancellation, CommandError> {
+        let transfer_id = validate_transfer_id(transfer_id)?;
+        let cancellation = ConnectionCancellation::default();
+        let mut transfers = self.transfers.lock().await;
+        if transfers.contains_key(transfer_id) {
+            return Err(CommandError::new(
+                crate::command_error::CommandErrorCode::SessionStateInvalid,
+                "SFTP transfer ID is already active",
+            ));
+        }
+        transfers.insert(
+            transfer_id.to_owned(),
+            ManagedSftpTransfer {
+                owner: owner.to_owned(),
+                session_id: session_id.to_owned(),
+                cancellation: cancellation.clone(),
+            },
+        );
+        Ok(cancellation)
+    }
+
+    async fn finish_transfer(&self, transfer_id: &str) {
+        self.transfers.lock().await.remove(transfer_id);
+    }
+
+    async fn cancel_transfer(&self, owner: &str, transfer_id: &str) -> bool {
+        let transfers = self.transfers.lock().await;
+        let Some(transfer) = transfers.get(transfer_id) else {
+            return false;
+        };
+        if transfer.owner != owner {
+            return false;
+        }
+        transfer.cancellation.cancel();
+        true
+    }
+
+    async fn cancel_session_transfers(&self, session_id: &str) {
+        for transfer in self.transfers.lock().await.values() {
+            if transfer.session_id == session_id {
+                transfer.cancellation.cancel();
+            }
+        }
+    }
+
+    async fn cancel_all_transfers(&self) {
+        for transfer in self.transfers.lock().await.values() {
+            transfer.cancellation.cancel();
+        }
+    }
+}
+
+fn validate_transfer_id(transfer_id: &str) -> Result<&str, CommandError> {
+    let valid = uuid::Uuid::parse_str(transfer_id)
+        .ok()
+        .is_some_and(|id| id.get_version() == Some(uuid::Version::Random));
+    if valid {
+        Ok(transfer_id)
+    } else {
+        Err(CommandError::new(
+            crate::command_error::CommandErrorCode::InvalidTransferId,
+            "SFTP transfer ID must be a random UUID",
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{localized_transfer_title, SftpSessionManager};
+    use super::{localized_transfer_title, validate_transfer_id, SftpSessionManager};
     use crate::command_error::CommandErrorCode;
 
     #[tokio::test]
@@ -591,5 +752,24 @@ mod tests {
             localized_transfer_title("en-US", "上传完成", "Upload complete"),
             "Upload complete"
         );
+    }
+
+    #[tokio::test]
+    async fn scopes_directory_transfer_cancellation_to_its_owner() {
+        const TRANSFER_ID: &str = "75e95ca2-bb25-45d8-8ca9-d9a87d67a4fd";
+        let manager = SftpSessionManager::default();
+        let cancellation = manager
+            .begin_transfer("main", "sftp-1", TRANSFER_ID)
+            .await
+            .unwrap();
+
+        assert!(!manager.cancel_transfer("other", TRANSFER_ID).await);
+        assert!(!cancellation.is_cancelled());
+        assert!(manager.cancel_transfer("main", TRANSFER_ID).await);
+        assert!(cancellation.is_cancelled());
+
+        manager.finish_transfer(TRANSFER_ID).await;
+        assert!(!manager.cancel_transfer("main", TRANSFER_ID).await);
+        assert!(validate_transfer_id("transfer-1").is_err());
     }
 }

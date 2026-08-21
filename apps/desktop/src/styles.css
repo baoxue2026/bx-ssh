@@ -2043,6 +2043,15 @@ select {
   font-size: 10px;
 }
 
+.sftp-transfer-active {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 .sftp-transfer-result code {
   overflow: hidden;
   color: var(--text-secondary);

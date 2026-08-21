@@ -92,6 +92,7 @@ function renderPane(
       localBusy={false}
       localDirectory={null}
       transferResult={null}
+      transferId={null}
       onBack={async () => undefined}
       onDownload={async () => undefined}
       onForward={async () => undefined}
@@ -100,6 +101,7 @@ function renderPane(
       onNavigate={async () => undefined}
       onRefresh={async () => undefined}
       onUpload={async () => undefined}
+      onCancelTransfer={async () => undefined}
       {...overrides}
     />,
   );
@@ -184,6 +186,52 @@ describe("SftpPane", () => {
     expect(
       within(localPanel).getByRole("row", { name: /upload\.txt/ }),
     ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("fills recursive transfer paths when selecting directories", () => {
+    const remoteWithDirectory: RemoteDirectoryListing = {
+      ...directory,
+      entries: [
+        ...directory.entries,
+        {
+          name: "releases",
+          path: "/home/bx/releases",
+          kind: "directory",
+          size: 0,
+          modifiedAt: null,
+          permissions: 0o755,
+        },
+      ],
+    };
+    renderPane({ directory: remoteWithDirectory, localDirectory });
+
+    fireEvent.click(screen.getByText("assets"));
+    expect(screen.getByLabelText("上传本地源文件")).toHaveValue(
+      "C:\\work\\assets",
+    );
+    expect(screen.getByLabelText("上传远端目标")).toHaveValue(
+      "/home/bx/assets",
+    );
+
+    fireEvent.click(screen.getByText("releases"));
+    expect(screen.getByLabelText("下载远端源文件")).toHaveValue(
+      "/home/bx/releases",
+    );
+    expect(screen.getByLabelText("下载本地目标")).toHaveValue(
+      "C:\\work\\releases",
+    );
+  });
+
+  it("shows and cancels an active directory transfer", () => {
+    const onCancelTransfer = vi.fn(async () => undefined);
+    renderPane({
+      transferId: "transfer-1",
+      onCancelTransfer,
+    });
+
+    expect(screen.getByText("目录传输进行中")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /取\s*消/ }));
+    expect(onCancelTransfer).toHaveBeenCalledOnce();
   });
 
   it("sorts each panel independently by a selected column", () => {

@@ -6,7 +6,9 @@ use std::{fmt::Write as _, io};
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 
-use bx_contracts::{RemoteDirectoryListing, RemoteFileEntry, RemoteFileKind, TransferSummary};
+use bx_contracts::{
+    RemoteDirectoryListing, RemoteFileEntry, RemoteFileKind, TransferBatchSummary, TransferSummary,
+};
 use russh::client;
 use russh_sftp::client::{Config, SftpSession};
 use russh_sftp::protocol::{FileType, OpenFlags};
@@ -18,7 +20,7 @@ use windows::core::PCWSTR;
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::MoveFileW;
 
-use crate::SshError;
+use crate::{ConnectionCancellation, SshError};
 
 const TRANSFER_BUFFER_BYTES: usize = 256 * 1024;
 const SFTP_MAX_PACKET_BYTES: u32 = 32 * 1024;
@@ -28,6 +30,16 @@ static TEMPORARY_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub struct SftpClient {
     session: SftpSession,
+}
+
+struct CreatedRemoteEntries {
+    files: Vec<String>,
+    directories: Vec<String>,
+}
+
+struct CreatedLocalEntries {
+    files: Vec<PathBuf>,
+    directories: Vec<PathBuf>,
 }
 
 impl SftpClient {
@@ -95,7 +107,18 @@ impl SftpClient {
         local_path: impl AsRef<Path>,
         remote_path: &str,
     ) -> Result<TransferSummary, SshError> {
+        self.upload_file_with_cancellation(local_path, remote_path, None)
+            .await
+    }
+
+    async fn upload_file_with_cancellation(
+        &self,
+        local_path: impl AsRef<Path>,
+        remote_path: &str,
+        cancellation: Option<&ConnectionCancellation>,
+    ) -> Result<TransferSummary, SshError> {
         let local_path = local_path.as_ref();
+        check_transfer_cancellation(cancellation)?;
         let metadata = fs::metadata(local_path).await?;
         if !metadata.is_file() {
             return Err(SshError::InvalidLocalFile);
@@ -116,7 +139,8 @@ impl SftpClient {
             )
             .await?;
         let started_at = Instant::now();
-        let result = copy_and_hash(&mut local_file, &mut remote_file).await;
+        let result =
+            copy_and_hash_with_cancellation(&mut local_file, &mut remote_file, cancellation).await;
 
         let summary = match result {
             Ok((bytes, sha256)) => {
@@ -133,7 +157,10 @@ impl SftpClient {
             }
         };
 
-        let remote_summary = match self.hash_remote_file(&temporary_path).await {
+        let remote_summary = match self
+            .hash_remote_file_with_cancellation(&temporary_path, cancellation)
+            .await
+        {
             Ok(summary) => summary,
             Err(error) => {
                 let _ = self.session.remove_file(&temporary_path).await;
@@ -141,6 +168,10 @@ impl SftpClient {
             }
         };
         if let Err(error) = verify_transfer_integrity(&summary, &remote_summary) {
+            let _ = self.session.remove_file(&temporary_path).await;
+            return Err(error);
+        }
+        if let Err(error) = check_transfer_cancellation(cancellation) {
             let _ = self.session.remove_file(&temporary_path).await;
             return Err(error);
         }
@@ -163,13 +194,127 @@ impl SftpClient {
         Ok(summary)
     }
 
+    pub async fn upload_directory(
+        &self,
+        local_path: impl AsRef<Path>,
+        remote_path: &str,
+        cancellation: &ConnectionCancellation,
+    ) -> Result<TransferBatchSummary, SshError> {
+        let local_path = local_path.as_ref();
+        check_transfer_cancellation(Some(cancellation))?;
+        let metadata = fs::symlink_metadata(local_path).await?;
+        if !metadata.is_dir() {
+            return Err(SshError::InvalidLocalDirectory);
+        }
+        let remote_path = validate_remote_path(remote_path)?.to_owned();
+        if self.session.try_exists(remote_path.clone()).await? {
+            return Err(SshError::RemoteTargetExists);
+        }
+
+        if let Err(error) = self.session.create_dir(remote_path.clone()).await {
+            return match self.session.try_exists(remote_path.clone()).await {
+                Ok(true) => Err(SshError::RemoteTargetExists),
+                _ => Err(error.into()),
+            };
+        }
+        let mut created = CreatedRemoteEntries {
+            files: Vec::new(),
+            directories: vec![remote_path.clone()],
+        };
+        let started_at = Instant::now();
+        let result = self
+            .upload_directory_contents(local_path, &remote_path, cancellation, &mut created)
+            .await;
+        match result {
+            Ok((files, directories, bytes)) => {
+                Ok(batch_summary(files, directories, bytes, started_at))
+            }
+            Err(error) => match self.cleanup_remote_entries(&created).await {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(SshError::TransferCleanupFailed {
+                    transfer: error.to_string(),
+                    cleanup: cleanup.to_string(),
+                }),
+            },
+        }
+    }
+
+    async fn upload_directory_contents(
+        &self,
+        local_path: &Path,
+        remote_path: &str,
+        cancellation: &ConnectionCancellation,
+        created: &mut CreatedRemoteEntries,
+    ) -> Result<(u64, u64, u64), SshError> {
+        let mut pending = vec![(local_path.to_owned(), remote_path.to_owned())];
+        let mut files = 0;
+        let mut directories = 1;
+        let mut bytes = 0;
+        while let Some((local_directory, remote_directory)) = pending.pop() {
+            check_transfer_cancellation(Some(cancellation))?;
+            let mut reader = fs::read_dir(&local_directory).await?;
+            while let Some(entry) = reader.next_entry().await? {
+                check_transfer_cancellation(Some(cancellation))?;
+                let local_child = entry.path();
+                let metadata = fs::symlink_metadata(&local_child).await?;
+                let name = entry.file_name().into_string().map_err(|_| {
+                    SshError::UnsupportedTransferEntry {
+                        path: local_child.to_string_lossy().into_owned(),
+                    }
+                })?;
+                let remote_child = join_remote_path(&remote_directory, &name);
+                if metadata.is_dir() {
+                    if self.session.try_exists(remote_child.clone()).await? {
+                        return Err(SshError::RemoteTargetExists);
+                    }
+                    if let Err(error) = self.session.create_dir(remote_child.clone()).await {
+                        return match self.session.try_exists(remote_child.clone()).await {
+                            Ok(true) => Err(SshError::RemoteTargetExists),
+                            _ => Err(error.into()),
+                        };
+                    }
+                    created.directories.push(remote_child.clone());
+                    pending.push((local_child, remote_child));
+                    directories += 1;
+                } else if metadata.is_file() {
+                    let summary = self
+                        .upload_file_with_cancellation(
+                            &local_child,
+                            &remote_child,
+                            Some(cancellation),
+                        )
+                        .await?;
+                    created.files.push(remote_child);
+                    files += 1;
+                    bytes += summary.bytes;
+                } else {
+                    return Err(SshError::UnsupportedTransferEntry {
+                        path: local_child.to_string_lossy().into_owned(),
+                    });
+                }
+            }
+        }
+        Ok((files, directories, bytes))
+    }
+
     pub async fn download_file(
         &self,
         remote_path: &str,
         local_path: impl AsRef<Path>,
     ) -> Result<TransferSummary, SshError> {
+        self.download_file_with_cancellation(remote_path, local_path, None)
+            .await
+    }
+
+    async fn download_file_with_cancellation(
+        &self,
+        remote_path: &str,
+        local_path: impl AsRef<Path>,
+        cancellation: Option<&ConnectionCancellation>,
+    ) -> Result<TransferSummary, SshError> {
         let remote_path = validate_remote_path(remote_path)?;
         let local_path = local_path.as_ref();
+        check_transfer_cancellation(cancellation)?;
         if fs::try_exists(local_path).await? {
             return Err(SshError::LocalTargetExists);
         }
@@ -182,7 +327,8 @@ impl SftpClient {
             .open(&temporary_path)
             .await?;
         let started_at = Instant::now();
-        let result = copy_and_hash(&mut remote_file, &mut local_file).await;
+        let result =
+            copy_and_hash_with_cancellation(&mut remote_file, &mut local_file, cancellation).await;
 
         let summary = match result {
             Ok((bytes, sha256)) => {
@@ -211,7 +357,7 @@ impl SftpClient {
             }
         };
 
-        let local_summary = match hash_local_file(&temporary_path).await {
+        let local_summary = match hash_local_file(&temporary_path, cancellation).await {
             Ok(summary) => summary,
             Err(error) => {
                 let _ = fs::remove_file(&temporary_path).await;
@@ -219,6 +365,10 @@ impl SftpClient {
             }
         };
         if let Err(error) = verify_transfer_integrity(&summary, &local_summary) {
+            let _ = fs::remove_file(&temporary_path).await;
+            return Err(error);
+        }
+        if let Err(error) = check_transfer_cancellation(cancellation) {
             let _ = fs::remove_file(&temporary_path).await;
             return Err(error);
         }
@@ -230,14 +380,132 @@ impl SftpClient {
         Ok(summary)
     }
 
+    pub async fn download_directory(
+        &self,
+        remote_path: &str,
+        local_path: impl AsRef<Path>,
+        cancellation: &ConnectionCancellation,
+    ) -> Result<TransferBatchSummary, SshError> {
+        check_transfer_cancellation(Some(cancellation))?;
+        let remote_path = validate_remote_path(remote_path)?.to_owned();
+        let metadata = self.session.symlink_metadata(remote_path.clone()).await?;
+        if !matches!(metadata.file_type(), FileType::Dir) {
+            return Err(SshError::InvalidRemoteDirectory);
+        }
+        let remote_path = self.canonicalize(&remote_path).await?;
+        let local_path = local_path.as_ref();
+        if fs::try_exists(local_path).await? {
+            return Err(SshError::LocalTargetExists);
+        }
+        fs::create_dir(local_path)
+            .await
+            .map_err(map_local_directory_create_error)?;
+        let mut created = CreatedLocalEntries {
+            files: Vec::new(),
+            directories: vec![local_path.to_owned()],
+        };
+        let started_at = Instant::now();
+        let result = self
+            .download_directory_contents(&remote_path, local_path, cancellation, &mut created)
+            .await;
+        match result {
+            Ok((files, directories, bytes)) => {
+                Ok(batch_summary(files, directories, bytes, started_at))
+            }
+            Err(error) => match cleanup_local_entries(&created).await {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(SshError::TransferCleanupFailed {
+                    transfer: error.to_string(),
+                    cleanup: cleanup.to_string(),
+                }),
+            },
+        }
+    }
+
+    async fn download_directory_contents(
+        &self,
+        remote_path: &str,
+        local_path: &Path,
+        cancellation: &ConnectionCancellation,
+        created: &mut CreatedLocalEntries,
+    ) -> Result<(u64, u64, u64), SshError> {
+        let mut pending = vec![(remote_path.to_owned(), local_path.to_owned())];
+        let mut files = 0;
+        let mut directories = 1;
+        let mut bytes = 0;
+        while let Some((remote_directory, local_directory)) = pending.pop() {
+            check_transfer_cancellation(Some(cancellation))?;
+            let entries = self.session.read_dir(remote_directory.clone()).await?;
+            for entry in entries {
+                check_transfer_cancellation(Some(cancellation))?;
+                let name = entry.file_name();
+                let remote_child = join_remote_path(&remote_directory, &name);
+                validate_remote_entry_name(&name, &remote_child)?;
+                let local_child = local_directory.join(&name);
+                match entry.file_type() {
+                    FileType::Dir => {
+                        fs::create_dir(&local_child)
+                            .await
+                            .map_err(map_local_directory_create_error)?;
+                        created.directories.push(local_child.clone());
+                        pending.push((remote_child, local_child));
+                        directories += 1;
+                    }
+                    FileType::File => {
+                        let summary = self
+                            .download_file_with_cancellation(
+                                &remote_child,
+                                &local_child,
+                                Some(cancellation),
+                            )
+                            .await?;
+                        created.files.push(local_child);
+                        files += 1;
+                        bytes += summary.bytes;
+                    }
+                    _ => {
+                        return Err(SshError::UnsupportedTransferEntry { path: remote_child });
+                    }
+                }
+            }
+        }
+        Ok((files, directories, bytes))
+    }
+
+    async fn cleanup_remote_entries(&self, created: &CreatedRemoteEntries) -> Result<(), SshError> {
+        let mut first_error = None;
+        for path in created.files.iter().rev() {
+            if let Err(error) = self.session.remove_file(path.clone()).await {
+                first_error.get_or_insert_with(|| SshError::from(error));
+            }
+        }
+        for path in created.directories.iter().rev() {
+            if let Err(error) = self.session.remove_dir(path.clone()).await {
+                first_error.get_or_insert_with(|| SshError::from(error));
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
     pub async fn hash_remote_file(&self, remote_path: &str) -> Result<TransferSummary, SshError> {
+        self.hash_remote_file_with_cancellation(remote_path, None)
+            .await
+    }
+
+    async fn hash_remote_file_with_cancellation(
+        &self,
+        remote_path: &str,
+        cancellation: Option<&ConnectionCancellation>,
+    ) -> Result<TransferSummary, SshError> {
+        check_transfer_cancellation(cancellation)?;
         let mut remote_file = self
             .session
             .open(validate_remote_path(remote_path)?)
             .await?;
         let mut sink = tokio::io::sink();
         let started_at = Instant::now();
-        let (bytes, sha256) = copy_and_hash(&mut remote_file, &mut sink).await?;
+        let (bytes, sha256) =
+            copy_and_hash_with_cancellation(&mut remote_file, &mut sink, cancellation).await?;
         remote_file.shutdown().await?;
         Ok(transfer_summary(bytes, sha256, started_at))
     }
@@ -249,13 +517,24 @@ impl SftpClient {
         Ok(())
     }
 
+    pub async fn remove_empty_directory(&self, remote_path: &str) -> Result<(), SshError> {
+        self.session
+            .remove_dir(validate_remote_path(remote_path)?)
+            .await?;
+        Ok(())
+    }
+
     pub async fn close(&self) -> Result<(), SshError> {
         self.session.close().await?;
         Ok(())
     }
 }
 
-async fn copy_and_hash<R, W>(reader: &mut R, writer: &mut W) -> Result<(u64, String), SshError>
+async fn copy_and_hash_with_cancellation<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    cancellation: Option<&ConnectionCancellation>,
+) -> Result<(u64, String), SshError>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -265,11 +544,29 @@ where
     let mut hasher = Sha256::new();
 
     loop {
-        let read = reader.read(&mut buffer).await?;
+        let read = match cancellation {
+            Some(cancellation) => {
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Err(SshError::TransferCancelled),
+                    result = reader.read(&mut buffer) => result?,
+                }
+            }
+            None => reader.read(&mut buffer).await?,
+        };
         if read == 0 {
             break;
         }
-        writer.write_all(&buffer[..read]).await?;
+        match cancellation {
+            Some(cancellation) => {
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Err(SshError::TransferCancelled),
+                    result = writer.write_all(&buffer[..read]) => result?,
+                }
+            }
+            None => writer.write_all(&buffer[..read]).await?,
+        }
         hasher.update(&buffer[..read]);
         bytes += read as u64;
     }
@@ -282,11 +579,50 @@ where
     Ok((bytes, sha256))
 }
 
-async fn hash_local_file(path: &Path) -> Result<TransferSummary, SshError> {
+fn check_transfer_cancellation(
+    cancellation: Option<&ConnectionCancellation>,
+) -> Result<(), SshError> {
+    if cancellation.is_some_and(ConnectionCancellation::is_cancelled) {
+        Err(SshError::TransferCancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn join_remote_path(directory: &str, name: &str) -> String {
+    if directory == "/" {
+        format!("/{name}")
+    } else {
+        format!("{}/{name}", directory.trim_end_matches('/'))
+    }
+}
+
+fn validate_remote_entry_name(name: &str, path: &str) -> Result<(), SshError> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+    {
+        Err(SshError::UnsupportedTransferEntry {
+            path: path.to_owned(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+async fn hash_local_file(
+    path: &Path,
+    cancellation: Option<&ConnectionCancellation>,
+) -> Result<TransferSummary, SshError> {
+    check_transfer_cancellation(cancellation)?;
     let mut file = File::open(path).await?;
     let mut sink = tokio::io::sink();
     let started_at = Instant::now();
-    let (bytes, sha256) = copy_and_hash(&mut file, &mut sink).await?;
+    let (bytes, sha256) =
+        copy_and_hash_with_cancellation(&mut file, &mut sink, cancellation).await?;
     Ok(transfer_summary(bytes, sha256, started_at))
 }
 
@@ -342,6 +678,29 @@ fn map_local_publish_error(error: io::Error) -> SshError {
     } else {
         SshError::TransferIo(error)
     }
+}
+
+fn map_local_directory_create_error(error: io::Error) -> SshError {
+    if error.kind() == io::ErrorKind::AlreadyExists {
+        SshError::LocalTargetExists
+    } else {
+        SshError::TransferIo(error)
+    }
+}
+
+async fn cleanup_local_entries(created: &CreatedLocalEntries) -> Result<(), SshError> {
+    let mut first_error = None;
+    for path in created.files.iter().rev() {
+        if let Err(error) = fs::remove_file(path).await {
+            first_error.get_or_insert(SshError::from(error));
+        }
+    }
+    for path in created.directories.iter().rev() {
+        if let Err(error) = fs::remove_dir(path).await {
+            first_error.get_or_insert(SshError::from(error));
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 fn validate_remote_path(path: &str) -> Result<&str, SshError> {
@@ -403,6 +762,23 @@ fn transfer_summary(bytes: u64, sha256: String, started_at: Instant) -> Transfer
     }
 }
 
+fn batch_summary(
+    files: u64,
+    directories: u64,
+    bytes: u64,
+    started_at: Instant,
+) -> TransferBatchSummary {
+    let elapsed_ms = started_at.elapsed().as_millis().max(1) as u64;
+    let bytes_per_second = ((bytes as u128 * 1000) / elapsed_ms as u128) as u64;
+    TransferBatchSummary {
+        files,
+        directories,
+        bytes,
+        elapsed_ms,
+        bytes_per_second,
+    }
+}
+
 fn sftp_config() -> Config {
     Config {
         max_packet_len: SFTP_MAX_PACKET_BYTES,
@@ -418,12 +794,15 @@ mod tests {
 
     use bx_contracts::{RemoteFileKind, TransferSummary};
     use tokio::fs;
+    use tokio::io;
+    use tokio::time::{timeout, Duration};
 
     use super::{
-        file_kind_order, publish_local_file, sftp_config, temporary_local_path,
-        validate_remote_path, verify_transfer_integrity,
+        copy_and_hash_with_cancellation, file_kind_order, join_remote_path, publish_local_file,
+        sftp_config, temporary_local_path, validate_remote_entry_name, validate_remote_path,
+        verify_transfer_integrity,
     };
-    use crate::SshError;
+    use crate::{ConnectionCancellation, SshError};
 
     #[test]
     fn validates_remote_paths() {
@@ -473,6 +852,52 @@ mod tests {
         let error = verify_transfer_integrity(&expected, &transfer_summary(12, "def"))
             .expect_err("different checksums must fail validation");
         assert!(matches!(error, SshError::TransferIntegrityMismatch { .. }));
+    }
+
+    #[test]
+    fn cancels_transfer_before_starting_and_joins_remote_paths_safely() {
+        let cancellation = ConnectionCancellation::default();
+        assert!(!cancellation.is_cancelled());
+        cancellation.cancel();
+        assert!(cancellation.is_cancelled());
+        assert_eq!(
+            join_remote_path("/home/bx", "release.zip"),
+            "/home/bx/release.zip"
+        );
+        assert_eq!(join_remote_path("/", "release.zip"), "/release.zip");
+        assert!(validate_remote_entry_name("release.zip", "/release.zip").is_ok());
+        assert!(validate_remote_entry_name("../escape", "/../escape").is_err());
+        assert!(validate_remote_entry_name("nested/file", "/nested/file").is_err());
+    }
+
+    #[tokio::test]
+    async fn cancels_a_transfer_while_waiting_for_io() {
+        let (_writer, mut reader) = io::duplex(1);
+        let mut sink = io::sink();
+        let cancellation = ConnectionCancellation::default();
+        let cancellation_request = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            cancellation_request.cancel();
+        });
+
+        let error = timeout(
+            Duration::from_secs(1),
+            copy_and_hash_with_cancellation(&mut reader, &mut sink, Some(&cancellation)),
+        )
+        .await
+        .expect("cancelled transfer must wake promptly")
+        .expect_err("cancelled transfer must not finish successfully");
+        assert!(matches!(error, SshError::TransferCancelled));
+    }
+
+    #[test]
+    fn batch_summaries_keep_directory_and_file_counts() {
+        let summary = super::batch_summary(3, 4, 1024, std::time::Instant::now());
+        assert_eq!(summary.files, 3);
+        assert_eq!(summary.directories, 4);
+        assert_eq!(summary.bytes, 1024);
+        assert!(summary.elapsed_ms >= 1);
     }
 
     #[tokio::test]

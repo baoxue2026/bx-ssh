@@ -3,7 +3,9 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use bx_ssh_core::{authenticate_password, probe_host_key, SshEndpoint, SshError};
+use bx_ssh_core::{
+    authenticate_password, probe_host_key, ConnectionCancellation, SshEndpoint, SshError,
+};
 use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
@@ -53,6 +55,13 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     let download_path = test_root.join("download.bin");
     let remote_name = format!(".bx-ssh-sftp-test-{}.bin", std::process::id());
     let remote_path = format!("./{remote_name}");
+    let source_directory = test_root.join("source-directory");
+    let source_deep_directory = source_directory.join("deep").join("a").join("b");
+    let source_empty_directory = source_directory.join("empty");
+    let source_directory_file = source_deep_directory.join("source.bin");
+    let download_directory = test_root.join("download-directory");
+    let remote_directory_name = format!(".bx-ssh-sftp-test-{}.dir", std::process::id());
+    let remote_directory = format!("./{remote_directory_name}");
 
     let validation: Result<_, String> = async {
         run_phase(
@@ -61,6 +70,15 @@ async fn validates_sftp_directory_transfer_and_sha256() {
             create_test_file(&source_path, test_bytes),
         )
         .await?;
+        fs::create_dir_all(&source_deep_directory)
+            .await
+            .map_err(|error| error.to_string())?;
+        fs::create_dir(&source_empty_directory)
+            .await
+            .map_err(|error| error.to_string())?;
+        fs::copy(&source_path, &source_directory_file)
+            .await
+            .map_err(|error| error.to_string())?;
         let initial_directory = run_phase(
             "list_initial_directory",
             phase_timeout,
@@ -94,7 +112,36 @@ async fn validates_sftp_directory_transfer_and_sha256() {
             sftp.download_file(&remote_path, &download_path),
         )
         .await?;
-        Ok((upload, download))
+        let directory_upload = run_phase(
+            "upload_directory",
+            phase_timeout,
+            sftp.upload_directory(
+                &source_directory,
+                &remote_directory,
+                &ConnectionCancellation::default(),
+            ),
+        )
+        .await?;
+        let directory_download = run_phase(
+            "download_directory",
+            phase_timeout,
+            sftp.download_directory(
+                &remote_directory,
+                &download_directory,
+                &ConnectionCancellation::default(),
+            ),
+        )
+        .await?;
+        assert!(download_directory.join("empty").is_dir());
+        assert_eq!(
+            fs::read(&source_directory_file)
+                .await
+                .map_err(|error| error.to_string())?,
+            fs::read(download_directory.join("deep/a/b/source.bin"))
+                .await
+                .map_err(|error| error.to_string())?
+        );
+        Ok((upload, download, directory_upload, directory_download))
     }
     .await;
 
@@ -104,6 +151,26 @@ async fn validates_sftp_directory_transfer_and_sha256() {
         sftp.remove_file(&remote_path),
     )
     .await;
+    cleanup_phase(
+        "remove_remote_directory_file",
+        phase_timeout,
+        sftp.remove_file(&format!("{remote_directory}/deep/a/b/source.bin")),
+    )
+    .await;
+    for directory in [
+        format!("{remote_directory}/deep/a/b"),
+        format!("{remote_directory}/deep/a"),
+        format!("{remote_directory}/deep"),
+        format!("{remote_directory}/empty"),
+        remote_directory.clone(),
+    ] {
+        cleanup_phase(
+            "remove_remote_test_directory",
+            phase_timeout,
+            sftp.remove_empty_directory(&directory),
+        )
+        .await;
+    }
     cleanup_phase("close_sftp", phase_timeout, sftp.close()).await;
     cleanup_phase("disconnect_ssh", phase_timeout, ssh.disconnect()).await;
     cleanup_phase("remove_local_test_directory", phase_timeout, async {
@@ -111,10 +178,16 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     })
     .await;
 
-    let (upload, download) = validation.unwrap();
+    let (upload, download, directory_upload, directory_download) = validation.unwrap();
     assert_eq!(upload.bytes, test_bytes);
     assert_eq!(download.bytes, test_bytes);
     assert_eq!(upload.sha256, download.sha256);
+    assert_eq!(directory_upload.files, 1);
+    assert_eq!(directory_upload.directories, 5);
+    assert_eq!(directory_upload.bytes, test_bytes);
+    assert_eq!(directory_download.files, directory_upload.files);
+    assert_eq!(directory_download.directories, directory_upload.directories);
+    assert_eq!(directory_download.bytes, directory_upload.bytes);
     println!(
         "BX_SFTP_RESULT bytes={} upload_bps={} download_bps={} sha256={}",
         test_bytes, upload.bytes_per_second, download.bytes_per_second, upload.sha256
