@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Button, Input, Tooltip } from "antd";
+import { Button, Checkbox, Input, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 import {
   ArrowUp,
@@ -14,8 +14,13 @@ import {
   Eye,
   File,
   Folder,
+  FolderPlus,
   FolderOpen,
+  FilePenLine,
+  MoveRight,
   RefreshCw,
+  ShieldCheck,
+  Trash2,
   Upload,
 } from "lucide-react";
 import type {
@@ -53,6 +58,11 @@ interface SftpPaneProps {
   onRefresh(): Promise<void>;
   onUpload(localPath: string, remotePath: string): Promise<void>;
   onCancelTransfer(): Promise<void>;
+  onCreateDirectory?(remotePath: string): Promise<void>;
+  onDeleteEntry?(remotePath: string, recursive: boolean): Promise<void>;
+  onMoveEntry?(sourcePath: string, targetPath: string): Promise<void>;
+  onRenameEntry?(sourcePath: string, targetPath: string): Promise<void>;
+  onChmodEntry?(remotePath: string, permissions: number): Promise<void>;
 }
 
 export function SftpPane({
@@ -75,6 +85,11 @@ export function SftpPane({
   onRefresh,
   onUpload,
   onCancelTransfer,
+  onChmodEntry = async () => undefined,
+  onCreateDirectory = async () => undefined,
+  onDeleteEntry = async () => undefined,
+  onMoveEntry = async () => undefined,
+  onRenameEntry = async () => undefined,
 }: SftpPaneProps) {
   const { i18n, t } = useTranslation();
   const [pathDraft, setPathDraft] = useState<string | null>(null);
@@ -92,9 +107,16 @@ export function SftpPane({
   const [selectedRemotePath, setSelectedRemotePath] = useState<string | null>(
     null,
   );
+  const [selectedRemoteEntry, setSelectedRemoteEntry] =
+    useState<RemoteFileEntry | null>(null);
+  const [operation, setOperation] = useState<SftpOperation | null>(null);
+  const [operationValue, setOperationValue] = useState("");
+  const [recursiveDelete, setRecursiveDelete] = useState(false);
+  const [operationBusy, setOperationBusy] = useState(false);
 
   const pathInput = pathDraft ?? directory?.path ?? ".";
   const parentPath = directory ? remoteParentPath(directory.path) : ".";
+
   const localPathInput = localPathDraft ?? localDirectory?.path ?? ".";
   const visibleLocalEntries = useMemo(
     () =>
@@ -120,6 +142,7 @@ export function SftpPane({
   const navigate = async (path: string) => {
     setPathDraft(null);
     setSelectedRemotePath(null);
+    setSelectedRemoteEntry(null);
     await onNavigate(path);
   };
 
@@ -139,11 +162,74 @@ export function SftpPane({
 
   const selectRemoteEntry = (entry: RemoteFileEntry) => {
     setSelectedRemotePath(entry.path);
+    setSelectedRemoteEntry(entry);
     if (entry.kind === "file" || entry.kind === "directory") {
       setRemoteDownloadPath(entry.path);
       setLocalDownloadPath(
         joinLocalPath(localDirectory?.path ?? ".", entry.name),
       );
+    }
+  };
+
+  const openOperation = (kind: SftpOperationKind) => {
+    if (
+      (kind === "mkdir" && !directory) ||
+      (kind !== "mkdir" && !selectedRemoteEntry)
+    ) {
+      return;
+    }
+    setOperation(
+      kind === "mkdir" ? { kind } : { kind, entry: selectedRemoteEntry! },
+    );
+    setRecursiveDelete(false);
+    if (kind === "rename") {
+      setOperationValue(selectedRemoteEntry?.name ?? "");
+    } else if (kind === "move") {
+      setOperationValue(selectedRemoteEntry?.path ?? "");
+    } else if (kind === "chmod") {
+      setOperationValue(
+        selectedRemoteEntry?.permissions === null ||
+          selectedRemoteEntry?.permissions === undefined
+          ? "0644"
+          : selectedRemoteEntry.permissions.toString(8).padStart(4, "0"),
+      );
+    } else {
+      setOperationValue("");
+    }
+  };
+
+  const closeOperation = () => {
+    if (!operationBusy) setOperation(null);
+  };
+
+  const submitOperation = async () => {
+    if (!operation) return;
+    const value = operationValue.trim();
+    if (!isValidOperationValue(operation, value)) return;
+    setOperationBusy(true);
+    try {
+      if (operation.kind === "mkdir") {
+        await onCreateDirectory!(joinRemotePath(directory!.path, value));
+      } else if (operation.kind === "delete") {
+        await onDeleteEntry!(operation.entry.path, recursiveDelete);
+      } else if (operation.kind === "rename") {
+        await onRenameEntry!(
+          operation.entry.path,
+          joinRemotePath(remoteParentPath(operation.entry.path), value),
+        );
+      } else if (operation.kind === "move") {
+        await onMoveEntry!(operation.entry.path, value);
+      } else {
+        const permissions = Number.parseInt(value, 8);
+        await onChmodEntry!(operation.entry.path, permissions);
+      }
+      setOperation(null);
+      setSelectedRemoteEntry(null);
+      setSelectedRemotePath(null);
+    } catch {
+      // App owns localized operation feedback; keep the dialog open for correction or retry.
+    } finally {
+      setOperationBusy(false);
     }
   };
 
@@ -364,6 +450,54 @@ export function SftpPane({
           <div className="sftp-panel-toolbar">
             <strong>{t("sftp.remote")}</strong>
             <span className="sftp-panel-path">{pathInput}</span>
+            <div className="sftp-entry-actions">
+              <Tooltip title={t("sftp.createDirectory")}>
+                <Button
+                  size="small"
+                  aria-label={t("sftp.createDirectory")}
+                  icon={<FolderPlus size={14} />}
+                  disabled={!connected || busy || !directory}
+                  onClick={() => openOperation("mkdir")}
+                />
+              </Tooltip>
+              <Tooltip title={t("sftp.renameEntry")}>
+                <Button
+                  size="small"
+                  aria-label={t("sftp.renameEntry")}
+                  icon={<FilePenLine size={14} />}
+                  disabled={!connected || busy || !selectedRemoteEntry}
+                  onClick={() => openOperation("rename")}
+                />
+              </Tooltip>
+              <Tooltip title={t("sftp.moveEntry")}>
+                <Button
+                  size="small"
+                  aria-label={t("sftp.moveEntry")}
+                  icon={<MoveRight size={14} />}
+                  disabled={!connected || busy || !selectedRemoteEntry}
+                  onClick={() => openOperation("move")}
+                />
+              </Tooltip>
+              <Tooltip title={t("sftp.chmodEntry")}>
+                <Button
+                  size="small"
+                  aria-label={t("sftp.chmodEntry")}
+                  icon={<ShieldCheck size={14} />}
+                  disabled={!connected || busy || !selectedRemoteEntry}
+                  onClick={() => openOperation("chmod")}
+                />
+              </Tooltip>
+              <Tooltip title={t("sftp.deleteEntry")}>
+                <Button
+                  size="small"
+                  danger
+                  aria-label={t("sftp.deleteEntry")}
+                  icon={<Trash2 size={14} />}
+                  disabled={!connected || busy || !selectedRemoteEntry}
+                  onClick={() => openOperation("delete")}
+                />
+              </Tooltip>
+            </div>
           </div>
           <div className="sftp-list" aria-busy={busy}>
             <table>
@@ -467,6 +601,53 @@ export function SftpPane({
         </section>
       </div>
 
+      <Modal
+        open={operation !== null}
+        title={operationTitle(operation, t)}
+        okText={t("common.confirm")}
+        cancelText={t("common.cancel")}
+        confirmLoading={operationBusy}
+        okButtonProps={{
+          danger: operation?.kind === "delete",
+          disabled: operation
+            ? !isValidOperationValue(operation, operationValue.trim())
+            : true,
+        }}
+        onOk={() => void submitOperation()}
+        onCancel={closeOperation}
+        destroyOnHidden
+      >
+        {operation?.kind === "delete" ? (
+          <div className="sftp-operation-confirmation">
+            <p>
+              {t("sftp.deleteConfirmation", {
+                path: operation.entry.path,
+              })}
+            </p>
+            {operation.entry.kind === "directory" && (
+              <Checkbox
+                checked={recursiveDelete}
+                onChange={(event) => setRecursiveDelete(event.target.checked)}
+              >
+                {t("sftp.recursiveDelete")}
+              </Checkbox>
+            )}
+          </div>
+        ) : operation ? (
+          <Input
+            autoFocus
+            value={operationValue}
+            aria-label={operationInputLabel(operation, t)}
+            placeholder={operationInputPlaceholder(operation, t)}
+            onChange={(event) => setOperationValue(event.target.value)}
+            onPressEnter={() => void submitOperation()}
+          />
+        ) : null}
+        {operation?.kind === "chmod" && (
+          <p className="sftp-operation-help">{t("sftp.chmodHelp")}</p>
+        )}
+      </Modal>
+
       <div className="sftp-transfer-panel">
         <div className="sftp-transfer-row">
           <Upload size={15} />
@@ -563,6 +744,88 @@ export function SftpPane({
         )}
       </div>
     </section>
+  );
+}
+
+type SftpOperationKind = "mkdir" | "delete" | "move" | "rename" | "chmod";
+type SftpOperation =
+  | { kind: "mkdir" }
+  | { kind: Exclude<SftpOperationKind, "mkdir">; entry: RemoteFileEntry };
+
+function operationTitle(
+  operation: SftpOperation | null,
+  t: (key: string) => string,
+): string {
+  if (!operation) return "";
+  return t(
+    operation.kind === "mkdir"
+      ? "sftp.createDirectory"
+      : operation.kind === "delete"
+        ? "sftp.deleteEntry"
+        : operation.kind === "move"
+          ? "sftp.moveEntry"
+          : operation.kind === "rename"
+            ? "sftp.renameEntry"
+            : "sftp.chmodEntry",
+  );
+}
+
+function operationInputLabel(
+  operation: SftpOperation,
+  t: (key: string) => string,
+): string {
+  return t(
+    operation.kind === "mkdir"
+      ? "sftp.newDirectoryName"
+      : operation.kind === "rename"
+        ? "sftp.newName"
+        : operation.kind === "move"
+          ? "sftp.moveTargetPath"
+          : "sftp.permissions",
+  );
+}
+
+function operationInputPlaceholder(
+  operation: SftpOperation,
+  t: (key: string) => string,
+): string {
+  return t(
+    operation.kind === "mkdir"
+      ? "sftp.newDirectoryName"
+      : operation.kind === "rename"
+        ? "sftp.newName"
+        : operation.kind === "move"
+          ? "sftp.moveTargetPath"
+          : "sftp.chmodPlaceholder",
+  );
+}
+
+function isValidOperationValue(
+  operation: SftpOperation,
+  value: string,
+): boolean {
+  if (operation.kind === "delete") return true;
+  if (operation.kind === "chmod") return /^[0-7]{1,4}$/.test(value);
+  if (operation.kind === "move") {
+    return (
+      value !== operation.entry.path &&
+      value.startsWith("/") &&
+      value !== "/" &&
+      !value.endsWith("/") &&
+      !value
+        .split("/")
+        .slice(1)
+        .some((part) => part === "" || part === "." || part === "..")
+    );
+  }
+  return (
+    value.length > 0 &&
+    (operation.kind !== "rename" || value !== operation.entry.name) &&
+    value !== "." &&
+    value !== ".." &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !value.includes("\0")
   );
 }
 

@@ -222,6 +222,85 @@ describe("SftpPane", () => {
     );
   });
 
+  it("renames a selected remote entry", async () => {
+    const onRenameEntry = vi.fn(async () => undefined);
+    renderPane({ onRenameEntry });
+
+    expect(screen.getByRole("button", { name: "删除远端条目" })).toBeDisabled();
+    fireEvent.click(screen.getByText("notes.txt"));
+    fireEvent.click(screen.getByRole("button", { name: "重命名远端条目" }));
+    const renameInput = screen.getByRole("textbox", { name: "新名称" });
+    fireEvent.change(renameInput, { target: { value: "renamed.txt" } });
+    fireEvent.click(screen.getByRole("button", { name: /确\s*定/ }));
+    await vi.waitFor(() => {
+      expect(onRenameEntry).toHaveBeenCalledWith(
+        "/home/bx/notes.txt",
+        "/home/bx/renamed.txt",
+      );
+    });
+  });
+
+  it("creates a remote directory", async () => {
+    const onCreateDirectory = vi.fn(async () => undefined);
+    renderPane({ onCreateDirectory });
+    fireEvent.click(screen.getByRole("button", { name: "新建目录" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "新目录名称" }), {
+      target: { value: "releases" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /确\s*定/ }));
+    await vi.waitFor(() => {
+      expect(onCreateDirectory).toHaveBeenCalledWith("/home/bx/releases");
+    });
+  });
+
+  it("confirms a remote file deletion", async () => {
+    const onDeleteEntry = vi.fn(async () => undefined);
+    renderPane({ onDeleteEntry });
+    fireEvent.click(screen.getByText("notes.txt"));
+    fireEvent.click(screen.getByRole("button", { name: "删除远端条目" }));
+    const dialog = screen.getByRole("dialog", { name: "删除远端条目" });
+    expect(
+      within(dialog).getByText("确认删除远端条目 /home/bx/notes.txt？"),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: /确\s*定/ }));
+    await vi.waitFor(() => {
+      expect(onDeleteEntry).toHaveBeenCalledWith("/home/bx/notes.txt", false);
+    });
+  });
+
+  it("requires explicit recursive deletion for a remote directory", async () => {
+    const onDeleteEntry = vi.fn(async () => undefined);
+    renderPane({
+      directory: {
+        ...directory,
+        entries: [
+          ...directory.entries,
+          {
+            name: "releases",
+            path: "/home/bx/releases",
+            kind: "directory",
+            size: 0,
+            modifiedAt: null,
+            permissions: 0o755,
+          },
+        ],
+      },
+      onDeleteEntry,
+    });
+    fireEvent.click(screen.getByText("releases"));
+    fireEvent.click(screen.getByRole("button", { name: "删除远端条目" }));
+    const dialog = screen.getByRole("dialog", { name: "删除远端条目" });
+    fireEvent.click(
+      within(dialog).getByRole("checkbox", {
+        name: "递归删除该目录及其全部内容（不可恢复）",
+      }),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: /确\s*定/ }));
+    await vi.waitFor(() => {
+      expect(onDeleteEntry).toHaveBeenCalledWith("/home/bx/releases", true);
+    });
+  });
+
   it("shows and cancels an active directory transfer", () => {
     const onCancelTransfer = vi.fn(async () => undefined);
     renderPane({

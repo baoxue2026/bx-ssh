@@ -113,6 +113,46 @@ async statSftpPath(sessionId: string, path: string) : Promise<Result<RemoteFileE
     else return { status: "error", error: e  as any };
 }
 },
+async createSftpDirectory(sessionId: string, remotePath: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_sftp_directory", { sessionId, remotePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteSftpEntry(sessionId: string, remotePath: string, recursive: boolean) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_sftp_entry", { sessionId, remotePath, recursive }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async moveSftpEntry(sessionId: string, sourcePath: string, targetPath: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("move_sftp_entry", { sessionId, sourcePath, targetPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async renameSftpEntry(sessionId: string, sourcePath: string, targetPath: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_sftp_entry", { sessionId, sourcePath, targetPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chmodSftpEntry(sessionId: string, remotePath: string, permissions: number) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chmod_sftp_entry", { sessionId, remotePath, permissions }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async uploadSftpFile(sessionId: string, localPath: string, remotePath: string, language: string) : Promise<Result<TransferSummary, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("upload_sftp_file", { sessionId, localPath, remotePath, language }) };
@@ -361,7 +401,7 @@ export type AppInfo = { name: string; version: string }
 export type AppMenuAction = "show-terminal" | "show-sftp" | "check-for-updates"
 export type AuthMethod = "password" | "privateKey" | "keyboardInteractive"
 export type CommandError = { code: CommandErrorCode; message: string; stage: SshConnectionStage | null }
-export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_path" | "local_path_not_found" | "local_path_not_directory" | "local_path_permission_denied" | "local_path_io_error" | "invalid_local_file" | "invalid_local_directory" | "invalid_remote_directory" | "unsupported_transfer_entry" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "transfer_cancelled" | "transfer_cleanup_failed" | "connect_timeout" | "dns_lookup_timeout" | "dns_lookup_failed" | "tcp_connect_timeout" | "connection_refused" | "network_unreachable" | "tcp_connect_failed" | "handshake_timeout" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "invalid_transfer_id" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "keep_alive_failed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "terminal_output_unavailable" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "credential_store_locked" | "credential_store_unavailable" | "credential_store_failed" | "invalid_credential" | "clipboard_unavailable" | "invalid_external_url" | "external_link_open_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
+export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_path" | "local_path_not_found" | "local_path_not_directory" | "local_path_permission_denied" | "local_path_io_error" | "invalid_local_file" | "invalid_local_directory" | "invalid_remote_directory" | "unsupported_transfer_entry" | "local_target_exists" | "remote_target_exists" | "remote_directory_not_empty" | "invalid_remote_permissions" | "transfer_integrity_mismatch" | "transfer_cancelled" | "transfer_cleanup_failed" | "connect_timeout" | "dns_lookup_timeout" | "dns_lookup_failed" | "tcp_connect_timeout" | "connection_refused" | "network_unreachable" | "tcp_connect_failed" | "handshake_timeout" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "invalid_transfer_id" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "keep_alive_failed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "terminal_output_unavailable" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "credential_store_locked" | "credential_store_unavailable" | "credential_store_failed" | "invalid_credential" | "clipboard_unavailable" | "invalid_external_url" | "external_link_open_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
 export type ConnectionCatalog = { groups: ConnectionGroup[]; connections: ConnectionListItem[] }
 export type ConnectionConfig = { id: string; groupId: string | null; name: string; host: string; port: number; username: string; notes: string | null; color: string | null; authMethod: AuthMethod; credentialRef: string | null; keyReferenceId: string | null }
 export type ConnectionDetails = { connection: ConnectionListItem; settings: ConnectionSettingsSnapshot }

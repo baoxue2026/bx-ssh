@@ -2136,6 +2136,77 @@ export function App() {
     }
   };
 
+  const runSftpMutation = async (mutation: () => Promise<void>) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    const operationGeneration = sftpOperationGenerationRef.current;
+    setSftpBusy(true);
+    setErrorMessage(null);
+    try {
+      await mutation();
+      const directory = await ipc.listSftpDirectory(
+        activeSessionId,
+        sftpDirectory?.path ?? ".",
+      );
+      if (
+        operationGeneration !== sftpOperationGenerationRef.current ||
+        sftpSessionIdRef.current !== activeSessionId
+      ) {
+        return;
+      }
+      setSftpDirectory(directory);
+    } catch (error) {
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setErrorMessage(localizedErrorText(error));
+      }
+      throw error;
+    } finally {
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setSftpBusy(false);
+      }
+    }
+  };
+
+  const createSftpDirectory = async (remotePath: string) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.createSftpDirectory(activeSessionId, remotePath),
+    );
+  };
+
+  const deleteSftpEntry = async (remotePath: string, recursive: boolean) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.deleteSftpEntry(activeSessionId, remotePath, recursive),
+    );
+  };
+
+  const moveSftpEntry = async (sourcePath: string, targetPath: string) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.moveSftpEntry(activeSessionId, sourcePath, targetPath),
+    );
+  };
+
+  const renameSftpEntry = async (sourcePath: string, targetPath: string) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.renameSftpEntry(activeSessionId, sourcePath, targetPath),
+    );
+  };
+
+  const chmodSftpEntry = async (remotePath: string, permissions: number) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.chmodSftpEntry(activeSessionId, remotePath, permissions),
+    );
+  };
+
   const writeTerminal = useCallback(
     (data: string) => {
       const activeSessionId = sessionIdRef.current;
@@ -3389,6 +3460,11 @@ export function App() {
                   onUpload={uploadSftp}
                   onDownload={downloadSftp}
                   onCancelTransfer={cancelSftpTransfer}
+                  onCreateDirectory={createSftpDirectory}
+                  onDeleteEntry={deleteSftpEntry}
+                  onMoveEntry={moveSftpEntry}
+                  onRenameEntry={renameSftpEntry}
+                  onChmodEntry={chmodSftpEntry}
                 />
                 {!connected && connectionState === "idle" && !hostKey && (
                   <ConnectionWorkspaceEmptyState
@@ -4182,6 +4258,10 @@ function commandErrorText(
       return t("errors.invalidRemoteDirectory");
     case "unsupported_transfer_entry":
       return t("errors.unsupportedTransferEntry");
+    case "remote_directory_not_empty":
+      return t("errors.remoteDirectoryNotEmpty");
+    case "invalid_remote_permissions":
+      return t("errors.invalidRemotePermissions");
     case "local_target_exists":
       return t("errors.localTargetExists");
     case "remote_target_exists":

@@ -563,6 +563,18 @@ export const resources = {
         uploadLocalPlaceholder: "本地源文件路径",
         uploadRemoteLabel: "上传远端目标",
         uploadRemotePlaceholder: "远端目标路径",
+        createDirectory: "新建目录",
+        deleteEntry: "删除远端条目",
+        moveEntry: "移动远端条目",
+        renameEntry: "重命名远端条目",
+        chmodEntry: "修改远端权限",
+        newDirectoryName: "新目录名称",
+        newName: "新名称",
+        moveTargetPath: "移动后的目标路径",
+        chmodPlaceholder: "例如 0755",
+        chmodHelp: "请输入 0000 到 7777 的八进制权限，例如 0644。",
+        deleteConfirmation: "确认删除远端条目 {{path}}？",
+        recursiveDelete: "递归删除该目录及其全部内容（不可恢复）",
       },
       update: {
         availableTitle: "发现新版本 v{{version}}",
@@ -626,6 +638,8 @@ export const resources = {
         unsupportedTransferEntry: "目录包含暂不支持传输的软链接或特殊文件。",
         localTargetExists: "本地目标文件已存在，未覆盖原文件。",
         remoteTargetExists: "远端目标文件已存在，未覆盖原文件。",
+        remoteDirectoryNotEmpty: "远端目录不为空，请确认递归删除。",
+        invalidRemotePermissions: "远端权限必须是 0000 到 7777 的八进制模式。",
         sftpOperation: "SFTP 文件操作失败，未发布不完整的目标文件。",
         transferIntegrityMismatch: "文件传输校验失败，未保留不完整的目标文件。",
         transferCancelled: "目录传输已取消，本批次创建的目标内容已回滚。",
@@ -1238,6 +1252,20 @@ export const resources = {
         uploadLocalPlaceholder: "Local source path",
         uploadRemoteLabel: "Upload remote destination",
         uploadRemotePlaceholder: "Remote destination path",
+        createDirectory: "Create directory",
+        deleteEntry: "Delete remote entry",
+        moveEntry: "Move remote entry",
+        renameEntry: "Rename remote entry",
+        chmodEntry: "Change remote permissions",
+        newDirectoryName: "New directory name",
+        newName: "New name",
+        moveTargetPath: "Destination path",
+        chmodPlaceholder: "For example, 0755",
+        chmodHelp:
+          "Enter an octal permission mode from 0000 to 7777, for example 0644.",
+        deleteConfirmation: "Delete the remote entry {{path}}?",
+        recursiveDelete:
+          "Recursively delete this directory and all contents (cannot be undone)",
       },
       update: {
         availableTitle: "Version {{version}} is available",
@@ -1321,6 +1349,10 @@ export const resources = {
           "The local target already exists. The original file was not overwritten.",
         remoteTargetExists:
           "The remote target already exists. The original file was not overwritten.",
+        remoteDirectoryNotEmpty:
+          "The remote directory is not empty. Confirm recursive deletion.",
+        invalidRemotePermissions:
+          "Remote permissions must be an octal mode between 0000 and 7777.",
         sftpOperation:
           "The SFTP operation failed. No incomplete target file was published.",
         transferIntegrityMismatch:

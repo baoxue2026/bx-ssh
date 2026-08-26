@@ -2052,6 +2052,18 @@ select {
   font-size: 11px;
 }
 
+.sftp-entry-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.sftp-operation-help {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .sftp-transfer-result code {
   overflow: hidden;
   color: var(--text-secondary);

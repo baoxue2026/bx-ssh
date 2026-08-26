@@ -220,6 +220,51 @@ describe("IPC client", () => {
     });
   });
 
+  it("uses remote SFTP file operation commands", async () => {
+    mocks.invoke.mockResolvedValue(null);
+
+    await expect(
+      ipc.createSftpDirectory("sftp-session-1", "/tmp/new"),
+    ).resolves.toBeUndefined();
+    await expect(
+      ipc.deleteSftpEntry("sftp-session-1", "/tmp/old", true),
+    ).resolves.toBeUndefined();
+    await expect(
+      ipc.moveSftpEntry("sftp-session-1", "/tmp/a", "/var/a"),
+    ).resolves.toBeUndefined();
+    await expect(
+      ipc.renameSftpEntry("sftp-session-1", "/tmp/a", "/tmp/b"),
+    ).resolves.toBeUndefined();
+    await expect(
+      ipc.chmodSftpEntry("sftp-session-1", "/tmp/b", 0o640),
+    ).resolves.toBeUndefined();
+
+    expect(mocks.invoke).toHaveBeenNthCalledWith(1, "create_sftp_directory", {
+      sessionId: "sftp-session-1",
+      remotePath: "/tmp/new",
+    });
+    expect(mocks.invoke).toHaveBeenNthCalledWith(2, "delete_sftp_entry", {
+      sessionId: "sftp-session-1",
+      remotePath: "/tmp/old",
+      recursive: true,
+    });
+    expect(mocks.invoke).toHaveBeenNthCalledWith(3, "move_sftp_entry", {
+      sessionId: "sftp-session-1",
+      sourcePath: "/tmp/a",
+      targetPath: "/var/a",
+    });
+    expect(mocks.invoke).toHaveBeenNthCalledWith(4, "rename_sftp_entry", {
+      sessionId: "sftp-session-1",
+      sourcePath: "/tmp/a",
+      targetPath: "/tmp/b",
+    });
+    expect(mocks.invoke).toHaveBeenNthCalledWith(5, "chmod_sftp_entry", {
+      sessionId: "sftp-session-1",
+      remotePath: "/tmp/b",
+      permissions: 0o640,
+    });
+  });
+
   it("uses generated connection mutation commands", async () => {
     const config = {
       id: "connection-1",

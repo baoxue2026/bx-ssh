@@ -389,6 +389,88 @@ pub(crate) async fn stat_sftp_path(
 
 #[tauri::command]
 #[specta::specta]
+pub(crate) async fn create_sftp_directory(
+    window: WebviewWindow,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    remote_path: String,
+) -> Result<(), CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let session = session.lock().await;
+    Ok(session.sftp.create_directory(&remote_path).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn delete_sftp_entry(
+    window: WebviewWindow,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    remote_path: String,
+    recursive: bool,
+) -> Result<(), CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let session = session.lock().await;
+    Ok(session.sftp.delete_entry(&remote_path, recursive).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn move_sftp_entry(
+    window: WebviewWindow,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    source_path: String,
+    target_path: String,
+) -> Result<(), CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let session = session.lock().await;
+    Ok(session.sftp.move_entry(&source_path, &target_path).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn rename_sftp_entry(
+    window: WebviewWindow,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    source_path: String,
+    target_path: String,
+) -> Result<(), CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let session = session.lock().await;
+    Ok(session
+        .sftp
+        .rename_entry(&source_path, &target_path)
+        .await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn chmod_sftp_entry(
+    window: WebviewWindow,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    remote_path: String,
+    permissions: u32,
+) -> Result<(), CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let session = session.lock().await;
+    Ok(session.sftp.chmod(&remote_path, permissions).await?)
+}
+
+#[tauri::command]
+#[specta::specta]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn upload_sftp_file(
     window: WebviewWindow,

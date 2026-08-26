@@ -49,6 +49,9 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     let sftp = run_phase("open_sftp", phase_timeout, ssh.open_sftp())
         .await
         .unwrap();
+    let remote_home = run_phase("resolve_remote_home", phase_timeout, sftp.canonicalize("."))
+        .await
+        .unwrap();
     let test_root = temporary_test_directory();
     fs::create_dir_all(&test_root).await.unwrap();
     let source_path = test_root.join("source.bin");
@@ -62,6 +65,15 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     let download_directory = test_root.join("download-directory");
     let remote_directory_name = format!(".bx-ssh-sftp-test-{}.dir", std::process::id());
     let remote_directory = format!("./{remote_directory_name}");
+    let remote_operations_name = format!(".bx-ssh-sftp-test-{}.ops", std::process::id());
+    let remote_operations = if remote_home == "/" {
+        format!("/{remote_operations_name}")
+    } else {
+        format!(
+            "{}/{remote_operations_name}",
+            remote_home.trim_end_matches('/')
+        )
+    };
 
     let validation: Result<_, String> = async {
         run_phase(
@@ -141,6 +153,61 @@ async fn validates_sftp_directory_transfer_and_sha256() {
                 .await
                 .map_err(|error| error.to_string())?
         );
+        run_phase(
+            "create_operations_directory",
+            phase_timeout,
+            sftp.create_directory(&remote_operations),
+        )
+        .await?;
+        run_phase(
+            "create_operations_child",
+            phase_timeout,
+            sftp.create_directory(&format!("{remote_operations}/child")),
+        )
+        .await?;
+        expect_directory_not_empty_phase(
+            "reject_non_recursive_directory_delete",
+            phase_timeout,
+            sftp.delete_entry(&remote_operations, false),
+        )
+        .await?;
+        run_phase(
+            "chmod_operations_child",
+            phase_timeout,
+            sftp.chmod(&format!("{remote_operations}/child"), 0o700),
+        )
+        .await?;
+        let chmod_entry = run_phase(
+            "verify_operations_child_permissions",
+            phase_timeout,
+            sftp.stat_path(&format!("{remote_operations}/child")),
+        )
+        .await?;
+        assert_eq!(chmod_entry.permissions, Some(0o700));
+        run_phase(
+            "rename_operations_child",
+            phase_timeout,
+            sftp.rename_entry(
+                &format!("{remote_operations}/child"),
+                &format!("{remote_operations}/renamed"),
+            ),
+        )
+        .await?;
+        run_phase(
+            "move_operations_child",
+            phase_timeout,
+            sftp.move_entry(
+                &format!("{remote_operations}/renamed"),
+                &format!("{remote_operations}/moved"),
+            ),
+        )
+        .await?;
+        run_phase(
+            "delete_operations_directory_recursively",
+            phase_timeout,
+            sftp.delete_entry(&remote_operations, true),
+        )
+        .await?;
         Ok((upload, download, directory_upload, directory_download))
     }
     .await;
@@ -171,6 +238,12 @@ async fn validates_sftp_directory_transfer_and_sha256() {
         )
         .await;
     }
+    cleanup_phase(
+        "remove_remote_operations_directory",
+        phase_timeout,
+        sftp.delete_entry(&remote_operations, true),
+    )
+    .await;
     cleanup_phase("close_sftp", phase_timeout, sftp.close()).await;
     cleanup_phase("disconnect_ssh", phase_timeout, ssh.disconnect()).await;
     cleanup_phase("remove_local_test_directory", phase_timeout, async {
@@ -205,6 +278,28 @@ async fn run_phase<T>(
             eprintln!("BX_SFTP_PHASE name={name} status=completed");
             Ok(value)
         }
+        Ok(Err(error)) => Err(format!("SFTP phase {name} failed: {error}")),
+        Err(_) => Err(format!(
+            "SFTP phase {name} timed out after {} seconds",
+            phase_timeout.as_secs()
+        )),
+    }
+}
+
+async fn expect_directory_not_empty_phase(
+    name: &str,
+    phase_timeout: Duration,
+    future: impl Future<Output = Result<(), SshError>>,
+) -> Result<(), String> {
+    eprintln!("BX_SFTP_PHASE name={name} status=started");
+    match timeout(phase_timeout, future).await {
+        Ok(Err(SshError::RemoteDirectoryNotEmpty)) => {
+            eprintln!("BX_SFTP_PHASE name={name} status=completed");
+            Ok(())
+        }
+        Ok(Ok(())) => Err(format!(
+            "SFTP phase {name} unexpectedly deleted a non-empty directory"
+        )),
         Ok(Err(error)) => Err(format!("SFTP phase {name} failed: {error}")),
         Err(_) => Err(format!(
             "SFTP phase {name} timed out after {} seconds",

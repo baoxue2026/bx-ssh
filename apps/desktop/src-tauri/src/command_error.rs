@@ -24,6 +24,8 @@ pub(crate) enum CommandErrorCode {
     UnsupportedTransferEntry,
     LocalTargetExists,
     RemoteTargetExists,
+    RemoteDirectoryNotEmpty,
+    InvalidRemotePermissions,
     TransferIntegrityMismatch,
     TransferCancelled,
     TransferCleanupFailed,
@@ -137,6 +139,8 @@ impl From<SshError> for CommandError {
             SshError::UnsupportedTransferEntry { .. } => CommandErrorCode::UnsupportedTransferEntry,
             SshError::LocalTargetExists => CommandErrorCode::LocalTargetExists,
             SshError::RemoteTargetExists => CommandErrorCode::RemoteTargetExists,
+            SshError::RemoteDirectoryNotEmpty => CommandErrorCode::RemoteDirectoryNotEmpty,
+            SshError::InvalidRemotePermissions => CommandErrorCode::InvalidRemotePermissions,
             SshError::TransferIntegrityMismatch { .. } => {
                 CommandErrorCode::TransferIntegrityMismatch
             }

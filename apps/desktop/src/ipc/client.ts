@@ -205,6 +205,34 @@ export const ipc = {
     unwrap(() => commands.listSftpDirectory(sessionId, path)),
   statSftpPath: (sessionId: string, path: string) =>
     unwrap(() => commands.statSftpPath(sessionId, path)),
+  createSftpDirectory: (sessionId: string, remotePath: string) =>
+    unwrapVoid(() => commands.createSftpDirectory(sessionId, remotePath)),
+  deleteSftpEntry: (
+    sessionId: string,
+    remotePath: string,
+    recursive: boolean,
+  ) =>
+    unwrapVoid(() =>
+      commands.deleteSftpEntry(sessionId, remotePath, recursive),
+    ),
+  moveSftpEntry: (sessionId: string, sourcePath: string, targetPath: string) =>
+    unwrapVoid(() => commands.moveSftpEntry(sessionId, sourcePath, targetPath)),
+  renameSftpEntry: (
+    sessionId: string,
+    sourcePath: string,
+    targetPath: string,
+  ) =>
+    unwrapVoid(() =>
+      commands.renameSftpEntry(sessionId, sourcePath, targetPath),
+    ),
+  chmodSftpEntry: (
+    sessionId: string,
+    remotePath: string,
+    permissions: number,
+  ) =>
+    unwrapVoid(() =>
+      commands.chmodSftpEntry(sessionId, remotePath, permissions),
+    ),
   uploadSftpFile: (
     sessionId: string,
     localPath: string,

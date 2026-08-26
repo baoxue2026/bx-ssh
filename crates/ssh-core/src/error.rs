@@ -62,6 +62,10 @@ pub enum SshError {
     LocalTargetExists,
     #[error("remote transfer target already exists")]
     RemoteTargetExists,
+    #[error("remote directory is not empty")]
+    RemoteDirectoryNotEmpty,
+    #[error("remote permissions must be an octal mode between 0000 and 7777")]
+    InvalidRemotePermissions,
     #[error("file transfer integrity check failed: expected {expected}, received {actual}")]
     TransferIntegrityMismatch { expected: String, actual: String },
     #[error("file transfer was cancelled")]
@@ -134,6 +138,8 @@ impl SshError {
             | Self::UnsupportedTransferEntry { .. }
             | Self::LocalTargetExists
             | Self::RemoteTargetExists
+            | Self::RemoteDirectoryNotEmpty
+            | Self::InvalidRemotePermissions
             | Self::TransferIntegrityMismatch { .. }
             | Self::TransferCancelled
             | Self::TransferCleanupFailed { .. }

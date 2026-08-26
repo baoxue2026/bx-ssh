@@ -10,8 +10,8 @@ use bx_contracts::{
     RemoteDirectoryListing, RemoteFileEntry, RemoteFileKind, TransferBatchSummary, TransferSummary,
 };
 use russh::client;
-use russh_sftp::client::{Config, SftpSession};
-use russh_sftp::protocol::{FileType, OpenFlags};
+use russh_sftp::client::{error::Error as SftpError, Config, SftpSession};
+use russh_sftp::protocol::{FileAttributes, FileType, OpenFlags, StatusCode};
 use sha2::{Digest, Sha256};
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -517,6 +517,114 @@ impl SftpClient {
         Ok(())
     }
 
+    pub async fn create_directory(&self, remote_path: &str) -> Result<(), SshError> {
+        let remote_path = validate_mutation_path(remote_path)?;
+        if self.remote_entry_exists(remote_path).await? {
+            return Err(SshError::RemoteTargetExists);
+        }
+        self.session.create_dir(remote_path).await?;
+        Ok(())
+    }
+
+    pub async fn delete_entry(&self, remote_path: &str, recursive: bool) -> Result<(), SshError> {
+        let remote_path = validate_mutation_path(remote_path)?.to_owned();
+        let metadata = self.session.symlink_metadata(remote_path.clone()).await?;
+        match metadata.file_type() {
+            FileType::Dir => self.delete_directory(&remote_path, recursive).await,
+            FileType::File | FileType::Symlink => {
+                self.session.remove_file(remote_path).await?;
+                Ok(())
+            }
+            FileType::Other => Err(SshError::UnsupportedTransferEntry { path: remote_path }),
+        }
+    }
+
+    async fn delete_directory(&self, remote_path: &str, recursive: bool) -> Result<(), SshError> {
+        if !recursive {
+            let entries = self.session.read_dir(remote_path.to_owned()).await?;
+            if entries.into_iter().next().is_some() {
+                return Err(SshError::RemoteDirectoryNotEmpty);
+            }
+            self.session.remove_dir(remote_path.to_owned()).await?;
+            return Ok(());
+        }
+
+        let mut pending = vec![remote_path.to_owned()];
+        let mut directories = Vec::new();
+        while let Some(directory) = pending.pop() {
+            directories.push(directory.clone());
+            let entries = self.session.read_dir(directory.clone()).await?;
+            for entry in entries {
+                let name = entry.file_name();
+                let child = join_remote_path(&directory, &name);
+                validate_remote_entry_name(&name, &child)?;
+                match entry.file_type() {
+                    FileType::Dir => pending.push(child),
+                    FileType::File | FileType::Symlink => {
+                        self.session.remove_file(child).await?;
+                    }
+                    FileType::Other => {
+                        return Err(SshError::UnsupportedTransferEntry { path: child });
+                    }
+                }
+            }
+        }
+        for directory in directories.into_iter().rev() {
+            self.session.remove_dir(directory).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn move_entry(&self, source_path: &str, target_path: &str) -> Result<(), SshError> {
+        self.rename_entry(source_path, target_path).await
+    }
+
+    pub async fn rename_entry(&self, source_path: &str, target_path: &str) -> Result<(), SshError> {
+        let source_path = validate_mutation_path(source_path)?.to_owned();
+        let target_path = validate_mutation_path(target_path)?.to_owned();
+        let source_metadata = self.session.symlink_metadata(source_path.clone()).await?;
+        if source_path == target_path
+            || (matches!(source_metadata.file_type(), FileType::Dir)
+                && is_remote_descendant(&source_path, &target_path))
+        {
+            return Err(SshError::InvalidRemotePath);
+        }
+        if self.remote_entry_exists(&target_path).await? {
+            return Err(SshError::RemoteTargetExists);
+        }
+        self.session.rename(source_path, target_path).await?;
+        Ok(())
+    }
+
+    pub async fn chmod(&self, remote_path: &str, permissions: u32) -> Result<(), SshError> {
+        validate_remote_permissions(permissions)?;
+        let remote_path = validate_mutation_path(remote_path)?.to_owned();
+        let metadata = self.session.symlink_metadata(remote_path.clone()).await?;
+        if matches!(metadata.file_type(), FileType::Symlink | FileType::Other) {
+            return Err(SshError::UnsupportedTransferEntry { path: remote_path });
+        }
+        self.session
+            .set_metadata(
+                remote_path,
+                FileAttributes {
+                    permissions: Some(permissions),
+                    ..FileAttributes::empty()
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn remote_entry_exists(&self, remote_path: &str) -> Result<bool, SshError> {
+        match self.session.symlink_metadata(remote_path.to_owned()).await {
+            Ok(_) => Ok(true),
+            Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
+                Ok(false)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     pub async fn remove_empty_directory(&self, remote_path: &str) -> Result<(), SshError> {
         self.session
             .remove_dir(validate_remote_path(remote_path)?)
@@ -711,6 +819,35 @@ fn validate_remote_path(path: &str) -> Result<&str, SshError> {
     }
 }
 
+fn validate_mutation_path(path: &str) -> Result<&str, SshError> {
+    let path = validate_remote_path(path)?;
+    if !path.starts_with('/')
+        || path == "/"
+        || path.ends_with('/')
+        || path
+            .split('/')
+            .skip(1)
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        Err(SshError::InvalidRemotePath)
+    } else {
+        Ok(path)
+    }
+}
+
+fn is_remote_descendant(parent: &str, path: &str) -> bool {
+    path.strip_prefix(parent)
+        .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn validate_remote_permissions(permissions: u32) -> Result<(), SshError> {
+    if permissions <= 0o7777 {
+        Ok(())
+    } else {
+        Err(SshError::InvalidRemotePermissions)
+    }
+}
+
 fn remote_file_kind(kind: FileType) -> RemoteFileKind {
     match kind {
         FileType::Dir => RemoteFileKind::Directory,
@@ -799,8 +936,8 @@ mod tests {
 
     use super::{
         copy_and_hash_with_cancellation, file_kind_order, join_remote_path, publish_local_file,
-        sftp_config, temporary_local_path, validate_remote_entry_name, validate_remote_path,
-        verify_transfer_integrity,
+        sftp_config, temporary_local_path, validate_mutation_path, validate_remote_entry_name,
+        validate_remote_path, validate_remote_permissions, verify_transfer_integrity,
     };
     use crate::{ConnectionCancellation, SshError};
 
@@ -898,6 +1035,32 @@ mod tests {
         assert_eq!(summary.directories, 4);
         assert_eq!(summary.bytes, 1024);
         assert!(summary.elapsed_ms >= 1);
+    }
+
+    #[test]
+    fn validates_remote_mutation_paths_and_permissions() {
+        assert_eq!(
+            validate_mutation_path("/home/bx/new").unwrap(),
+            "/home/bx/new"
+        );
+        for path in [
+            ".",
+            "relative",
+            "/",
+            "/home/bx/",
+            "/home/../escape",
+            "/home//file",
+        ] {
+            assert!(matches!(
+                validate_mutation_path(path),
+                Err(SshError::InvalidRemotePath)
+            ));
+        }
+        assert!(validate_remote_permissions(0o7777).is_ok());
+        assert!(matches!(
+            validate_remote_permissions(0o10000),
+            Err(SshError::InvalidRemotePermissions)
+        ));
     }
 
     #[tokio::test]
