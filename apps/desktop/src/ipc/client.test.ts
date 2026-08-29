@@ -220,6 +220,58 @@ describe("IPC client", () => {
     });
   });
 
+  it("passes conflict actions to SFTP transfer commands", async () => {
+    const summary = {
+      bytes: 10,
+      elapsedMs: 1,
+      bytesPerSecond: 10_000,
+      sha256: "a".repeat(64),
+    };
+    mocks.invoke.mockResolvedValue(summary);
+
+    await expect(
+      ipc.uploadSftpFileWithConflict(
+        "sftp-session-1",
+        "C:\\work\\notes.txt",
+        "/tmp/notes.txt",
+        "zh-CN",
+        "overwrite",
+      ),
+    ).resolves.toEqual(summary);
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "upload_sftp_file_with_conflict",
+      {
+        sessionId: "sftp-session-1",
+        localPath: "C:\\work\\notes.txt",
+        remotePath: "/tmp/notes.txt",
+        language: "zh-CN",
+        conflictAction: "overwrite",
+      },
+    );
+
+    await expect(
+      ipc.downloadSftpDirectoryWithConflict(
+        "sftp-session-1",
+        "transfer-2",
+        "/tmp/release",
+        "C:\\work\\release",
+        "zh-CN",
+        "rename",
+      ),
+    ).resolves.toEqual(summary);
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "download_sftp_directory_with_conflict",
+      {
+        sessionId: "sftp-session-1",
+        transferId: "transfer-2",
+        remotePath: "/tmp/release",
+        localPath: "C:\\work\\release",
+        language: "zh-CN",
+        conflictAction: "rename",
+      },
+    );
+  });
+
   it("uses remote SFTP file operation commands", async () => {
     mocks.invoke.mockResolvedValue(null);
 

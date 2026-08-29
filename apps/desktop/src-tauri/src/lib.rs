@@ -43,9 +43,11 @@ use platform::set_webview_memory_usage;
 use session_manager::{cancel_ssh_connection, SshSessionManager};
 use sftp::{
     cancel_sftp_transfer, chmod_sftp_entry, close_sftp_session, create_sftp_directory,
-    delete_sftp_entry, download_sftp_directory, download_sftp_file, hash_remote_sftp_file,
+    delete_sftp_entry, download_sftp_directory, download_sftp_directory_with_conflict,
+    download_sftp_file, download_sftp_file_with_conflict, hash_remote_sftp_file,
     list_sftp_directory, move_sftp_entry, rename_sftp_entry, start_password_sftp,
-    start_private_key_sftp, stat_sftp_path, upload_sftp_directory, upload_sftp_file,
+    start_private_key_sftp, stat_sftp_path, upload_sftp_directory,
+    upload_sftp_directory_with_conflict, upload_sftp_file, upload_sftp_file_with_conflict,
     SftpSessionManager,
 };
 use terminal::{
@@ -89,9 +91,13 @@ fn command_builder() -> Builder<tauri::Wry> {
             sftp::rename_sftp_entry,
             sftp::chmod_sftp_entry,
             sftp::upload_sftp_file,
+            sftp::upload_sftp_file_with_conflict,
             sftp::download_sftp_file,
+            sftp::download_sftp_file_with_conflict,
             sftp::upload_sftp_directory,
+            sftp::upload_sftp_directory_with_conflict,
             sftp::download_sftp_directory,
+            sftp::download_sftp_directory_with_conflict,
             sftp::cancel_sftp_transfer,
             sftp::hash_remote_sftp_file,
             sftp::close_sftp_session,
@@ -128,6 +134,7 @@ fn command_builder() -> Builder<tauri::Wry> {
         .typ::<sftp::StartPrivateKeySftpRequest>()
         .typ::<sftp::StartSftpResponse>()
         .typ::<bx_contracts::TransferBatchSummary>()
+        .typ::<bx_contracts::SftpConflictAction>()
         .typ::<session_manager::SshConnectionEvent>()
         .typ::<update::UpdateEvent>()
         .typ::<AppMenuAction>()
@@ -246,9 +253,13 @@ pub fn run() {
             rename_sftp_entry,
             chmod_sftp_entry,
             upload_sftp_file,
+            upload_sftp_file_with_conflict,
             download_sftp_file,
+            download_sftp_file_with_conflict,
             upload_sftp_directory,
+            upload_sftp_directory_with_conflict,
             download_sftp_directory,
+            download_sftp_directory_with_conflict,
             cancel_sftp_transfer,
             hash_remote_sftp_file,
             close_sftp_session,

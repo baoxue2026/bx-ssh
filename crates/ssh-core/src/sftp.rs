@@ -7,7 +7,8 @@ use std::{fmt::Write as _, io};
 use std::os::windows::ffi::OsStrExt;
 
 use bx_contracts::{
-    RemoteDirectoryListing, RemoteFileEntry, RemoteFileKind, TransferBatchSummary, TransferSummary,
+    RemoteDirectoryListing, RemoteFileEntry, RemoteFileKind, SftpConflictAction,
+    TransferBatchSummary, TransferSummary,
 };
 use russh::client;
 use russh_sftp::client::{error::Error as SftpError, Config, SftpSession};
@@ -107,7 +108,18 @@ impl SftpClient {
         local_path: impl AsRef<Path>,
         remote_path: &str,
     ) -> Result<TransferSummary, SshError> {
-        self.upload_file_with_cancellation(local_path, remote_path, None)
+        self.upload_file_with_conflict(local_path, remote_path, SftpConflictAction::Ask)
+            .await?
+            .ok_or(SshError::RemoteTargetExists)
+    }
+
+    pub async fn upload_file_with_conflict(
+        &self,
+        local_path: impl AsRef<Path>,
+        remote_path: &str,
+        conflict_action: SftpConflictAction,
+    ) -> Result<Option<TransferSummary>, SshError> {
+        self.upload_file_with_cancellation(local_path, remote_path, None, conflict_action)
             .await
     }
 
@@ -116,7 +128,8 @@ impl SftpClient {
         local_path: impl AsRef<Path>,
         remote_path: &str,
         cancellation: Option<&ConnectionCancellation>,
-    ) -> Result<TransferSummary, SshError> {
+        conflict_action: SftpConflictAction,
+    ) -> Result<Option<TransferSummary>, SshError> {
         let local_path = local_path.as_ref();
         check_transfer_cancellation(cancellation)?;
         let metadata = fs::metadata(local_path).await?;
@@ -124,12 +137,15 @@ impl SftpClient {
             return Err(SshError::InvalidLocalFile);
         }
 
-        let remote_path = validate_remote_path(remote_path)?;
-        if self.session.try_exists(remote_path).await? {
-            return Err(SshError::RemoteTargetExists);
-        }
+        let remote_path = validate_remote_path(remote_path)?.to_owned();
+        let Some(remote_path) = self
+            .resolve_remote_file_target(&remote_path, conflict_action)
+            .await?
+        else {
+            return Ok(None);
+        };
 
-        let temporary_path = temporary_remote_path(remote_path);
+        let temporary_path = temporary_remote_path(&remote_path);
         let mut local_file = File::open(local_path).await?;
         let mut remote_file = self
             .session
@@ -175,23 +191,15 @@ impl SftpClient {
             let _ = self.session.remove_file(&temporary_path).await;
             return Err(error);
         }
-        match self.session.try_exists(remote_path).await {
-            Ok(false) => {}
-            Ok(true) => {
-                let _ = self.session.remove_file(&temporary_path).await;
-                return Err(SshError::RemoteTargetExists);
-            }
-            Err(error) => {
-                let _ = self.session.remove_file(&temporary_path).await;
-                return Err(error.into());
-            }
-        }
-        if let Err(error) = self.session.rename(&temporary_path, remote_path).await {
+        if let Err(error) = self
+            .publish_remote_file(&temporary_path, &remote_path, conflict_action)
+            .await
+        {
             let _ = self.session.remove_file(&temporary_path).await;
-            return Err(error.into());
+            return Err(error);
         }
 
-        Ok(summary)
+        Ok(Some(summary))
     }
 
     pub async fn upload_directory(
@@ -200,6 +208,22 @@ impl SftpClient {
         remote_path: &str,
         cancellation: &ConnectionCancellation,
     ) -> Result<TransferBatchSummary, SshError> {
+        self.upload_directory_with_conflict(
+            local_path,
+            remote_path,
+            cancellation,
+            SftpConflictAction::Ask,
+        )
+        .await
+    }
+
+    pub async fn upload_directory_with_conflict(
+        &self,
+        local_path: impl AsRef<Path>,
+        remote_path: &str,
+        cancellation: &ConnectionCancellation,
+        conflict_action: SftpConflictAction,
+    ) -> Result<TransferBatchSummary, SshError> {
         let local_path = local_path.as_ref();
         check_transfer_cancellation(Some(cancellation))?;
         let metadata = fs::symlink_metadata(local_path).await?;
@@ -207,23 +231,47 @@ impl SftpClient {
             return Err(SshError::InvalidLocalDirectory);
         }
         let remote_path = validate_remote_path(remote_path)?.to_owned();
-        if self.session.try_exists(remote_path.clone()).await? {
-            return Err(SshError::RemoteTargetExists);
-        }
+        let Some((remote_path, root_created)) = self
+            .resolve_remote_directory_target(&remote_path, conflict_action)
+            .await?
+        else {
+            return Ok(batch_summary(0, 0, 0, Instant::now()));
+        };
 
-        if let Err(error) = self.session.create_dir(remote_path.clone()).await {
-            return match self.session.try_exists(remote_path.clone()).await {
-                Ok(true) => Err(SshError::RemoteTargetExists),
-                _ => Err(error.into()),
-            };
+        let mut root_created = root_created;
+        if root_created {
+            if let Err(error) = self.session.create_dir(remote_path.clone()).await {
+                match self.remote_entry_type(&remote_path).await {
+                    Ok(Some(FileType::Dir)) if conflict_action == SftpConflictAction::Overwrite => {
+                        root_created = false;
+                    }
+                    Ok(Some(_)) => return Err(SshError::RemoteTargetExists),
+                    _ => return Err(error.into()),
+                }
+            }
+        } else if !matches!(
+            self.remote_entry_metadata(&remote_path).await?,
+            Some(metadata) if metadata.file_type() == FileType::Dir
+        ) {
+            return Err(SshError::RemoteTargetExists);
         }
         let mut created = CreatedRemoteEntries {
             files: Vec::new(),
-            directories: vec![remote_path.clone()],
+            directories: if root_created {
+                vec![remote_path.clone()]
+            } else {
+                Vec::new()
+            },
         };
         let started_at = Instant::now();
         let result = self
-            .upload_directory_contents(local_path, &remote_path, cancellation, &mut created)
+            .upload_directory_contents(
+                local_path,
+                &remote_path,
+                cancellation,
+                &mut created,
+                conflict_action,
+            )
             .await;
         match result {
             Ok((files, directories, bytes)) => {
@@ -245,6 +293,7 @@ impl SftpClient {
         remote_path: &str,
         cancellation: &ConnectionCancellation,
         created: &mut CreatedRemoteEntries,
+        conflict_action: SftpConflictAction,
     ) -> Result<(u64, u64, u64), SshError> {
         let mut pending = vec![(local_path.to_owned(), remote_path.to_owned())];
         let mut files = 0;
@@ -264,29 +313,52 @@ impl SftpClient {
                 })?;
                 let remote_child = join_remote_path(&remote_directory, &name);
                 if metadata.is_dir() {
-                    if self.session.try_exists(remote_child.clone()).await? {
-                        return Err(SshError::RemoteTargetExists);
+                    let Some((remote_child, child_created)) = self
+                        .resolve_remote_directory_target(&remote_child, conflict_action)
+                        .await?
+                    else {
+                        continue;
+                    };
+                    let mut created_child = child_created;
+                    if child_created {
+                        if let Err(error) = self.session.create_dir(remote_child.clone()).await {
+                            match self.remote_entry_exists(&remote_child).await {
+                                Ok(true) if conflict_action == SftpConflictAction::Overwrite => {
+                                    created_child = false;
+                                }
+                                Ok(true) => return Err(SshError::RemoteTargetExists),
+                                _ => return Err(error.into()),
+                            }
+                        }
                     }
-                    if let Err(error) = self.session.create_dir(remote_child.clone()).await {
-                        return match self.session.try_exists(remote_child.clone()).await {
-                            Ok(true) => Err(SshError::RemoteTargetExists),
-                            _ => Err(error.into()),
-                        };
+                    if created_child {
+                        created.directories.push(remote_child.clone());
                     }
-                    created.directories.push(remote_child.clone());
                     pending.push((local_child, remote_child));
                     directories += 1;
                 } else if metadata.is_file() {
-                    let summary = self
+                    let target_existed = self.remote_entry_exists(&remote_child).await?;
+                    let Some(remote_child) = self
+                        .resolve_remote_file_target(&remote_child, conflict_action)
+                        .await?
+                    else {
+                        continue;
+                    };
+                    if let Some(summary) = self
                         .upload_file_with_cancellation(
                             &local_child,
                             &remote_child,
                             Some(cancellation),
+                            conflict_action,
                         )
-                        .await?;
-                    created.files.push(remote_child);
-                    files += 1;
-                    bytes += summary.bytes;
+                        .await?
+                    {
+                        if conflict_action != SftpConflictAction::Overwrite || !target_existed {
+                            created.files.push(remote_child);
+                        }
+                        files += 1;
+                        bytes += summary.bytes;
+                    }
                 } else {
                     return Err(SshError::UnsupportedTransferEntry {
                         path: local_child.to_string_lossy().into_owned(),
@@ -302,7 +374,18 @@ impl SftpClient {
         remote_path: &str,
         local_path: impl AsRef<Path>,
     ) -> Result<TransferSummary, SshError> {
-        self.download_file_with_cancellation(remote_path, local_path, None)
+        self.download_file_with_conflict(remote_path, local_path, SftpConflictAction::Ask)
+            .await?
+            .ok_or(SshError::LocalTargetExists)
+    }
+
+    pub async fn download_file_with_conflict(
+        &self,
+        remote_path: &str,
+        local_path: impl AsRef<Path>,
+        conflict_action: SftpConflictAction,
+    ) -> Result<Option<TransferSummary>, SshError> {
+        self.download_file_with_cancellation(remote_path, local_path, None, conflict_action)
             .await
     }
 
@@ -311,15 +394,16 @@ impl SftpClient {
         remote_path: &str,
         local_path: impl AsRef<Path>,
         cancellation: Option<&ConnectionCancellation>,
-    ) -> Result<TransferSummary, SshError> {
+        conflict_action: SftpConflictAction,
+    ) -> Result<Option<TransferSummary>, SshError> {
         let remote_path = validate_remote_path(remote_path)?;
         let local_path = local_path.as_ref();
         check_transfer_cancellation(cancellation)?;
-        if fs::try_exists(local_path).await? {
-            return Err(SshError::LocalTargetExists);
-        }
+        let Some(local_path) = resolve_local_file_target(local_path, conflict_action).await? else {
+            return Ok(None);
+        };
 
-        let temporary_path = temporary_local_path(local_path)?;
+        let temporary_path = temporary_local_path(&local_path)?;
         let mut remote_file = self.session.open(remote_path).await?;
         let mut local_file = OpenOptions::new()
             .create_new(true)
@@ -372,12 +456,14 @@ impl SftpClient {
             let _ = fs::remove_file(&temporary_path).await;
             return Err(error);
         }
-        if let Err(error) = publish_local_file(&temporary_path, local_path).await {
+        if let Err(error) =
+            publish_local_file_with_conflict(&temporary_path, &local_path, conflict_action).await
+        {
             let _ = fs::remove_file(&temporary_path).await;
             return Err(error);
         }
 
-        Ok(summary)
+        Ok(Some(summary))
     }
 
     pub async fn download_directory(
@@ -385,6 +471,22 @@ impl SftpClient {
         remote_path: &str,
         local_path: impl AsRef<Path>,
         cancellation: &ConnectionCancellation,
+    ) -> Result<TransferBatchSummary, SshError> {
+        self.download_directory_with_conflict(
+            remote_path,
+            local_path,
+            cancellation,
+            SftpConflictAction::Ask,
+        )
+        .await
+    }
+
+    pub async fn download_directory_with_conflict(
+        &self,
+        remote_path: &str,
+        local_path: impl AsRef<Path>,
+        cancellation: &ConnectionCancellation,
+        conflict_action: SftpConflictAction,
     ) -> Result<TransferBatchSummary, SshError> {
         check_transfer_cancellation(Some(cancellation))?;
         let remote_path = validate_remote_path(remote_path)?.to_owned();
@@ -394,19 +496,33 @@ impl SftpClient {
         }
         let remote_path = self.canonicalize(&remote_path).await?;
         let local_path = local_path.as_ref();
-        if fs::try_exists(local_path).await? {
-            return Err(SshError::LocalTargetExists);
+        let Some((local_path, root_created)) =
+            resolve_local_directory_target(local_path, conflict_action).await?
+        else {
+            return Ok(batch_summary(0, 0, 0, Instant::now()));
+        };
+        if root_created {
+            fs::create_dir(&local_path)
+                .await
+                .map_err(map_local_directory_create_error)?;
         }
-        fs::create_dir(local_path)
-            .await
-            .map_err(map_local_directory_create_error)?;
         let mut created = CreatedLocalEntries {
             files: Vec::new(),
-            directories: vec![local_path.to_owned()],
+            directories: if root_created {
+                vec![local_path.to_owned()]
+            } else {
+                Vec::new()
+            },
         };
         let started_at = Instant::now();
         let result = self
-            .download_directory_contents(&remote_path, local_path, cancellation, &mut created)
+            .download_directory_contents(
+                &remote_path,
+                &local_path,
+                cancellation,
+                &mut created,
+                conflict_action,
+            )
             .await;
         match result {
             Ok((files, directories, bytes)) => {
@@ -428,6 +544,7 @@ impl SftpClient {
         local_path: &Path,
         cancellation: &ConnectionCancellation,
         created: &mut CreatedLocalEntries,
+        conflict_action: SftpConflictAction,
     ) -> Result<(u64, u64, u64), SshError> {
         let mut pending = vec![(remote_path.to_owned(), local_path.to_owned())];
         let mut files = 0;
@@ -444,22 +561,46 @@ impl SftpClient {
                 let local_child = local_directory.join(&name);
                 match entry.file_type() {
                     FileType::Dir => {
-                        fs::create_dir(&local_child)
-                            .await
-                            .map_err(map_local_directory_create_error)?;
-                        created.directories.push(local_child.clone());
+                        let Some((local_child, child_created)) =
+                            resolve_local_directory_target(&local_child, conflict_action).await?
+                        else {
+                            continue;
+                        };
+                        if child_created {
+                            fs::create_dir(&local_child)
+                                .await
+                                .map_err(map_local_directory_create_error)?;
+                            created.directories.push(local_child.clone());
+                        }
                         pending.push((remote_child, local_child));
                         directories += 1;
                     }
                     FileType::File => {
-                        let summary = self
+                        let target_existed = local_entry_metadata(&local_child).await?.is_some();
+                        let Some(local_target) =
+                            resolve_local_file_target(&local_child, conflict_action).await?
+                        else {
+                            continue;
+                        };
+                        let file_action = if conflict_action == SftpConflictAction::Overwrite {
+                            SftpConflictAction::Overwrite
+                        } else {
+                            SftpConflictAction::Ask
+                        };
+                        let Some(summary) = self
                             .download_file_with_cancellation(
                                 &remote_child,
-                                &local_child,
+                                &local_target,
                                 Some(cancellation),
+                                file_action,
                             )
-                            .await?;
-                        created.files.push(local_child);
+                            .await?
+                        else {
+                            continue;
+                        };
+                        if conflict_action != SftpConflictAction::Overwrite || !target_existed {
+                            created.files.push(local_target);
+                        }
                         files += 1;
                         bytes += summary.bytes;
                     }
@@ -615,14 +756,141 @@ impl SftpClient {
         Ok(())
     }
 
-    async fn remote_entry_exists(&self, remote_path: &str) -> Result<bool, SshError> {
+    async fn remote_entry_metadata(
+        &self,
+        remote_path: &str,
+    ) -> Result<Option<russh_sftp::client::fs::Metadata>, SshError> {
         match self.session.symlink_metadata(remote_path.to_owned()).await {
-            Ok(_) => Ok(true),
+            Ok(metadata) => Ok(Some(metadata)),
             Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
-                Ok(false)
+                Ok(None)
             }
             Err(error) => Err(error.into()),
         }
+    }
+
+    async fn publish_remote_file(
+        &self,
+        temporary_path: &str,
+        remote_path: &str,
+        conflict_action: SftpConflictAction,
+    ) -> Result<(), SshError> {
+        let Some(metadata) = self.remote_entry_metadata(remote_path).await? else {
+            self.session
+                .rename(temporary_path, remote_path.to_owned())
+                .await?;
+            return Ok(());
+        };
+        if conflict_action != SftpConflictAction::Overwrite
+            || !matches!(metadata.file_type(), FileType::File | FileType::Symlink)
+        {
+            return Err(SshError::RemoteTargetExists);
+        }
+
+        let backup_path = temporary_remote_backup_path(remote_path);
+        self.session
+            .rename(remote_path.to_owned(), backup_path.clone())
+            .await?;
+        if let Err(publish_error) = self
+            .session
+            .rename(temporary_path, remote_path.to_owned())
+            .await
+        {
+            return match self
+                .session
+                .rename(backup_path, remote_path.to_owned())
+                .await
+            {
+                Ok(()) => Err(publish_error.into()),
+                Err(restore_error) => Err(SshError::TransferCleanupFailed {
+                    transfer: publish_error.to_string(),
+                    cleanup: restore_error.to_string(),
+                }),
+            };
+        }
+        self.session
+            .remove_file(backup_path)
+            .await
+            .map_err(|error| SshError::TransferCleanupFailed {
+                transfer: "remote replacement was published".to_owned(),
+                cleanup: error.to_string(),
+            })?;
+        Ok(())
+    }
+
+    async fn resolve_remote_file_target(
+        &self,
+        remote_path: &str,
+        conflict_action: SftpConflictAction,
+    ) -> Result<Option<String>, SshError> {
+        let Some(metadata) = self.remote_entry_metadata(remote_path).await? else {
+            return Ok(Some(remote_path.to_owned()));
+        };
+        match conflict_action {
+            SftpConflictAction::Ask => Err(SshError::RemoteTargetExists),
+            SftpConflictAction::Skip => Ok(None),
+            SftpConflictAction::Overwrite => {
+                if matches!(metadata.file_type(), FileType::File | FileType::Symlink) {
+                    Ok(Some(remote_path.to_owned()))
+                } else {
+                    Err(SshError::RemoteTargetExists)
+                }
+            }
+            SftpConflictAction::Rename => Ok(Some(self.unique_remote_path(remote_path).await?)),
+        }
+    }
+
+    async fn resolve_remote_directory_target(
+        &self,
+        remote_path: &str,
+        conflict_action: SftpConflictAction,
+    ) -> Result<Option<(String, bool)>, SshError> {
+        let Some(metadata) = self.remote_entry_metadata(remote_path).await? else {
+            return Ok(Some((remote_path.to_owned(), true)));
+        };
+        match conflict_action {
+            SftpConflictAction::Ask => Err(SshError::RemoteTargetExists),
+            SftpConflictAction::Skip => Ok(None),
+            SftpConflictAction::Overwrite => {
+                if metadata.file_type() == FileType::Dir {
+                    Ok(Some((remote_path.to_owned(), false)))
+                } else {
+                    Err(SshError::RemoteTargetExists)
+                }
+            }
+            SftpConflictAction::Rename => {
+                Ok(Some((self.unique_remote_path(remote_path).await?, true)))
+            }
+        }
+    }
+
+    async fn unique_remote_path(&self, remote_path: &str) -> Result<String, SshError> {
+        let (parent, name) = remote_path.rsplit_once('/').unwrap_or(("", remote_path));
+        for index in 1..=10_000 {
+            let candidate_name = auto_rename_name(name, index);
+            let candidate = if parent.is_empty() {
+                candidate_name
+            } else if parent == "/" {
+                format!("/{candidate_name}")
+            } else {
+                format!("{parent}/{candidate_name}")
+            };
+            if !self.remote_entry_exists(&candidate).await? {
+                return Ok(candidate);
+            }
+        }
+        Err(SshError::RemoteTargetExists)
+    }
+
+    async fn remote_entry_exists(&self, remote_path: &str) -> Result<bool, SshError> {
+        Ok(self.remote_entry_metadata(remote_path).await?.is_some())
+    }
+
+    async fn remote_entry_type(&self, remote_path: &str) -> Result<Option<FileType>, SshError> {
+        Ok(self
+            .remote_entry_metadata(remote_path)
+            .await?
+            .map(|metadata| metadata.file_type()))
     }
 
     pub async fn remove_empty_directory(&self, remote_path: &str) -> Result<(), SshError> {
@@ -780,6 +1048,40 @@ async fn publish_local_file(temporary_path: &Path, target_path: &Path) -> Result
     Ok(())
 }
 
+async fn publish_local_file_with_conflict(
+    temporary_path: &Path,
+    target_path: &Path,
+    conflict_action: SftpConflictAction,
+) -> Result<(), SshError> {
+    let Some(metadata) = local_entry_metadata(target_path).await? else {
+        return publish_local_file(temporary_path, target_path).await;
+    };
+    if conflict_action != SftpConflictAction::Overwrite
+        || !(metadata.is_file() || metadata.file_type().is_symlink())
+    {
+        return Err(SshError::LocalTargetExists);
+    }
+
+    let backup_path = temporary_local_backup_path(target_path)?;
+    fs::rename(target_path, &backup_path).await?;
+    if let Err(publish_error) = publish_local_file(temporary_path, target_path).await {
+        return match fs::rename(&backup_path, target_path).await {
+            Ok(()) => Err(publish_error),
+            Err(restore_error) => Err(SshError::TransferCleanupFailed {
+                transfer: publish_error.to_string(),
+                cleanup: restore_error.to_string(),
+            }),
+        };
+    }
+    fs::remove_file(&backup_path)
+        .await
+        .map_err(|error| SshError::TransferCleanupFailed {
+            transfer: "local replacement was published".to_owned(),
+            cleanup: error.to_string(),
+        })?;
+    Ok(())
+}
+
 fn map_local_publish_error(error: io::Error) -> SshError {
     if error.kind() == io::ErrorKind::AlreadyExists {
         SshError::LocalTargetExists
@@ -848,6 +1150,81 @@ fn validate_remote_permissions(permissions: u32) -> Result<(), SshError> {
     }
 }
 
+async fn local_entry_metadata(path: &Path) -> Result<Option<std::fs::Metadata>, SshError> {
+    match fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn resolve_local_file_target(
+    path: &Path,
+    conflict_action: SftpConflictAction,
+) -> Result<Option<PathBuf>, SshError> {
+    let Some(metadata) = local_entry_metadata(path).await? else {
+        return Ok(Some(path.to_owned()));
+    };
+    match conflict_action {
+        SftpConflictAction::Ask => Err(SshError::LocalTargetExists),
+        SftpConflictAction::Skip => Ok(None),
+        SftpConflictAction::Overwrite => {
+            if metadata.is_file() || metadata.file_type().is_symlink() {
+                Ok(Some(path.to_owned()))
+            } else {
+                Err(SshError::LocalTargetExists)
+            }
+        }
+        SftpConflictAction::Rename => Ok(Some(unique_local_path(path).await?)),
+    }
+}
+
+async fn resolve_local_directory_target(
+    path: &Path,
+    conflict_action: SftpConflictAction,
+) -> Result<Option<(PathBuf, bool)>, SshError> {
+    let Some(metadata) = local_entry_metadata(path).await? else {
+        return Ok(Some((path.to_owned(), true)));
+    };
+    match conflict_action {
+        SftpConflictAction::Ask => Err(SshError::LocalTargetExists),
+        SftpConflictAction::Skip => Ok(None),
+        SftpConflictAction::Overwrite => {
+            if metadata.is_dir() {
+                Ok(Some((path.to_owned(), false)))
+            } else {
+                Err(SshError::LocalTargetExists)
+            }
+        }
+        SftpConflictAction::Rename => Ok(Some((unique_local_path(path).await?, true))),
+    }
+}
+
+async fn unique_local_path(path: &Path) -> Result<PathBuf, SshError> {
+    for index in 1..=10_000 {
+        let candidate = path.with_file_name(auto_rename_name(
+            &path
+                .file_name()
+                .ok_or(SshError::InvalidLocalFile)?
+                .to_string_lossy(),
+            index,
+        ));
+        if local_entry_metadata(&candidate).await?.is_none() {
+            return Ok(candidate);
+        }
+    }
+    Err(SshError::LocalTargetExists)
+}
+
+fn auto_rename_name(name: &str, index: u32) -> String {
+    if let Some((stem, extension)) = name.rsplit_once('.') {
+        if !stem.is_empty() {
+            return format!("{stem} ({index}).{extension}");
+        }
+    }
+    format!("{name} ({index})")
+}
+
 fn remote_file_kind(kind: FileType) -> RemoteFileKind {
     match kind {
         FileType::Dir => RemoteFileKind::Directory,
@@ -874,6 +1251,14 @@ fn temporary_remote_path(remote_path: &str) -> String {
     )
 }
 
+fn temporary_remote_backup_path(remote_path: &str) -> String {
+    format!(
+        "{remote_path}.bx-ssh-backup-{}-{}",
+        std::process::id(),
+        TEMPORARY_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 fn temporary_local_path(local_path: &Path) -> Result<PathBuf, SshError> {
     let file_name = local_path
         .file_name()
@@ -885,6 +1270,19 @@ fn temporary_local_path(local_path: &Path) -> Result<PathBuf, SshError> {
         TEMPORARY_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     );
     Ok(local_path.with_file_name(temporary_name))
+}
+
+fn temporary_local_backup_path(local_path: &Path) -> Result<PathBuf, SshError> {
+    let file_name = local_path
+        .file_name()
+        .ok_or(SshError::InvalidLocalFile)?
+        .to_string_lossy();
+    let backup_name = format!(
+        ".{file_name}.bx-ssh-backup-{}-{}",
+        std::process::id(),
+        TEMPORARY_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    Ok(local_path.with_file_name(backup_name))
 }
 
 fn transfer_summary(bytes: u64, sha256: String, started_at: Instant) -> TransferSummary {
@@ -929,15 +1327,17 @@ mod tests {
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use bx_contracts::{RemoteFileKind, TransferSummary};
+    use bx_contracts::{RemoteFileKind, SftpConflictAction, TransferSummary};
     use tokio::fs;
     use tokio::io;
     use tokio::time::{timeout, Duration};
 
     use super::{
-        copy_and_hash_with_cancellation, file_kind_order, join_remote_path, publish_local_file,
-        sftp_config, temporary_local_path, validate_mutation_path, validate_remote_entry_name,
-        validate_remote_path, validate_remote_permissions, verify_transfer_integrity,
+        auto_rename_name, copy_and_hash_with_cancellation, file_kind_order, join_remote_path,
+        publish_local_file, publish_local_file_with_conflict, resolve_local_directory_target,
+        resolve_local_file_target, sftp_config, temporary_local_path, validate_mutation_path,
+        validate_remote_entry_name, validate_remote_path, validate_remote_permissions,
+        verify_transfer_integrity,
     };
     use crate::{ConnectionCancellation, SshError};
 
@@ -1063,6 +1463,65 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn builds_stable_auto_rename_names() {
+        assert_eq!(auto_rename_name("archive.tar", 1), "archive (1).tar");
+        assert_eq!(auto_rename_name("README", 2), "README (2)");
+        assert_eq!(auto_rename_name(".env", 3), ".env (3)");
+    }
+
+    #[tokio::test]
+    async fn resolves_local_conflicts_without_touching_existing_targets() {
+        let sequence = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "bx-ssh-conflict-test-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).await.unwrap();
+        let file = directory.join("notes.txt");
+        fs::write(&file, b"original").await.unwrap();
+
+        assert!(resolve_local_file_target(&file, SftpConflictAction::Skip)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(resolve_local_file_target(&file, SftpConflictAction::Ask)
+            .await
+            .is_err());
+        assert_eq!(
+            resolve_local_file_target(&file, SftpConflictAction::Overwrite)
+                .await
+                .unwrap()
+                .unwrap(),
+            file
+        );
+        let renamed = resolve_local_file_target(&file, SftpConflictAction::Rename)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(renamed.file_name().unwrap(), "notes (1).txt");
+
+        let directory_target = directory.join("folder");
+        fs::create_dir(&directory_target).await.unwrap();
+        let (merged, created) =
+            resolve_local_directory_target(&directory_target, SftpConflictAction::Overwrite)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(merged, directory_target);
+        assert!(!created);
+        assert!(
+            resolve_local_directory_target(&file, SftpConflictAction::Overwrite)
+                .await
+                .is_err()
+        );
+
+        fs::remove_dir_all(&directory).await.unwrap();
+    }
+
     #[tokio::test]
     async fn publishes_local_downloads_without_overwriting_an_existing_target() {
         let sequence = SystemTime::now()
@@ -1093,6 +1552,36 @@ mod tests {
         assert_eq!(fs::read(&target).await.unwrap(), b"verified");
 
         fs::remove_file(&conflicting_temporary).await.unwrap();
+        fs::remove_file(&target).await.unwrap();
+        fs::remove_dir(&directory).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replaces_local_downloads_without_leaving_the_old_target_unprotected() {
+        let sequence = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "bx-ssh-overwrite-test-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).await.unwrap();
+        let target = directory.join("archive.tar");
+        let temporary = temporary_local_path(&target).unwrap();
+        fs::write(&target, b"original").await.unwrap();
+        fs::write(&temporary, b"replacement").await.unwrap();
+
+        publish_local_file_with_conflict(&temporary, &target, SftpConflictAction::Overwrite)
+            .await
+            .unwrap();
+
+        assert_eq!(fs::read(&target).await.unwrap(), b"replacement");
+        assert!(!fs::try_exists(&temporary).await.unwrap());
+        let mut entries = fs::read_dir(&directory).await.unwrap();
+        assert_eq!(entries.next_entry().await.unwrap().unwrap().path(), target);
+        assert!(entries.next_entry().await.unwrap().is_none());
+
         fs::remove_file(&target).await.unwrap();
         fs::remove_dir(&directory).await.unwrap();
     }

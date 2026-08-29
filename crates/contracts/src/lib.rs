@@ -70,6 +70,15 @@ pub enum RemoteFileKind {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum SftpConflictAction {
+    Ask,
+    Overwrite,
+    Skip,
+    Rename,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteFileEntry {

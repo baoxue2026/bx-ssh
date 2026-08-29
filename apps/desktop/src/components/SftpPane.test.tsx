@@ -10,6 +10,7 @@ import i18n from "../i18n";
 import type {
   LocalDirectoryListing,
   RemoteDirectoryListing,
+  SftpConflictAction,
 } from "../ipc/bindings";
 import { SftpPane } from "./SftpPane";
 
@@ -220,6 +221,34 @@ describe("SftpPane", () => {
     expect(screen.getByLabelText("下载本地目标")).toHaveValue(
       "C:\\work\\releases",
     );
+  });
+
+  it("shows conflict metadata and resolves the selected action for the batch", async () => {
+    const onResolveConflict = vi.fn(
+      async (_action: SftpConflictAction, _applyToAll: boolean) => undefined,
+    );
+    renderPane({
+      conflict: {
+        direction: "upload",
+        sourcePath: "C:\\work\\upload.txt",
+        targetPath: "/home/bx/upload.txt",
+        sourceSize: 20,
+        sourceModifiedAt: 1_700_000_000,
+        targetSize: 12,
+        targetModifiedAt: 1_700_000_100,
+      },
+      onResolveConflict,
+    });
+
+    expect(screen.getByText("C:\\work\\upload.txt")).toBeInTheDocument();
+    expect(screen.getByText("/home/bx/upload.txt")).toBeInTheDocument();
+    expect(screen.getByText(/20 B ·/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /应用到本批次/ }));
+    fireEvent.click(screen.getByRole("button", { name: "自动重命名" }));
+    await vi.waitFor(() => {
+      expect(onResolveConflict).toHaveBeenCalledWith("rename", true);
+    });
   });
 
   it("renames a selected remote entry", async () => {

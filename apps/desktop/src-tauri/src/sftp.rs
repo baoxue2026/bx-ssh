@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bx_contracts::{
-    ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, RemoteFileEntry, SshConnectionStage,
-    TransferBatchSummary, TransferSummary,
+    ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, RemoteFileEntry, SftpConflictAction,
+    SshConnectionStage, TransferBatchSummary, TransferSummary,
 };
 use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
@@ -502,6 +502,39 @@ pub(crate) async fn upload_sftp_file(
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
+pub(crate) async fn upload_sftp_file_with_conflict(
+    window: WebviewWindow,
+    app: AppHandle,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    local_path: String,
+    remote_path: String,
+    language: String,
+    conflict_action: SftpConflictAction,
+) -> Result<Option<TransferSummary>, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let _transfer_guard = manager.activity.track_transfer();
+    let session = session.lock().await;
+    let summary = session
+        .sftp
+        .upload_file_with_conflict(PathBuf::from(local_path), &remote_path, conflict_action)
+        .await?;
+    drop(session);
+    if summary.is_some() {
+        notify_transfer_completed(
+            &app,
+            localized_transfer_title(&language, "上传完成", "Upload complete"),
+            &remote_path,
+        );
+    }
+    Ok(summary)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn download_sftp_file(
     window: WebviewWindow,
     app: AppHandle,
@@ -526,6 +559,39 @@ pub(crate) async fn download_sftp_file(
         localized_transfer_title(&language, "下载完成", "Download complete"),
         &remote_path,
     );
+    Ok(summary)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn download_sftp_file_with_conflict(
+    window: WebviewWindow,
+    app: AppHandle,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+    language: String,
+    conflict_action: SftpConflictAction,
+) -> Result<Option<TransferSummary>, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let _transfer_guard = manager.activity.track_transfer();
+    let session = session.lock().await;
+    let summary = session
+        .sftp
+        .download_file_with_conflict(&remote_path, PathBuf::from(local_path), conflict_action)
+        .await?;
+    drop(session);
+    if summary.is_some() {
+        notify_transfer_completed(
+            &app,
+            localized_transfer_title(&language, "下载完成", "Download complete"),
+            &remote_path,
+        );
+    }
     Ok(summary)
 }
 
@@ -569,6 +635,49 @@ pub(crate) async fn upload_sftp_directory(
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
+pub(crate) async fn upload_sftp_directory_with_conflict(
+    window: WebviewWindow,
+    app: AppHandle,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    transfer_id: String,
+    local_path: String,
+    remote_path: String,
+    language: String,
+    conflict_action: SftpConflictAction,
+) -> Result<TransferBatchSummary, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let cancellation = manager
+        .begin_transfer(window.label(), &session_id, &transfer_id)
+        .await?;
+    let _transfer_guard = manager.activity.track_transfer();
+    let result = {
+        let session = session.lock().await;
+        session
+            .sftp
+            .upload_directory_with_conflict(
+                PathBuf::from(local_path),
+                &remote_path,
+                &cancellation,
+                conflict_action,
+            )
+            .await
+    };
+    manager.finish_transfer(&transfer_id).await;
+    let summary = result?;
+    notify_transfer_completed(
+        &app,
+        localized_transfer_title(&language, "目录上传完成", "Directory upload complete"),
+        &remote_path,
+    );
+    Ok(summary)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn download_sftp_directory(
     window: WebviewWindow,
     app: AppHandle,
@@ -591,6 +700,49 @@ pub(crate) async fn download_sftp_directory(
         session
             .sftp
             .download_directory(&remote_path, PathBuf::from(local_path), &cancellation)
+            .await
+    };
+    manager.finish_transfer(&transfer_id).await;
+    let summary = result?;
+    notify_transfer_completed(
+        &app,
+        localized_transfer_title(&language, "目录下载完成", "Directory download complete"),
+        &remote_path,
+    );
+    Ok(summary)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn download_sftp_directory_with_conflict(
+    window: WebviewWindow,
+    app: AppHandle,
+    manager: State<'_, SftpSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    session_id: String,
+    transfer_id: String,
+    remote_path: String,
+    local_path: String,
+    language: String,
+    conflict_action: SftpConflictAction,
+) -> Result<TransferBatchSummary, CommandError> {
+    session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
+    let session = manager.get(&session_id).await?;
+    let cancellation = manager
+        .begin_transfer(window.label(), &session_id, &transfer_id)
+        .await?;
+    let _transfer_guard = manager.activity.track_transfer();
+    let result = {
+        let session = session.lock().await;
+        session
+            .sftp
+            .download_directory_with_conflict(
+                &remote_path,
+                PathBuf::from(local_path),
+                &cancellation,
+                conflict_action,
+            )
             .await
     };
     manager.finish_transfer(&transfer_id).await;

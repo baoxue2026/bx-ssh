@@ -22,6 +22,7 @@ import {
   type StartKeyboardInteractiveShellRequest,
   type StartShellRequest,
   type StartShellResponse,
+  type SftpConflictAction,
   type TerminalEvent,
   type UpdateEvent,
 } from "./bindings";
@@ -242,6 +243,22 @@ export const ipc = {
     unwrap(() =>
       commands.uploadSftpFile(sessionId, localPath, remotePath, language),
     ),
+  uploadSftpFileWithConflict: (
+    sessionId: string,
+    localPath: string,
+    remotePath: string,
+    language: string,
+    conflictAction: SftpConflictAction,
+  ) =>
+    unwrap(() =>
+      commands.uploadSftpFileWithConflict(
+        sessionId,
+        localPath,
+        remotePath,
+        language,
+        conflictAction,
+      ),
+    ),
   downloadSftpFile: (
     sessionId: string,
     remotePath: string,
@@ -250,6 +267,22 @@ export const ipc = {
   ) =>
     unwrap(() =>
       commands.downloadSftpFile(sessionId, remotePath, localPath, language),
+    ),
+  downloadSftpFileWithConflict: (
+    sessionId: string,
+    remotePath: string,
+    localPath: string,
+    language: string,
+    conflictAction: SftpConflictAction,
+  ) =>
+    unwrap(() =>
+      commands.downloadSftpFileWithConflict(
+        sessionId,
+        remotePath,
+        localPath,
+        language,
+        conflictAction,
+      ),
     ),
   uploadSftpDirectory: (
     sessionId: string,
@@ -267,6 +300,24 @@ export const ipc = {
         language,
       ),
     ),
+  uploadSftpDirectoryWithConflict: (
+    sessionId: string,
+    transferId: string,
+    localPath: string,
+    remotePath: string,
+    language: string,
+    conflictAction: SftpConflictAction,
+  ) =>
+    unwrap(() =>
+      commands.uploadSftpDirectoryWithConflict(
+        sessionId,
+        transferId,
+        localPath,
+        remotePath,
+        language,
+        conflictAction,
+      ),
+    ),
   downloadSftpDirectory: (
     sessionId: string,
     transferId: string,
@@ -281,6 +332,24 @@ export const ipc = {
         remotePath,
         localPath,
         language,
+      ),
+    ),
+  downloadSftpDirectoryWithConflict: (
+    sessionId: string,
+    transferId: string,
+    remotePath: string,
+    localPath: string,
+    language: string,
+    conflictAction: SftpConflictAction,
+  ) =>
+    unwrap(() =>
+      commands.downloadSftpDirectoryWithConflict(
+        sessionId,
+        transferId,
+        remotePath,
+        localPath,
+        language,
+        conflictAction,
       ),
     ),
   cancelSftpTransfer: (transferId: string) =>

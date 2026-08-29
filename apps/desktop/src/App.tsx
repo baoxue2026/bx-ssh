@@ -98,7 +98,11 @@ import {
   FeedbackNotice,
   LoadingState,
 } from "./components/Feedback";
-import { SftpPane, type SftpTransferResult } from "./components/SftpPane";
+import {
+  SftpPane,
+  type SftpConflictDetails,
+  type SftpTransferResult,
+} from "./components/SftpPane";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { IpcError, ipc } from "./ipc/client";
 import type {
@@ -114,10 +118,13 @@ import type {
   ExitImpact,
   HostKeyInfo,
   KeyboardInteractiveEvent,
+  LocalFileEntry,
   LocalDirectoryListing,
   OpenSshImportPreview,
   OpenSshImportRequest,
   RemoteDirectoryListing,
+  SftpConflictAction,
+  RemoteFileEntry,
   SshConnectionEvent,
   SshConnectionStage,
   TerminalEvent,
@@ -161,6 +168,13 @@ interface SessionTerminalFontOverride {
 interface SftpNavigationHistory {
   back: string[];
   forward: string[];
+}
+
+interface PendingSftpTransfer {
+  direction: "upload" | "download";
+  localPath: string;
+  remotePath: string;
+  isDirectory: boolean;
 }
 
 type SftpNavigationIntent = "push" | "back" | "forward" | "refresh";
@@ -250,6 +264,12 @@ export function App() {
   const [sftpTransferId, setSftpTransferId] = useState<string | null>(null);
   const [sftpTransferResult, setSftpTransferResult] =
     useState<SftpTransferResult | null>(null);
+  const [sftpTransferNotice, setSftpTransferNotice] = useState<string | null>(
+    null,
+  );
+  const [sftpConflict, setSftpConflict] = useState<SftpConflictDetails | null>(
+    null,
+  );
   const [sessionCloseOpen, setSessionCloseOpen] = useState(false);
   const [sessionClosePending, setSessionClosePending] = useState(false);
   const [sessionCloseError, setSessionCloseError] = useState<string | null>(
@@ -362,6 +382,7 @@ export function App() {
   const sftpOperationGenerationRef = useRef(0);
   const localOperationGenerationRef = useRef(0);
   const localDirectoryLoadRef = useRef(false);
+  const pendingSftpTransferRef = useRef<PendingSftpTransfer | null>(null);
   const sessionCloseCancelButtonRef = useRef<HTMLButtonElement>(null);
   const terminalPasteCancelButtonRef = useRef<HTMLButtonElement>(null);
   const externalLinkCancelButtonRef = useRef<HTMLButtonElement>(null);
@@ -1499,6 +1520,9 @@ export function App() {
     setConnectionState("connecting");
     setErrorMessage(null);
     setSftpTransferResult(null);
+    setSftpTransferNotice(null);
+    setSftpConflict(null);
+    pendingSftpTransferRef.current = null;
     terminalRef.current?.reset();
     const attempt = ++connectionAttemptRef.current;
     const connectionAttemptId = beginSshConnectionAttempt();
@@ -1748,6 +1772,9 @@ export function App() {
     setSftpTransferActive(false);
     setSftpTransferId(null);
     setSftpTransferResult(null);
+    setSftpTransferNotice(null);
+    setSftpConflict(null);
+    pendingSftpTransferRef.current = null;
     setSessionCloseOpen(false);
     setSessionClosePending(false);
     setSessionCloseError(null);
@@ -2009,9 +2036,13 @@ export function App() {
     setSftpBusy(true);
     setSftpTransferActive(true);
     setErrorMessage(null);
+    setSftpTransferNotice(null);
     setSftpTransferResult(null);
+    setSftpConflict(null);
+    pendingSftpTransferRef.current = null;
+    let source: LocalFileEntry | null = null;
     try {
-      const source = await ipc.statLocalPath(localPath);
+      source = await ipc.statLocalPath(localPath);
       if (source.kind !== "file" && source.kind !== "directory") {
         throw new IpcError(
           "unsupported_transfer_entry",
@@ -2055,7 +2086,39 @@ export function App() {
       setSftpDirectory(directory);
     } catch (error) {
       if (operationGeneration === sftpOperationGenerationRef.current) {
-        setErrorMessage(localizedErrorText(error));
+        if (
+          error instanceof IpcError &&
+          error.code === "remote_target_exists"
+        ) {
+          try {
+            const target = await ipc.statSftpPath(activeSessionId, remotePath);
+            if (
+              operationGeneration !== sftpOperationGenerationRef.current ||
+              sftpSessionIdRef.current !== activeSessionId
+            ) {
+              return;
+            }
+            pendingSftpTransferRef.current = {
+              direction: "upload",
+              localPath,
+              remotePath,
+              isDirectory: source?.kind === "directory",
+            };
+            setSftpConflict({
+              direction: "upload",
+              sourcePath: source?.path ?? localPath,
+              targetPath: target.path,
+              sourceSize: source?.size ?? 0,
+              sourceModifiedAt: source?.modifiedAt ?? null,
+              targetSize: target.size,
+              targetModifiedAt: target.modifiedAt,
+            });
+          } catch {
+            setErrorMessage(localizedErrorText(error));
+          }
+        } else {
+          setErrorMessage(localizedErrorText(error));
+        }
       }
     } finally {
       if (operationGeneration === sftpOperationGenerationRef.current) {
@@ -2076,9 +2139,13 @@ export function App() {
     setSftpBusy(true);
     setSftpTransferActive(true);
     setErrorMessage(null);
+    setSftpTransferNotice(null);
     setSftpTransferResult(null);
+    setSftpConflict(null);
+    pendingSftpTransferRef.current = null;
+    let source: RemoteFileEntry | null = null;
     try {
-      const source = await ipc.statSftpPath(activeSessionId, remotePath);
+      source = await ipc.statSftpPath(activeSessionId, remotePath);
       if (source.kind !== "file" && source.kind !== "directory") {
         throw new IpcError(
           "unsupported_transfer_entry",
@@ -2115,6 +2182,149 @@ export function App() {
       }
     } catch (error) {
       if (operationGeneration === sftpOperationGenerationRef.current) {
+        if (error instanceof IpcError && error.code === "local_target_exists") {
+          try {
+            const target = await ipc.statLocalPath(localPath);
+            if (
+              operationGeneration !== sftpOperationGenerationRef.current ||
+              sftpSessionIdRef.current !== activeSessionId
+            ) {
+              return;
+            }
+            pendingSftpTransferRef.current = {
+              direction: "download",
+              localPath,
+              remotePath,
+              isDirectory: source?.kind === "directory",
+            };
+            setSftpConflict({
+              direction: "download",
+              sourcePath: source?.path ?? remotePath,
+              targetPath: target.path,
+              sourceSize: source?.size ?? 0,
+              sourceModifiedAt: source?.modifiedAt ?? null,
+              targetSize: target.size,
+              targetModifiedAt: target.modifiedAt,
+            });
+          } catch {
+            setErrorMessage(localizedErrorText(error));
+          }
+        } else {
+          setErrorMessage(localizedErrorText(error));
+        }
+      }
+    } finally {
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setSftpBusy(false);
+        setSftpTransferActive(false);
+        setSftpTransferId(null);
+      }
+    }
+  };
+
+  const resolveSftpConflict = async (
+    action: SftpConflictAction,
+    applyToAll: boolean,
+  ) => {
+    const pending = pendingSftpTransferRef.current;
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!pending || !activeSessionId) {
+      setSftpConflict(null);
+      pendingSftpTransferRef.current = null;
+      return;
+    }
+
+    const operationGeneration = sftpOperationGenerationRef.current;
+    const transferId = pending.isDirectory ? createRandomOperationId() : null;
+    setSftpBusy(true);
+    setSftpTransferActive(true);
+    setSftpTransferId(transferId);
+    setErrorMessage(null);
+    setSftpTransferNotice(null);
+
+    try {
+      // The backend applies the selected action to every conflict in a
+      // directory transfer. The checkbox is intentionally batch-scoped and
+      // never persisted as a global preference.
+      void applyToAll;
+      const summary =
+        pending.direction === "upload"
+          ? transferId
+            ? await ipc.uploadSftpDirectoryWithConflict(
+                activeSessionId,
+                transferId,
+                pending.localPath,
+                pending.remotePath,
+                language,
+                action,
+              )
+            : await ipc.uploadSftpFileWithConflict(
+                activeSessionId,
+                pending.localPath,
+                pending.remotePath,
+                language,
+                action,
+              )
+          : transferId
+            ? await ipc.downloadSftpDirectoryWithConflict(
+                activeSessionId,
+                transferId,
+                pending.remotePath,
+                pending.localPath,
+                language,
+                action,
+              )
+            : await ipc.downloadSftpFileWithConflict(
+                activeSessionId,
+                pending.remotePath,
+                pending.localPath,
+                language,
+                action,
+              );
+
+      if (
+        operationGeneration !== sftpOperationGenerationRef.current ||
+        sftpSessionIdRef.current !== activeSessionId
+      ) {
+        return;
+      }
+
+      const skipped =
+        summary === null ||
+        (action === "skip" &&
+          pending.isDirectory &&
+          "files" in summary &&
+          summary.files === 0 &&
+          summary.directories === 0);
+      if (skipped) {
+        setSftpTransferNotice(t("sftp.transferSkipped"));
+        setSftpTransferResult(null);
+      } else {
+        setSftpTransferResult({ direction: pending.direction, summary });
+      }
+      setSftpConflict(null);
+      pendingSftpTransferRef.current = null;
+
+      if (pending.direction === "upload") {
+        const directory = await ipc.listSftpDirectory(
+          activeSessionId,
+          sftpDirectory?.path ?? ".",
+        );
+        if (
+          operationGeneration !== sftpOperationGenerationRef.current ||
+          sftpSessionIdRef.current !== activeSessionId
+        ) {
+          return;
+        }
+        setSftpDirectory(directory);
+      } else {
+        const currentLocalPath = localDirectoryRef.current?.path;
+        if (currentLocalPath) {
+          await navigateLocal(currentLocalPath);
+        }
+      }
+    } catch (error) {
+      if (operationGeneration === sftpOperationGenerationRef.current) {
         setErrorMessage(localizedErrorText(error));
       }
     } finally {
@@ -2124,6 +2334,12 @@ export function App() {
         setSftpTransferId(null);
       }
     }
+  };
+
+  const cancelSftpConflict = () => {
+    pendingSftpTransferRef.current = null;
+    setSftpConflict(null);
+    setSftpTransferNotice(null);
   };
 
   const cancelSftpTransfer = async () => {
@@ -3449,6 +3665,7 @@ export function App() {
                   endpoint={`${username}@${host}:${port}`}
                   localBusy={localBusy}
                   localDirectory={localDirectory}
+                  transferNotice={sftpTransferNotice}
                   transferResult={sftpTransferResult}
                   transferId={sftpTransferId}
                   onBack={goBackSftp}
@@ -3460,6 +3677,9 @@ export function App() {
                   onUpload={uploadSftp}
                   onDownload={downloadSftp}
                   onCancelTransfer={cancelSftpTransfer}
+                  conflict={sftpConflict}
+                  onResolveConflict={resolveSftpConflict}
+                  onCancelConflict={cancelSftpConflict}
                   onCreateDirectory={createSftpDirectory}
                   onDeleteEntry={deleteSftpEntry}
                   onMoveEntry={moveSftpEntry}

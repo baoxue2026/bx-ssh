@@ -2025,6 +2025,10 @@ select {
   border-top: 1px solid var(--border);
 }
 
+.sftp-transfer-notice {
+  margin: 0;
+}
+
 .sftp-transfer-row {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr) 82px;
@@ -2062,6 +2066,71 @@ select {
   margin: 8px 0 0;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.sftp-conflict-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sftp-conflict-content > p {
+  margin: 0 0 14px;
+  line-height: 1.6;
+}
+
+.sftp-conflict-comparison {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.sftp-conflict-row {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-alt);
+}
+
+.sftp-conflict-row > svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.sftp-conflict-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.sftp-conflict-row span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.sftp-conflict-row code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.sftp-conflict-row small {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.sftp-conflict-batch-label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sftp-conflict-batch-label > span:last-child {
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 .sftp-transfer-result code {

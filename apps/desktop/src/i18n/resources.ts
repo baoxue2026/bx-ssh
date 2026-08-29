@@ -575,6 +575,17 @@ export const resources = {
         chmodHelp: "请输入 0000 到 7777 的八进制权限，例如 0644。",
         deleteConfirmation: "确认删除远端条目 {{path}}？",
         recursiveDelete: "递归删除该目录及其全部内容（不可恢复）",
+        conflictTitle: "目标位置已有同名条目",
+        conflictDescription:
+          "请选择本次传输如何处理。覆盖操作会替换目标条目的现有内容。",
+        conflictSource: "源条目",
+        conflictTarget: "目标条目",
+        conflictSkip: "跳过",
+        conflictRename: "自动重命名",
+        conflictOverwrite: "覆盖",
+        conflictApplyToAll: "应用到本批次的所有冲突",
+        conflictApplyToAllHelp: "不会修改全局 SFTP 设置",
+        transferSkipped: "已跳过冲突目标，原有内容未修改。",
       },
       update: {
         availableTitle: "发现新版本 v{{version}}",
@@ -1266,6 +1277,18 @@ export const resources = {
         deleteConfirmation: "Delete the remote entry {{path}}?",
         recursiveDelete:
           "Recursively delete this directory and all contents (cannot be undone)",
+        conflictTitle: "A matching target entry already exists",
+        conflictDescription:
+          "Choose how to handle this transfer. Overwrite replaces the existing target entry.",
+        conflictSource: "Source entry",
+        conflictTarget: "Target entry",
+        conflictSkip: "Skip",
+        conflictRename: "Auto-rename",
+        conflictOverwrite: "Overwrite",
+        conflictApplyToAll: "Apply to all conflicts in this batch",
+        conflictApplyToAllHelp: "This does not change the global SFTP setting",
+        transferSkipped:
+          "The conflicting target was skipped; existing content was not changed.",
       },
       update: {
         availableTitle: "Version {{version}} is available",

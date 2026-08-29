@@ -1559,7 +1559,7 @@ describe("App", { timeout: 15_000 }, () => {
     expect(await screen.findByText("release.zip")).toBeVisible();
   });
 
-  it("shows localized errors for protected SFTP transfer failures", async () => {
+  it("resolves SFTP conflicts and keeps other transfer failures localized", async () => {
     let uploadAttempts = 0;
     mocks.invoke.mockImplementation((command: string) => {
       if (command === "app_info") {
@@ -1609,6 +1609,27 @@ describe("App", { timeout: 15_000 }, () => {
               },
         );
       }
+      if (command === "upload_sftp_file_with_conflict") {
+        return Promise.resolve({
+          bytes: 1024,
+          elapsedMs: 10,
+          bytesPerSecond: 102_400,
+          sha256: "a".repeat(64),
+        });
+      }
+      if (command === "stat_sftp_path") {
+        return Promise.resolve({
+          name: "release.zip",
+          path: "/home/bxssh/release.zip",
+          kind: "file",
+          size: 2048,
+          modifiedAt: 1_700_000_100,
+          permissions: 0o644,
+        });
+      }
+      if (command === "list_sftp_directory") {
+        return Promise.resolve({ path: "/home/bxssh", entries: [] });
+      }
       if (command === "stat_local_path") {
         return Promise.resolve({
           name: "release.zip",
@@ -1644,9 +1665,33 @@ describe("App", { timeout: 15_000 }, () => {
       target: { value: "/home/bxssh/release.zip" },
     });
     fireEvent.click(screen.getByRole("button", { name: "上传" }));
-    expect(
-      await screen.findByText("远端目标文件已存在，未覆盖原文件。"),
-    ).toBeVisible();
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("stat_sftp_path", {
+        sessionId: "sftp-errors",
+        path: "/home/bxssh/release.zip",
+      });
+    });
+    expect(screen.getByText("目标位置已有同名条目")).toBeInTheDocument();
+    expect(screen.getByText("C:\\work\\release.zip")).toBeInTheDocument();
+    expect(screen.getByText("/home/bxssh/release.zip")).toBeInTheDocument();
+
+    const renameConflictButton = screen
+      .getAllByRole("button", { hidden: true })
+      .find((button) => button.textContent === "自动重命名");
+    expect(renameConflictButton).toBeDefined();
+    fireEvent.click(renameConflictButton!);
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "upload_sftp_file_with_conflict",
+        {
+          sessionId: "sftp-errors",
+          localPath: "C:\\work\\release.zip",
+          remotePath: "/home/bxssh/release.zip",
+          language: "zh-CN",
+          conflictAction: "rename",
+        },
+      );
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "上传" }));
     expect(

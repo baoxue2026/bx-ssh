@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button, Checkbox, Input, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 import {
@@ -9,6 +9,7 @@ import {
   ArrowDownWideNarrow,
   ArrowUpAZ,
   ArrowUpWideNarrow,
+  AlertTriangle,
   CheckCircle2,
   Download,
   Eye,
@@ -28,14 +29,25 @@ import type {
   LocalFileEntry,
   RemoteDirectoryListing,
   RemoteFileEntry,
+  SftpConflictAction,
   TransferBatchSummary,
   TransferSummary,
 } from "../ipc/bindings";
-import { EmptyState, LoadingState } from "./Feedback";
+import { EmptyState, FeedbackNotice, LoadingState } from "./Feedback";
 
 export interface SftpTransferResult {
   direction: "upload" | "download";
   summary: TransferSummary | TransferBatchSummary;
+}
+
+export interface SftpConflictDetails {
+  direction: "upload" | "download";
+  sourcePath: string;
+  targetPath: string;
+  sourceSize: number;
+  sourceModifiedAt: number | null;
+  targetSize: number;
+  targetModifiedAt: number | null;
 }
 
 interface SftpPaneProps {
@@ -47,6 +59,7 @@ interface SftpPaneProps {
   endpoint: string;
   localBusy: boolean;
   localDirectory: LocalDirectoryListing | null;
+  transferNotice?: string | null;
   transferResult: SftpTransferResult | null;
   transferId: string | null;
   onDownload(remotePath: string, localPath: string): Promise<void>;
@@ -63,6 +76,12 @@ interface SftpPaneProps {
   onMoveEntry?(sourcePath: string, targetPath: string): Promise<void>;
   onRenameEntry?(sourcePath: string, targetPath: string): Promise<void>;
   onChmodEntry?(remotePath: string, permissions: number): Promise<void>;
+  conflict?: SftpConflictDetails | null;
+  onResolveConflict?(
+    action: SftpConflictAction,
+    applyToAll: boolean,
+  ): Promise<void>;
+  onCancelConflict?(): void;
 }
 
 export function SftpPane({
@@ -74,6 +93,7 @@ export function SftpPane({
   endpoint,
   localBusy,
   localDirectory,
+  transferNotice = null,
   transferResult,
   transferId,
   onDownload,
@@ -90,6 +110,9 @@ export function SftpPane({
   onDeleteEntry = async () => undefined,
   onMoveEntry = async () => undefined,
   onRenameEntry = async () => undefined,
+  conflict = null,
+  onResolveConflict = async () => undefined,
+  onCancelConflict = () => undefined,
 }: SftpPaneProps) {
   const { i18n, t } = useTranslation();
   const [pathDraft, setPathDraft] = useState<string | null>(null);
@@ -113,6 +136,14 @@ export function SftpPane({
   const [operationValue, setOperationValue] = useState("");
   const [recursiveDelete, setRecursiveDelete] = useState(false);
   const [operationBusy, setOperationBusy] = useState(false);
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const [applyConflictToAll, setApplyConflictToAll] = useState(false);
+
+  useEffect(() => {
+    if (!conflict) {
+      setApplyConflictToAll(false);
+    }
+  }, [conflict]);
 
   const pathInput = pathDraft ?? directory?.path ?? ".";
   const parentPath = directory ? remoteParentPath(directory.path) : ".";
@@ -230,6 +261,16 @@ export function SftpPane({
       // App owns localized operation feedback; keep the dialog open for correction or retry.
     } finally {
       setOperationBusy(false);
+    }
+  };
+
+  const resolveConflict = async (action: SftpConflictAction) => {
+    if (conflictBusy) return;
+    setConflictBusy(true);
+    try {
+      await onResolveConflict(action, applyConflictToAll);
+    } finally {
+      setConflictBusy(false);
     }
   };
 
@@ -648,7 +689,91 @@ export function SftpPane({
         )}
       </Modal>
 
+      <Modal
+        open={conflict !== null}
+        title={
+          <span className="sftp-conflict-title">
+            <AlertTriangle size={16} />
+            {t("sftp.conflictTitle")}
+          </span>
+        }
+        closable={!conflictBusy}
+        maskClosable={false}
+        keyboard={!conflictBusy}
+        cancelButtonProps={{ disabled: conflictBusy }}
+        okButtonProps={{ style: { display: "none" } }}
+        cancelText={t("common.cancel")}
+        onCancel={() => {
+          if (!conflictBusy) onCancelConflict();
+        }}
+        footer={[
+          <Button
+            key="skip"
+            autoFocus
+            disabled={conflictBusy}
+            onClick={() => void resolveConflict("skip")}
+          >
+            {t("sftp.conflictSkip")}
+          </Button>,
+          <Button
+            key="rename"
+            disabled={conflictBusy}
+            onClick={() => void resolveConflict("rename")}
+          >
+            {t("sftp.conflictRename")}
+          </Button>,
+          <Button
+            key="overwrite"
+            danger
+            type="primary"
+            loading={conflictBusy}
+            onClick={() => void resolveConflict("overwrite")}
+          >
+            {t("sftp.conflictOverwrite")}
+          </Button>,
+        ]}
+        destroyOnHidden
+      >
+        {conflict && (
+          <div className="sftp-conflict-content">
+            <p>{t("sftp.conflictDescription")}</p>
+            <div className="sftp-conflict-comparison">
+              <ConflictPathRow
+                label={t("sftp.conflictSource")}
+                path={conflict.sourcePath}
+                size={conflict.sourceSize}
+                modifiedAt={conflict.sourceModifiedAt}
+                language={i18n.language}
+              />
+              <ConflictPathRow
+                label={t("sftp.conflictTarget")}
+                path={conflict.targetPath}
+                size={conflict.targetSize}
+                modifiedAt={conflict.targetModifiedAt}
+                language={i18n.language}
+              />
+            </div>
+            <Checkbox
+              checked={applyConflictToAll}
+              disabled={conflictBusy}
+              onChange={(event) => setApplyConflictToAll(event.target.checked)}
+            >
+              <span className="sftp-conflict-batch-label">
+                <span>{t("sftp.conflictApplyToAll")}</span>
+                <span>{t("sftp.conflictApplyToAllHelp")}</span>
+              </span>
+            </Checkbox>
+          </div>
+        )}
+      </Modal>
+
       <div className="sftp-transfer-panel">
+        {transferNotice && (
+          <FeedbackNotice
+            className="sftp-transfer-notice"
+            message={transferNotice}
+          />
+        )}
         <div className="sftp-transfer-row">
           <Upload size={15} />
           <Input
@@ -826,6 +951,36 @@ function isValidOperationValue(
     !value.includes("/") &&
     !value.includes("\\") &&
     !value.includes("\0")
+  );
+}
+
+function ConflictPathRow({
+  label,
+  path,
+  size,
+  modifiedAt,
+  language,
+}: {
+  label: string;
+  path: string;
+  size: number;
+  modifiedAt: number | null;
+  language: string;
+}) {
+  return (
+    <div className="sftp-conflict-row">
+      <File size={14} />
+      <div>
+        <span>{label}</span>
+        <code>{path}</code>
+        <small>
+          {formatBytes(size)} ·{" "}
+          {modifiedAt === null
+            ? "—"
+            : new Date(modifiedAt * 1000).toLocaleString(language)}
+        </small>
+      </div>
+    </div>
   );
 }
 

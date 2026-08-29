@@ -161,9 +161,25 @@ async uploadSftpFile(sessionId: string, localPath: string, remotePath: string, l
     else return { status: "error", error: e  as any };
 }
 },
+async uploadSftpFileWithConflict(sessionId: string, localPath: string, remotePath: string, language: string, conflictAction: SftpConflictAction) : Promise<Result<TransferSummary | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upload_sftp_file_with_conflict", { sessionId, localPath, remotePath, language, conflictAction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async downloadSftpFile(sessionId: string, remotePath: string, localPath: string, language: string) : Promise<Result<TransferSummary, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("download_sftp_file", { sessionId, remotePath, localPath, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async downloadSftpFileWithConflict(sessionId: string, remotePath: string, localPath: string, language: string, conflictAction: SftpConflictAction) : Promise<Result<TransferSummary | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_sftp_file_with_conflict", { sessionId, remotePath, localPath, language, conflictAction }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -177,9 +193,25 @@ async uploadSftpDirectory(sessionId: string, transferId: string, localPath: stri
     else return { status: "error", error: e  as any };
 }
 },
+async uploadSftpDirectoryWithConflict(sessionId: string, transferId: string, localPath: string, remotePath: string, language: string, conflictAction: SftpConflictAction) : Promise<Result<TransferBatchSummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upload_sftp_directory_with_conflict", { sessionId, transferId, localPath, remotePath, language, conflictAction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async downloadSftpDirectory(sessionId: string, transferId: string, remotePath: string, localPath: string, language: string) : Promise<Result<TransferBatchSummary, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("download_sftp_directory", { sessionId, transferId, remotePath, localPath, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async downloadSftpDirectoryWithConflict(sessionId: string, transferId: string, remotePath: string, localPath: string, language: string, conflictAction: SftpConflictAction) : Promise<Result<TransferBatchSummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_sftp_directory_with_conflict", { sessionId, transferId, remotePath, localPath, language, conflictAction }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -431,6 +463,7 @@ export type ProbeHostRequest = { host: string; port: number; settings: Connectio
 export type RemoteDirectoryListing = { path: string; entries: RemoteFileEntry[] }
 export type RemoteFileEntry = { name: string; path: string; kind: RemoteFileKind; size: number; modifiedAt: number | null; permissions: number | null }
 export type RemoteFileKind = "directory" | "file" | "symlink" | "other"
+export type SftpConflictAction = "ask" | "overwrite" | "skip" | "rename"
 export type SshConnectionEvent = { attemptId: string; stage: SshConnectionStage }
 export type SshConnectionStage = "created" | "resolvingDns" | "connectingTcp" | "handshaking" | "authenticating" | "openingChannel" | "connected" | "closing" | "closed" | "cancelled" | "failed"
 export type StartKeyboardInteractiveShellRequest = { attemptId: string; host: string; port: number; username: string; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
