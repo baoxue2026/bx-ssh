@@ -586,6 +586,7 @@ export const resources = {
         conflictApplyToAll: "应用到本批次的所有冲突",
         conflictApplyToAllHelp: "不会修改全局 SFTP 设置",
         transferSkipped: "已跳过冲突目标，原有内容未修改。",
+        transferRetry: "重试",
       },
       update: {
         availableTitle: "发现新版本 v{{version}}",
@@ -1289,6 +1290,7 @@ export const resources = {
         conflictApplyToAllHelp: "This does not change the global SFTP setting",
         transferSkipped:
           "The conflicting target was skipped; existing content was not changed.",
+        transferRetry: "Retry",
       },
       update: {
         availableTitle: "Version {{version}} is available",

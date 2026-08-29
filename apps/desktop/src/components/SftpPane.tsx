@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Button, Checkbox, Input, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 import {
@@ -30,6 +30,7 @@ import type {
   RemoteDirectoryListing,
   RemoteFileEntry,
   SftpConflictAction,
+  SftpTransferProgress,
   TransferBatchSummary,
   TransferSummary,
 } from "../ipc/bindings";
@@ -60,6 +61,8 @@ interface SftpPaneProps {
   localBusy: boolean;
   localDirectory: LocalDirectoryListing | null;
   transferNotice?: string | null;
+  transferProgress?: SftpTransferProgress | null;
+  transferError?: string | null;
   transferResult: SftpTransferResult | null;
   transferId: string | null;
   onDownload(remotePath: string, localPath: string): Promise<void>;
@@ -71,6 +74,7 @@ interface SftpPaneProps {
   onRefresh(): Promise<void>;
   onUpload(localPath: string, remotePath: string): Promise<void>;
   onCancelTransfer(): Promise<void>;
+  onRetryTransfer?(): Promise<void>;
   onCreateDirectory?(remotePath: string): Promise<void>;
   onDeleteEntry?(remotePath: string, recursive: boolean): Promise<void>;
   onMoveEntry?(sourcePath: string, targetPath: string): Promise<void>;
@@ -94,6 +98,8 @@ export function SftpPane({
   localBusy,
   localDirectory,
   transferNotice = null,
+  transferProgress = null,
+  transferError = null,
   transferResult,
   transferId,
   onDownload,
@@ -105,6 +111,7 @@ export function SftpPane({
   onRefresh,
   onUpload,
   onCancelTransfer,
+  onRetryTransfer = async () => undefined,
   onChmodEntry = async () => undefined,
   onCreateDirectory = async () => undefined,
   onDeleteEntry = async () => undefined,
@@ -138,12 +145,6 @@ export function SftpPane({
   const [operationBusy, setOperationBusy] = useState(false);
   const [conflictBusy, setConflictBusy] = useState(false);
   const [applyConflictToAll, setApplyConflictToAll] = useState(false);
-
-  useEffect(() => {
-    if (!conflict) {
-      setApplyConflictToAll(false);
-    }
-  }, [conflict]);
 
   const pathInput = pathDraft ?? directory?.path ?? ".";
   const parentPath = directory ? remoteParentPath(directory.path) : ".";
@@ -271,7 +272,14 @@ export function SftpPane({
       await onResolveConflict(action, applyConflictToAll);
     } finally {
       setConflictBusy(false);
+      setApplyConflictToAll(false);
     }
+  };
+
+  const cancelConflict = () => {
+    if (conflictBusy) return;
+    setApplyConflictToAll(false);
+    onCancelConflict();
   };
 
   return (
@@ -704,7 +712,7 @@ export function SftpPane({
         okButtonProps={{ style: { display: "none" } }}
         cancelText={t("common.cancel")}
         onCancel={() => {
-          if (!conflictBusy) onCancelConflict();
+          cancelConflict();
         }}
         footer={[
           <Button
@@ -773,6 +781,64 @@ export function SftpPane({
             className="sftp-transfer-notice"
             message={transferNotice}
           />
+        )}
+        {transferError && (
+          <FeedbackNotice
+            className="sftp-transfer-notice"
+            type="error"
+            showIcon
+            message={transferError}
+            action={
+              <Button
+                size="small"
+                disabled={busy}
+                onClick={() => void onRetryTransfer()}
+              >
+                {t("sftp.transferRetry")}
+              </Button>
+            }
+          />
+        )}
+        {transferProgress && (
+          <div
+            className="sftp-transfer-progress"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="sftp-transfer-progress-heading">
+              <span>{transferProgress.path}</span>
+              <span>
+                {formatBytes(transferProgress.bytesTransferred)}
+                {transferProgress.totalBytes == null
+                  ? ""
+                  : ` / ${formatBytes(transferProgress.totalBytes)}`}
+              </span>
+            </div>
+            <div
+              className={`sftp-transfer-progress-track${
+                transferProgress.totalBytes == null ? " indeterminate" : ""
+              }`}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={transferProgress.totalBytes ?? undefined}
+              aria-valuenow={transferProgress.bytesTransferred}
+            >
+              <span
+                style={
+                  transferProgress.totalBytes
+                    ? {
+                        width: `${Math.min(
+                          100,
+                          (transferProgress.bytesTransferred /
+                            transferProgress.totalBytes) *
+                            100,
+                        )}%`,
+                      }
+                    : undefined
+                }
+              />
+            </div>
+          </div>
         )}
         <div className="sftp-transfer-row">
           <Upload size={15} />

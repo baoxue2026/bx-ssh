@@ -135,6 +135,8 @@ fn command_builder() -> Builder<tauri::Wry> {
         .typ::<sftp::StartSftpResponse>()
         .typ::<bx_contracts::TransferBatchSummary>()
         .typ::<bx_contracts::SftpConflictAction>()
+        .typ::<bx_contracts::SftpTransferDirection>()
+        .typ::<bx_contracts::SftpTransferProgress>()
         .typ::<session_manager::SshConnectionEvent>()
         .typ::<update::UpdateEvent>()
         .typ::<AppMenuAction>()

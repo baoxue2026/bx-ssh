@@ -79,6 +79,25 @@ pub enum SftpConflictAction {
     Rename,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum SftpTransferDirection {
+    Upload,
+    Download,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpTransferProgress {
+    pub transfer_id: Option<String>,
+    pub direction: SftpTransferDirection,
+    pub path: String,
+    pub bytes_transferred: u64,
+    pub total_bytes: Option<u64>,
+    pub files_completed: u64,
+    pub total_files: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteFileEntry {
@@ -149,7 +168,8 @@ pub struct TransferBatchSummary {
 mod tests {
     use super::{
         AppInfo, HostKeyInfo, LocalDirectoryListing, LocalFileEntry, LocalFileKind,
-        RemoteFileEntry, RemoteFileKind, SshConnectionStage, TransferBatchSummary, TransferSummary,
+        RemoteFileEntry, RemoteFileKind, SftpTransferDirection, SftpTransferProgress,
+        SshConnectionStage, TransferBatchSummary, TransferSummary,
     };
 
     #[test]
@@ -215,6 +235,21 @@ mod tests {
         assert_eq!(serialized["files"], 2);
         assert_eq!(serialized["directories"], 3);
         assert_eq!(serialized["bytesPerSecond"], 51_200);
+
+        let progress = SftpTransferProgress {
+            transfer_id: Some("transfer-1".to_owned()),
+            direction: SftpTransferDirection::Upload,
+            path: "C:\\tmp\\archive.tar".to_owned(),
+            bytes_transferred: 512,
+            total_bytes: Some(1024),
+            files_completed: 0,
+            total_files: Some(1),
+        };
+        let serialized = serde_json::to_value(progress).unwrap();
+        assert_eq!(serialized["transferId"], "transfer-1");
+        assert_eq!(serialized["direction"], "upload");
+        assert_eq!(serialized["bytesTransferred"], 512);
+        assert_eq!(serialized["totalBytes"], 1024);
     }
 
     #[test]

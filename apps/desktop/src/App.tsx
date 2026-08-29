@@ -124,6 +124,7 @@ import type {
   OpenSshImportRequest,
   RemoteDirectoryListing,
   SftpConflictAction,
+  SftpTransferProgress,
   RemoteFileEntry,
   SshConnectionEvent,
   SshConnectionStage,
@@ -199,6 +200,7 @@ const DEFAULT_CONNECTION_SETTINGS: ConnectionSettings = {
 const MEMORY_USAGE_RECOVERY_DELAY_MS = 60_000;
 const EXIT_REQUESTED_EVENT = "app-exit-requested";
 const APP_MENU_ACTION_EVENT = "app-menu-action";
+const SFTP_TRANSFER_PROGRESS_EVENT = "sftp-transfer-progress";
 const SIDEBAR_WIDTH_MIN = 200;
 const SIDEBAR_WIDTH_MAX = 420;
 const SIDEBAR_WIDTH_DEFAULT = 228;
@@ -267,6 +269,10 @@ export function App() {
   const [sftpTransferNotice, setSftpTransferNotice] = useState<string | null>(
     null,
   );
+  const [sftpTransferProgress, setSftpTransferProgress] =
+    useState<SftpTransferProgress | null>(null);
+  const [sftpRetryTransfer, setSftpRetryTransfer] =
+    useState<PendingSftpTransfer | null>(null);
   const [sftpConflict, setSftpConflict] = useState<SftpConflictDetails | null>(
     null,
   );
@@ -698,6 +704,43 @@ export function App() {
       setExitImpact(event.payload);
       setExitPending(false);
       setExitError(null);
+    })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten();
+        } else {
+          removeListener = unlisten;
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      removeListener?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let removeListener: (() => void) | undefined;
+
+    void listen<SftpTransferProgress>(SFTP_TRANSFER_PROGRESS_EVENT, (event) => {
+      if (disposed) return;
+      const progress = event.payload;
+      if (progress.transferId) {
+        setSftpTransferId(progress.transferId);
+      }
+      setSftpTransferProgress((current) => {
+        if (
+          current?.transferId &&
+          progress.transferId &&
+          current.transferId === progress.transferId &&
+          progress.bytesTransferred < current.bytesTransferred
+        ) {
+          return current;
+        }
+        return progress;
+      });
     })
       .then((unlisten) => {
         if (disposed) {
@@ -1520,6 +1563,8 @@ export function App() {
     setConnectionState("connecting");
     setErrorMessage(null);
     setSftpTransferResult(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
     setSftpTransferNotice(null);
     setSftpConflict(null);
     pendingSftpTransferRef.current = null;
@@ -1772,6 +1817,8 @@ export function App() {
     setSftpTransferActive(false);
     setSftpTransferId(null);
     setSftpTransferResult(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
     setSftpTransferNotice(null);
     setSftpConflict(null);
     pendingSftpTransferRef.current = null;
@@ -2037,6 +2084,8 @@ export function App() {
     setSftpTransferActive(true);
     setErrorMessage(null);
     setSftpTransferNotice(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
     setSftpTransferResult(null);
     setSftpConflict(null);
     pendingSftpTransferRef.current = null;
@@ -2117,6 +2166,18 @@ export function App() {
             setErrorMessage(localizedErrorText(error));
           }
         } else {
+          if (
+            !isTransferCancellation(error) &&
+            source &&
+            (source.kind === "file" || source.kind === "directory")
+          ) {
+            setSftpRetryTransfer({
+              direction: "upload",
+              localPath,
+              remotePath,
+              isDirectory: source.kind === "directory",
+            });
+          }
           setErrorMessage(localizedErrorText(error));
         }
       }
@@ -2140,6 +2201,8 @@ export function App() {
     setSftpTransferActive(true);
     setErrorMessage(null);
     setSftpTransferNotice(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
     setSftpTransferResult(null);
     setSftpConflict(null);
     pendingSftpTransferRef.current = null;
@@ -2210,6 +2273,18 @@ export function App() {
             setErrorMessage(localizedErrorText(error));
           }
         } else {
+          if (
+            !isTransferCancellation(error) &&
+            source &&
+            (source.kind === "file" || source.kind === "directory")
+          ) {
+            setSftpRetryTransfer({
+              direction: "download",
+              localPath,
+              remotePath,
+              isDirectory: source.kind === "directory",
+            });
+          }
           setErrorMessage(localizedErrorText(error));
         }
       }
@@ -2241,6 +2316,8 @@ export function App() {
     setSftpTransferId(transferId);
     setErrorMessage(null);
     setSftpTransferNotice(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
 
     try {
       // The backend applies the selected action to every conflict in a
@@ -2325,6 +2402,9 @@ export function App() {
       }
     } catch (error) {
       if (operationGeneration === sftpOperationGenerationRef.current) {
+        if (!isTransferCancellation(error)) {
+          setSftpRetryTransfer(pending);
+        }
         setErrorMessage(localizedErrorText(error));
       }
     } finally {
@@ -2349,6 +2429,17 @@ export function App() {
       await ipc.cancelSftpTransfer(transferId);
     } catch (error) {
       setErrorMessage(localizedErrorText(error));
+    }
+  };
+
+  const retrySftpTransfer = async () => {
+    const retry = sftpRetryTransfer;
+    if (!retry) return;
+    setSftpRetryTransfer(null);
+    if (retry.direction === "upload") {
+      await uploadSftp(retry.localPath, retry.remotePath);
+    } else {
+      await downloadSftp(retry.remotePath, retry.localPath);
     }
   };
 
@@ -3428,7 +3519,8 @@ export function App() {
             )}
           </div>
 
-          {errorMessage && (
+          {errorMessage &&
+            !(workspaceMode === "sftp" && sftpRetryTransfer) && (
             <FeedbackNotice
               className="connection-error"
               type="error"
@@ -3666,6 +3758,9 @@ export function App() {
                   localBusy={localBusy}
                   localDirectory={localDirectory}
                   transferNotice={sftpTransferNotice}
+                  transferProgress={sftpTransferProgress}
+                  transferError={sftpRetryTransfer ? errorMessage : null}
+                  onRetryTransfer={retrySftpTransfer}
                   transferResult={sftpTransferResult}
                   transferId={sftpTransferId}
                   onBack={goBackSftp}
@@ -4516,6 +4611,10 @@ function isClosedSessionError(error: unknown): boolean {
     error instanceof IpcError &&
     (error.code === "session_not_found" || error.code === "session_closed")
   );
+}
+
+function isTransferCancellation(error: unknown): boolean {
+  return error instanceof IpcError && error.code === "transfer_cancelled";
 }
 
 function createRandomOperationId(): string {

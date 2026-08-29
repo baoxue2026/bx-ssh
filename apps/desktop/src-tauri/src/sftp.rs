@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use bx_contracts::{
     ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, RemoteFileEntry, SftpConflictAction,
-    SshConnectionStage, TransferBatchSummary, TransferSummary,
+    SftpTransferDirection, SftpTransferProgress, SshConnectionStage, TransferBatchSummary,
+    TransferSummary,
 };
 use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
@@ -14,7 +15,7 @@ use bx_ssh_core::{
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
 
@@ -484,13 +485,44 @@ pub(crate) async fn upload_sftp_file(
 ) -> Result<TransferSummary, CommandError> {
     session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
     let session = manager.get(&session_id).await?;
-    let _transfer_guard = manager.activity.track_transfer();
-    let session = session.lock().await;
-    let summary = session
-        .sftp
-        .upload_file(PathBuf::from(local_path), &remote_path)
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let cancellation = manager
+        .begin_transfer(window.label(), &session_id, &transfer_id)
         .await?;
-    drop(session);
+    let _transfer_guard = manager.activity.track_transfer();
+    let _ = emit_transfer_progress(
+        &app,
+        Some(&transfer_id),
+        SftpTransferDirection::Upload,
+        &local_path,
+        0,
+        None,
+    );
+    let mut emit_progress = |bytes| {
+        let _ = emit_transfer_progress(
+            &app,
+            Some(&transfer_id),
+            SftpTransferDirection::Upload,
+            &local_path,
+            bytes,
+            None,
+        );
+    };
+    let result = {
+        let session = session.lock().await;
+        session
+            .sftp
+            .upload_file_with_progress(
+                PathBuf::from(local_path.clone()),
+                &remote_path,
+                Some(&cancellation),
+                SftpConflictAction::Ask,
+                &mut emit_progress,
+            )
+            .await
+    };
+    manager.finish_transfer(&transfer_id).await;
+    let summary = result?.ok_or_else(|| CommandError::from(SshError::RemoteTargetExists))?;
     notify_transfer_completed(
         &app,
         localized_transfer_title(&language, "上传完成", "Upload complete"),
@@ -515,13 +547,44 @@ pub(crate) async fn upload_sftp_file_with_conflict(
 ) -> Result<Option<TransferSummary>, CommandError> {
     session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
     let session = manager.get(&session_id).await?;
-    let _transfer_guard = manager.activity.track_transfer();
-    let session = session.lock().await;
-    let summary = session
-        .sftp
-        .upload_file_with_conflict(PathBuf::from(local_path), &remote_path, conflict_action)
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let cancellation = manager
+        .begin_transfer(window.label(), &session_id, &transfer_id)
         .await?;
-    drop(session);
+    let _transfer_guard = manager.activity.track_transfer();
+    let _ = emit_transfer_progress(
+        &app,
+        Some(&transfer_id),
+        SftpTransferDirection::Upload,
+        &local_path,
+        0,
+        None,
+    );
+    let mut emit_progress = |bytes| {
+        let _ = emit_transfer_progress(
+            &app,
+            Some(&transfer_id),
+            SftpTransferDirection::Upload,
+            &local_path,
+            bytes,
+            None,
+        );
+    };
+    let result = {
+        let session = session.lock().await;
+        session
+            .sftp
+            .upload_file_with_progress(
+                PathBuf::from(local_path.clone()),
+                &remote_path,
+                Some(&cancellation),
+                conflict_action,
+                &mut emit_progress,
+            )
+            .await
+    };
+    manager.finish_transfer(&transfer_id).await;
+    let summary = result?;
     if summary.is_some() {
         notify_transfer_completed(
             &app,
@@ -547,13 +610,44 @@ pub(crate) async fn download_sftp_file(
 ) -> Result<TransferSummary, CommandError> {
     session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
     let session = manager.get(&session_id).await?;
-    let _transfer_guard = manager.activity.track_transfer();
-    let session = session.lock().await;
-    let summary = session
-        .sftp
-        .download_file(&remote_path, PathBuf::from(local_path))
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let cancellation = manager
+        .begin_transfer(window.label(), &session_id, &transfer_id)
         .await?;
-    drop(session);
+    let _transfer_guard = manager.activity.track_transfer();
+    let _ = emit_transfer_progress(
+        &app,
+        Some(&transfer_id),
+        SftpTransferDirection::Download,
+        &remote_path,
+        0,
+        None,
+    );
+    let mut emit_progress = |bytes| {
+        let _ = emit_transfer_progress(
+            &app,
+            Some(&transfer_id),
+            SftpTransferDirection::Download,
+            &remote_path,
+            bytes,
+            None,
+        );
+    };
+    let result = {
+        let session = session.lock().await;
+        session
+            .sftp
+            .download_file_with_progress(
+                &remote_path,
+                PathBuf::from(local_path.clone()),
+                Some(&cancellation),
+                SftpConflictAction::Ask,
+                &mut emit_progress,
+            )
+            .await
+    };
+    manager.finish_transfer(&transfer_id).await;
+    let summary = result?.ok_or(SshError::LocalTargetExists)?;
     notify_transfer_completed(
         &app,
         localized_transfer_title(&language, "下载完成", "Download complete"),
@@ -578,13 +672,44 @@ pub(crate) async fn download_sftp_file_with_conflict(
 ) -> Result<Option<TransferSummary>, CommandError> {
     session_manager.authorize_session(window.label(), &session_id, SessionKind::Sftp)?;
     let session = manager.get(&session_id).await?;
-    let _transfer_guard = manager.activity.track_transfer();
-    let session = session.lock().await;
-    let summary = session
-        .sftp
-        .download_file_with_conflict(&remote_path, PathBuf::from(local_path), conflict_action)
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let cancellation = manager
+        .begin_transfer(window.label(), &session_id, &transfer_id)
         .await?;
-    drop(session);
+    let _transfer_guard = manager.activity.track_transfer();
+    let _ = emit_transfer_progress(
+        &app,
+        Some(&transfer_id),
+        SftpTransferDirection::Download,
+        &remote_path,
+        0,
+        None,
+    );
+    let mut emit_progress = |bytes| {
+        let _ = emit_transfer_progress(
+            &app,
+            Some(&transfer_id),
+            SftpTransferDirection::Download,
+            &remote_path,
+            bytes,
+            None,
+        );
+    };
+    let result = {
+        let session = session.lock().await;
+        session
+            .sftp
+            .download_file_with_progress(
+                &remote_path,
+                PathBuf::from(local_path.clone()),
+                Some(&cancellation),
+                conflict_action,
+                &mut emit_progress,
+            )
+            .await
+    };
+    manager.finish_transfer(&transfer_id).await;
+    let summary = result?;
     if summary.is_some() {
         notify_transfer_completed(
             &app,
@@ -615,11 +740,35 @@ pub(crate) async fn upload_sftp_directory(
         .begin_transfer(window.label(), &session_id, &transfer_id)
         .await?;
     let _transfer_guard = manager.activity.track_transfer();
+    let _ = emit_transfer_progress(
+        &app,
+        Some(&transfer_id),
+        SftpTransferDirection::Upload,
+        &local_path,
+        0,
+        None,
+    );
+    let mut emit_progress = |bytes| {
+        let _ = emit_transfer_progress(
+            &app,
+            Some(&transfer_id),
+            SftpTransferDirection::Upload,
+            &local_path,
+            bytes,
+            None,
+        );
+    };
     let result = {
         let session = session.lock().await;
         session
             .sftp
-            .upload_directory(PathBuf::from(local_path), &remote_path, &cancellation)
+            .upload_directory_with_progress(
+                PathBuf::from(local_path.clone()),
+                &remote_path,
+                &cancellation,
+                SftpConflictAction::Ask,
+                &mut emit_progress,
+            )
             .await
     };
     manager.finish_transfer(&transfer_id).await;
@@ -653,15 +802,34 @@ pub(crate) async fn upload_sftp_directory_with_conflict(
         .begin_transfer(window.label(), &session_id, &transfer_id)
         .await?;
     let _transfer_guard = manager.activity.track_transfer();
+    let _ = emit_transfer_progress(
+        &app,
+        Some(&transfer_id),
+        SftpTransferDirection::Upload,
+        &local_path,
+        0,
+        None,
+    );
+    let mut emit_progress = |bytes| {
+        let _ = emit_transfer_progress(
+            &app,
+            Some(&transfer_id),
+            SftpTransferDirection::Upload,
+            &local_path,
+            bytes,
+            None,
+        );
+    };
     let result = {
         let session = session.lock().await;
         session
             .sftp
-            .upload_directory_with_conflict(
-                PathBuf::from(local_path),
+            .upload_directory_with_progress(
+                PathBuf::from(local_path.clone()),
                 &remote_path,
                 &cancellation,
                 conflict_action,
+                &mut emit_progress,
             )
             .await
     };
@@ -695,11 +863,35 @@ pub(crate) async fn download_sftp_directory(
         .begin_transfer(window.label(), &session_id, &transfer_id)
         .await?;
     let _transfer_guard = manager.activity.track_transfer();
+    let _ = emit_transfer_progress(
+        &app,
+        Some(&transfer_id),
+        SftpTransferDirection::Download,
+        &remote_path,
+        0,
+        None,
+    );
+    let mut emit_progress = |bytes| {
+        let _ = emit_transfer_progress(
+            &app,
+            Some(&transfer_id),
+            SftpTransferDirection::Download,
+            &remote_path,
+            bytes,
+            None,
+        );
+    };
     let result = {
         let session = session.lock().await;
         session
             .sftp
-            .download_directory(&remote_path, PathBuf::from(local_path), &cancellation)
+            .download_directory_with_progress(
+                &remote_path,
+                PathBuf::from(local_path.clone()),
+                &cancellation,
+                SftpConflictAction::Ask,
+                &mut emit_progress,
+            )
             .await
     };
     manager.finish_transfer(&transfer_id).await;
@@ -733,15 +925,34 @@ pub(crate) async fn download_sftp_directory_with_conflict(
         .begin_transfer(window.label(), &session_id, &transfer_id)
         .await?;
     let _transfer_guard = manager.activity.track_transfer();
+    let _ = emit_transfer_progress(
+        &app,
+        Some(&transfer_id),
+        SftpTransferDirection::Download,
+        &remote_path,
+        0,
+        None,
+    );
+    let mut emit_progress = |bytes| {
+        let _ = emit_transfer_progress(
+            &app,
+            Some(&transfer_id),
+            SftpTransferDirection::Download,
+            &remote_path,
+            bytes,
+            None,
+        );
+    };
     let result = {
         let session = session.lock().await;
         session
             .sftp
-            .download_directory_with_conflict(
+            .download_directory_with_progress(
                 &remote_path,
-                PathBuf::from(local_path),
+                PathBuf::from(local_path.clone()),
                 &cancellation,
                 conflict_action,
+                &mut emit_progress,
             )
             .await
     };
@@ -775,6 +986,30 @@ fn notify_transfer_completed(app: &AppHandle, title: &str, path: &str) {
     }
 
     let _ = app.notification().builder().title(title).body(path).show();
+}
+
+const SFTP_TRANSFER_PROGRESS_EVENT: &str = "sftp-transfer-progress";
+
+fn emit_transfer_progress(
+    app: &AppHandle,
+    transfer_id: Option<&str>,
+    direction: SftpTransferDirection,
+    path: &str,
+    bytes_transferred: u64,
+    total_bytes: Option<u64>,
+) -> tauri::Result<()> {
+    app.emit(
+        SFTP_TRANSFER_PROGRESS_EVENT,
+        SftpTransferProgress {
+            transfer_id: transfer_id.map(str::to_owned),
+            direction,
+            path: path.to_owned(),
+            bytes_transferred,
+            total_bytes,
+            files_completed: 0,
+            total_files: None,
+        },
+    )
 }
 
 fn localized_transfer_title<'a>(language: &str, chinese: &'a str, english: &'a str) -> &'a str {

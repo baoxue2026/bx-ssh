@@ -2056,6 +2056,59 @@ select {
   font-size: 11px;
 }
 
+.sftp-transfer-progress {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.sftp-transfer-progress-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sftp-transfer-progress-heading > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-transfer-progress-track {
+  position: relative;
+  overflow: hidden;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.sftp-transfer-progress-track > span {
+  display: block;
+  height: 100%;
+  min-width: 14%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 120ms ease;
+}
+
+.sftp-transfer-progress-track.indeterminate > span {
+  width: 30%;
+  animation: sftp-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes sftp-progress-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  50%,
+  100% {
+    transform: translateX(340%);
+  }
+}
+
 .sftp-entry-actions {
   display: flex;
   gap: 4px;

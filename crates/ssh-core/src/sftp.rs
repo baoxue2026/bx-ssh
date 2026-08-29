@@ -130,6 +130,42 @@ impl SftpClient {
         cancellation: Option<&ConnectionCancellation>,
         conflict_action: SftpConflictAction,
     ) -> Result<Option<TransferSummary>, SshError> {
+        self.upload_file_with_cancellation_and_progress(
+            local_path,
+            remote_path,
+            cancellation,
+            conflict_action,
+            &mut |_| {},
+        )
+        .await
+    }
+
+    pub async fn upload_file_with_progress(
+        &self,
+        local_path: impl AsRef<Path>,
+        remote_path: &str,
+        cancellation: Option<&ConnectionCancellation>,
+        conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<Option<TransferSummary>, SshError> {
+        self.upload_file_with_cancellation_and_progress(
+            local_path,
+            remote_path,
+            cancellation,
+            conflict_action,
+            on_progress,
+        )
+        .await
+    }
+
+    async fn upload_file_with_cancellation_and_progress(
+        &self,
+        local_path: impl AsRef<Path>,
+        remote_path: &str,
+        cancellation: Option<&ConnectionCancellation>,
+        conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<Option<TransferSummary>, SshError> {
         let local_path = local_path.as_ref();
         check_transfer_cancellation(cancellation)?;
         let metadata = fs::metadata(local_path).await?;
@@ -155,8 +191,13 @@ impl SftpClient {
             )
             .await?;
         let started_at = Instant::now();
-        let result =
-            copy_and_hash_with_cancellation(&mut local_file, &mut remote_file, cancellation).await;
+        let result = copy_and_hash_with_progress(
+            &mut local_file,
+            &mut remote_file,
+            cancellation,
+            on_progress,
+        )
+        .await;
 
         let summary = match result {
             Ok((bytes, sha256)) => {
@@ -224,6 +265,42 @@ impl SftpClient {
         cancellation: &ConnectionCancellation,
         conflict_action: SftpConflictAction,
     ) -> Result<TransferBatchSummary, SshError> {
+        self.upload_directory_with_conflict_and_progress(
+            local_path,
+            remote_path,
+            cancellation,
+            conflict_action,
+            &mut |_| {},
+        )
+        .await
+    }
+
+    pub async fn upload_directory_with_progress(
+        &self,
+        local_path: impl AsRef<Path>,
+        remote_path: &str,
+        cancellation: &ConnectionCancellation,
+        conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<TransferBatchSummary, SshError> {
+        self.upload_directory_with_conflict_and_progress(
+            local_path,
+            remote_path,
+            cancellation,
+            conflict_action,
+            on_progress,
+        )
+        .await
+    }
+
+    async fn upload_directory_with_conflict_and_progress(
+        &self,
+        local_path: impl AsRef<Path>,
+        remote_path: &str,
+        cancellation: &ConnectionCancellation,
+        conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<TransferBatchSummary, SshError> {
         let local_path = local_path.as_ref();
         check_transfer_cancellation(Some(cancellation))?;
         let metadata = fs::symlink_metadata(local_path).await?;
@@ -271,6 +348,7 @@ impl SftpClient {
                 cancellation,
                 &mut created,
                 conflict_action,
+                on_progress,
             )
             .await;
         match result {
@@ -294,6 +372,7 @@ impl SftpClient {
         cancellation: &ConnectionCancellation,
         created: &mut CreatedRemoteEntries,
         conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
     ) -> Result<(u64, u64, u64), SshError> {
         let mut pending = vec![(local_path.to_owned(), remote_path.to_owned())];
         let mut files = 0;
@@ -345,11 +424,12 @@ impl SftpClient {
                         continue;
                     };
                     if let Some(summary) = self
-                        .upload_file_with_cancellation(
+                        .upload_file_with_cancellation_and_progress(
                             &local_child,
                             &remote_child,
                             Some(cancellation),
                             conflict_action,
+                            &mut |file_bytes| on_progress(bytes + file_bytes),
                         )
                         .await?
                     {
@@ -396,6 +476,42 @@ impl SftpClient {
         cancellation: Option<&ConnectionCancellation>,
         conflict_action: SftpConflictAction,
     ) -> Result<Option<TransferSummary>, SshError> {
+        self.download_file_with_cancellation_and_progress(
+            remote_path,
+            local_path,
+            cancellation,
+            conflict_action,
+            &mut |_| {},
+        )
+        .await
+    }
+
+    pub async fn download_file_with_progress(
+        &self,
+        remote_path: &str,
+        local_path: impl AsRef<Path>,
+        cancellation: Option<&ConnectionCancellation>,
+        conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<Option<TransferSummary>, SshError> {
+        self.download_file_with_cancellation_and_progress(
+            remote_path,
+            local_path,
+            cancellation,
+            conflict_action,
+            on_progress,
+        )
+        .await
+    }
+
+    async fn download_file_with_cancellation_and_progress(
+        &self,
+        remote_path: &str,
+        local_path: impl AsRef<Path>,
+        cancellation: Option<&ConnectionCancellation>,
+        conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<Option<TransferSummary>, SshError> {
         let remote_path = validate_remote_path(remote_path)?;
         let local_path = local_path.as_ref();
         check_transfer_cancellation(cancellation)?;
@@ -411,8 +527,13 @@ impl SftpClient {
             .open(&temporary_path)
             .await?;
         let started_at = Instant::now();
-        let result =
-            copy_and_hash_with_cancellation(&mut remote_file, &mut local_file, cancellation).await;
+        let result = copy_and_hash_with_progress(
+            &mut remote_file,
+            &mut local_file,
+            cancellation,
+            on_progress,
+        )
+        .await;
 
         let summary = match result {
             Ok((bytes, sha256)) => {
@@ -488,6 +609,42 @@ impl SftpClient {
         cancellation: &ConnectionCancellation,
         conflict_action: SftpConflictAction,
     ) -> Result<TransferBatchSummary, SshError> {
+        self.download_directory_with_conflict_and_progress(
+            remote_path,
+            local_path,
+            cancellation,
+            conflict_action,
+            &mut |_| {},
+        )
+        .await
+    }
+
+    pub async fn download_directory_with_progress(
+        &self,
+        remote_path: &str,
+        local_path: impl AsRef<Path>,
+        cancellation: &ConnectionCancellation,
+        conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<TransferBatchSummary, SshError> {
+        self.download_directory_with_conflict_and_progress(
+            remote_path,
+            local_path,
+            cancellation,
+            conflict_action,
+            on_progress,
+        )
+        .await
+    }
+
+    async fn download_directory_with_conflict_and_progress(
+        &self,
+        remote_path: &str,
+        local_path: impl AsRef<Path>,
+        cancellation: &ConnectionCancellation,
+        conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<TransferBatchSummary, SshError> {
         check_transfer_cancellation(Some(cancellation))?;
         let remote_path = validate_remote_path(remote_path)?.to_owned();
         let metadata = self.session.symlink_metadata(remote_path.clone()).await?;
@@ -522,6 +679,7 @@ impl SftpClient {
                 cancellation,
                 &mut created,
                 conflict_action,
+                on_progress,
             )
             .await;
         match result {
@@ -545,6 +703,7 @@ impl SftpClient {
         cancellation: &ConnectionCancellation,
         created: &mut CreatedLocalEntries,
         conflict_action: SftpConflictAction,
+        on_progress: &mut (dyn FnMut(u64) + Send),
     ) -> Result<(u64, u64, u64), SshError> {
         let mut pending = vec![(remote_path.to_owned(), local_path.to_owned())];
         let mut files = 0;
@@ -588,11 +747,12 @@ impl SftpClient {
                             SftpConflictAction::Ask
                         };
                         let Some(summary) = self
-                            .download_file_with_cancellation(
+                            .download_file_with_cancellation_and_progress(
                                 &remote_child,
                                 &local_target,
                                 Some(cancellation),
                                 file_action,
+                                &mut |file_bytes| on_progress(bytes + file_bytes),
                             )
                             .await?
                         else {
@@ -915,6 +1075,19 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    copy_and_hash_with_progress(reader, writer, cancellation, &mut |_| {}).await
+}
+
+async fn copy_and_hash_with_progress<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    cancellation: Option<&ConnectionCancellation>,
+    on_progress: &mut (dyn FnMut(u64) + Send),
+) -> Result<(u64, String), SshError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut buffer = vec![0; TRANSFER_BUFFER_BYTES];
     let mut bytes = 0_u64;
     let mut hasher = Sha256::new();
@@ -945,6 +1118,7 @@ where
         }
         hasher.update(&buffer[..read]);
         bytes += read as u64;
+        on_progress(bytes);
     }
 
     let digest = hasher.finalize();
@@ -1324,6 +1498,7 @@ fn sftp_config() -> Config {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1333,11 +1508,11 @@ mod tests {
     use tokio::time::{timeout, Duration};
 
     use super::{
-        auto_rename_name, copy_and_hash_with_cancellation, file_kind_order, join_remote_path,
-        publish_local_file, publish_local_file_with_conflict, resolve_local_directory_target,
-        resolve_local_file_target, sftp_config, temporary_local_path, validate_mutation_path,
-        validate_remote_entry_name, validate_remote_path, validate_remote_permissions,
-        verify_transfer_integrity,
+        auto_rename_name, copy_and_hash_with_cancellation, copy_and_hash_with_progress,
+        file_kind_order, join_remote_path, publish_local_file, publish_local_file_with_conflict,
+        resolve_local_directory_target, resolve_local_file_target, sftp_config,
+        temporary_local_path, validate_mutation_path, validate_remote_entry_name,
+        validate_remote_path, validate_remote_permissions, verify_transfer_integrity,
     };
     use crate::{ConnectionCancellation, SshError};
 
@@ -1426,6 +1601,30 @@ mod tests {
         .expect("cancelled transfer must wake promptly")
         .expect_err("cancelled transfer must not finish successfully");
         assert!(matches!(error, SshError::TransferCancelled));
+    }
+
+    #[tokio::test]
+    async fn publishes_progress_after_each_written_chunk() {
+        let data = vec![0x5a; super::TRANSFER_BUFFER_BYTES * 2 + 17];
+        let mut reader = Cursor::new(data.clone());
+        let mut sink = io::sink();
+        let mut progress = Vec::new();
+        let (bytes, _) =
+            copy_and_hash_with_progress(&mut reader, &mut sink, None, &mut |transferred| {
+                progress.push(transferred)
+            })
+            .await
+            .expect("copy must succeed");
+
+        assert_eq!(bytes, data.len() as u64);
+        assert_eq!(
+            progress,
+            vec![
+                super::TRANSFER_BUFFER_BYTES as u64,
+                (super::TRANSFER_BUFFER_BYTES * 2) as u64,
+                data.len() as u64,
+            ]
+        );
     }
 
     #[test]

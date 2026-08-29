@@ -10,7 +10,6 @@ import i18n from "../i18n";
 import type {
   LocalDirectoryListing,
   RemoteDirectoryListing,
-  SftpConflictAction,
 } from "../ipc/bindings";
 import { SftpPane } from "./SftpPane";
 
@@ -224,9 +223,7 @@ describe("SftpPane", () => {
   });
 
   it("shows conflict metadata and resolves the selected action for the batch", async () => {
-    const onResolveConflict = vi.fn(
-      async (_action: SftpConflictAction, _applyToAll: boolean) => undefined,
-    );
+    const onResolveConflict = vi.fn(async () => undefined);
     renderPane({
       conflict: {
         direction: "upload",
@@ -249,6 +246,43 @@ describe("SftpPane", () => {
     await vi.waitFor(() => {
       expect(onResolveConflict).toHaveBeenCalledWith("rename", true);
     });
+  });
+
+  it("renders monotonic transfer progress with an indeterminate fallback", () => {
+    renderPane({
+      transferProgress: {
+        transferId: "transfer-1",
+        direction: "upload",
+        path: "C:\\work\\large.iso",
+        bytesTransferred: 512,
+        totalBytes: 1024,
+        filesCompleted: 0,
+        totalFiles: null,
+      },
+    });
+
+    const progress = screen.getByRole("progressbar");
+    expect(progress).toHaveAttribute("aria-valuenow", "512");
+    expect(progress).toHaveAttribute("aria-valuemax", "1024");
+    expect(screen.getByText(/512 B/)).toBeInTheDocument();
+    expect(screen.getByText(/1\.00 KiB/)).toBeInTheDocument();
+
+    cleanup();
+    renderPane({
+      transferProgress: {
+        transferId: "transfer-2",
+        direction: "download",
+        path: "/tmp/archive.tar",
+        bytesTransferred: 2048,
+        totalBytes: null,
+        filesCompleted: 1,
+        totalFiles: null,
+      },
+    });
+    expect(screen.getByRole("progressbar")).not.toHaveAttribute(
+      "aria-valuemax",
+    );
+    expect(screen.getByText(/2\.00 KiB/)).toBeInTheDocument();
   });
 
   it("renames a selected remote entry", async () => {
