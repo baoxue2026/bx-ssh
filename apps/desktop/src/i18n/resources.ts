@@ -639,13 +639,14 @@ export const resources = {
         authenticationRejected: "服务器拒绝了私钥认证，请确认公钥和账户权限。",
         legacyRsaSignatureOnly:
           "服务器仅提供已弃用的 SHA-1 RSA 签名，连接已阻止。",
-        invalidLocalPath: "本地路径为空或包含无效字符。",
+        invalidLocalPath: "本地路径为空、包含无效字符或跨越符号链接。",
         localPathNotFound: "本地路径不存在或已被移除。",
         localPathNotDirectory: "本地路径不是目录。",
         localPathPermissionDenied: "没有权限访问该本地路径。",
         localPathIoError: "读取本地路径时发生 I/O 错误。",
         invalidLocalFile: "请选择可读取的本地普通文件。",
         invalidLocalDirectory: "请选择可读取的本地目录。",
+        invalidRemotePath: "远端路径无效、包含路径穿越，或无法跨越符号链接。",
         invalidRemoteDirectory: "请选择可读取的远端目录。",
         unsupportedTransferEntry: "目录包含暂不支持传输的软链接或特殊文件。",
         localTargetExists: "本地目标文件已存在，未覆盖原文件。",
@@ -1359,7 +1360,7 @@ export const resources = {
         legacyRsaSignatureOnly:
           "The server only offers the deprecated SHA-1 RSA signature, so the connection was blocked.",
         invalidLocalPath:
-          "The local path is empty or contains invalid characters.",
+          "The local path is empty, contains invalid characters, or crosses a symbolic link.",
         localPathNotFound: "The local path does not exist or was removed.",
         localPathNotDirectory: "The local path is not a directory.",
         localPathPermissionDenied:
@@ -1367,6 +1368,8 @@ export const resources = {
         localPathIoError: "An I/O error occurred while reading the local path.",
         invalidLocalFile: "Select a readable regular local file.",
         invalidLocalDirectory: "Select a readable local directory.",
+        invalidRemotePath:
+          "The remote path is invalid, traverses a parent directory, or crosses a symbolic link.",
         invalidRemoteDirectory: "Select a readable remote directory.",
         unsupportedTransferEntry:
           "The directory contains a symbolic link or special file that is not supported yet.",

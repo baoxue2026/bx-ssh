@@ -4569,6 +4569,8 @@ function commandErrorText(
       return t("errors.invalidLocalFile");
     case "invalid_local_directory":
       return t("errors.invalidLocalDirectory");
+    case "invalid_remote_path":
+      return t("errors.invalidRemotePath");
     case "invalid_remote_directory":
       return t("errors.invalidRemoteDirectory");
     case "unsupported_transfer_entry":

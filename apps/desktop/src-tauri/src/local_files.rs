@@ -59,12 +59,14 @@ pub(crate) async fn stat_local_path(
     request: LocalPathRequest,
 ) -> Result<LocalFileEntry, CommandError> {
     let path = validate_local_path(&request.path)?;
+    reject_symlink_components(&path, false).await?;
     let metadata = fs::symlink_metadata(&path).await.map_err(map_local_io)?;
     local_file_entry(&path, &metadata)
 }
 
 async fn canonical_directory(raw_path: &str) -> Result<PathBuf, CommandError> {
     let path = validate_local_path(raw_path)?;
+    reject_symlink_components(&path, true).await?;
     let path = fs::canonicalize(path).await.map_err(map_local_io)?;
     let metadata = fs::metadata(&path).await.map_err(map_local_io)?;
     if !metadata.is_dir() {
@@ -74,6 +76,25 @@ async fn canonical_directory(raw_path: &str) -> Result<PathBuf, CommandError> {
         ));
     }
     Ok(path)
+}
+
+async fn reject_symlink_components(path: &Path, include_leaf: bool) -> Result<(), CommandError> {
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor).await {
+            Ok(metadata)
+                if metadata.file_type().is_symlink() && (include_leaf || ancestor != path) =>
+            {
+                return Err(CommandError::local_path(
+                    CommandErrorCode::InvalidLocalPath,
+                    "local path must not traverse a symbolic link",
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(map_local_io(error)),
+        }
+    }
+    Ok(())
 }
 
 fn validate_local_path(raw_path: &str) -> Result<PathBuf, CommandError> {
@@ -163,7 +184,11 @@ fn is_hidden(path: &Path) -> bool {
 
     std::fs::symlink_metadata(path)
         .map(|metadata| metadata.file_attributes() & 0x2 != 0)
-        .unwrap_or(false)
+        .unwrap_or_else(|_| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.') && name != "." && name != "..")
+        })
 }
 
 #[cfg(not(windows))]

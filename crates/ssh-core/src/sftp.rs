@@ -50,10 +50,9 @@ impl SftpClient {
     }
 
     pub async fn canonicalize(&self, path: &str) -> Result<String, SshError> {
-        Ok(self
-            .session
-            .canonicalize(validate_remote_path(path)?)
-            .await?)
+        let path = validate_remote_path(path)?;
+        self.reject_remote_symlink_components(path, true).await?;
+        Ok(self.session.canonicalize(path).await?)
     }
 
     pub async fn list_directory(&self, path: &str) -> Result<RemoteDirectoryListing, SshError> {
@@ -63,17 +62,20 @@ impl SftpClient {
             .read_dir(canonical_path.clone())
             .await?
             .map(|entry| {
+                let name = entry.file_name();
+                let path = join_remote_path(&canonical_path, &name);
+                validate_remote_entry_name(&name, &path)?;
                 let metadata = entry.metadata();
-                RemoteFileEntry {
-                    name: entry.file_name(),
-                    path: entry.path(),
+                Ok(RemoteFileEntry {
+                    name,
+                    path,
                     kind: remote_file_kind(entry.file_type()),
                     size: metadata.len(),
                     modified_at: metadata.mtime.map(u64::from),
                     permissions: metadata.permissions.map(|mode| mode & 0o7777),
-                }
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, SshError>>()?;
         entries.sort_by(|left, right| {
             file_kind_order(left.kind)
                 .cmp(&file_kind_order(right.kind))
@@ -86,8 +88,14 @@ impl SftpClient {
     }
 
     pub async fn stat_path(&self, path: &str) -> Result<RemoteFileEntry, SshError> {
-        let canonical_path = self.canonicalize(path).await?;
-        let metadata = self.session.metadata(canonical_path.clone()).await?;
+        let path = validate_remote_path(path)?;
+        self.reject_remote_symlink_components(path, false).await?;
+        let metadata = self.session.symlink_metadata(path.to_owned()).await?;
+        let canonical_path = if metadata.file_type() == FileType::Symlink {
+            self.canonicalize_remote_leaf(path).await?
+        } else {
+            self.session.canonicalize(path).await?
+        };
         let name = Path::new(&canonical_path)
             .file_name()
             .map(|value| value.to_string_lossy().into_owned())
@@ -168,12 +176,15 @@ impl SftpClient {
     ) -> Result<Option<TransferSummary>, SshError> {
         let local_path = local_path.as_ref();
         check_transfer_cancellation(cancellation)?;
+        reject_local_symlink_components(local_path, true).await?;
         let metadata = fs::metadata(local_path).await?;
         if !metadata.is_file() {
             return Err(SshError::InvalidLocalFile);
         }
 
         let remote_path = validate_remote_path(remote_path)?.to_owned();
+        self.reject_remote_symlink_components(&remote_path, false)
+            .await?;
         let Some(remote_path) = self
             .resolve_remote_file_target(&remote_path, conflict_action)
             .await?
@@ -303,11 +314,14 @@ impl SftpClient {
     ) -> Result<TransferBatchSummary, SshError> {
         let local_path = local_path.as_ref();
         check_transfer_cancellation(Some(cancellation))?;
+        reject_local_symlink_components(local_path, true).await?;
         let metadata = fs::symlink_metadata(local_path).await?;
         if !metadata.is_dir() {
             return Err(SshError::InvalidLocalDirectory);
         }
         let remote_path = validate_remote_path(remote_path)?.to_owned();
+        self.reject_remote_symlink_components(&remote_path, false)
+            .await?;
         let Some((remote_path, root_created)) = self
             .resolve_remote_directory_target(&remote_path, conflict_action)
             .await?
@@ -515,6 +529,9 @@ impl SftpClient {
         let remote_path = validate_remote_path(remote_path)?;
         let local_path = local_path.as_ref();
         check_transfer_cancellation(cancellation)?;
+        self.reject_remote_symlink_components(remote_path, true)
+            .await?;
+        reject_local_symlink_components(local_path, false).await?;
         let Some(local_path) = resolve_local_file_target(local_path, conflict_action).await? else {
             return Ok(None);
         };
@@ -647,12 +664,15 @@ impl SftpClient {
     ) -> Result<TransferBatchSummary, SshError> {
         check_transfer_cancellation(Some(cancellation))?;
         let remote_path = validate_remote_path(remote_path)?.to_owned();
+        self.reject_remote_symlink_components(&remote_path, true)
+            .await?;
         let metadata = self.session.symlink_metadata(remote_path.clone()).await?;
         if !matches!(metadata.file_type(), FileType::Dir) {
             return Err(SshError::InvalidRemoteDirectory);
         }
         let remote_path = self.canonicalize(&remote_path).await?;
         let local_path = local_path.as_ref();
+        reject_local_symlink_components(local_path, false).await?;
         let Some((local_path, root_created)) =
             resolve_local_directory_target(local_path, conflict_action).await?
         else {
@@ -799,10 +819,10 @@ impl SftpClient {
         cancellation: Option<&ConnectionCancellation>,
     ) -> Result<TransferSummary, SshError> {
         check_transfer_cancellation(cancellation)?;
-        let mut remote_file = self
-            .session
-            .open(validate_remote_path(remote_path)?)
+        let remote_path = validate_remote_path(remote_path)?;
+        self.reject_remote_symlink_components(remote_path, true)
             .await?;
+        let mut remote_file = self.session.open(remote_path).await?;
         let mut sink = tokio::io::sink();
         let started_at = Instant::now();
         let (bytes, sha256) =
@@ -812,14 +832,17 @@ impl SftpClient {
     }
 
     pub async fn remove_file(&self, remote_path: &str) -> Result<(), SshError> {
-        self.session
-            .remove_file(validate_remote_path(remote_path)?)
+        let remote_path = validate_remote_path(remote_path)?;
+        self.reject_remote_symlink_components(remote_path, false)
             .await?;
+        self.session.remove_file(remote_path).await?;
         Ok(())
     }
 
     pub async fn create_directory(&self, remote_path: &str) -> Result<(), SshError> {
         let remote_path = validate_mutation_path(remote_path)?;
+        self.reject_remote_symlink_components(remote_path, false)
+            .await?;
         if self.remote_entry_exists(remote_path).await? {
             return Err(SshError::RemoteTargetExists);
         }
@@ -829,6 +852,8 @@ impl SftpClient {
 
     pub async fn delete_entry(&self, remote_path: &str, recursive: bool) -> Result<(), SshError> {
         let remote_path = validate_mutation_path(remote_path)?.to_owned();
+        self.reject_remote_symlink_components(&remote_path, false)
+            .await?;
         let metadata = self.session.symlink_metadata(remote_path.clone()).await?;
         match metadata.file_type() {
             FileType::Dir => self.delete_directory(&remote_path, recursive).await,
@@ -883,6 +908,10 @@ impl SftpClient {
     pub async fn rename_entry(&self, source_path: &str, target_path: &str) -> Result<(), SshError> {
         let source_path = validate_mutation_path(source_path)?.to_owned();
         let target_path = validate_mutation_path(target_path)?.to_owned();
+        self.reject_remote_symlink_components(&source_path, false)
+            .await?;
+        self.reject_remote_symlink_components(&target_path, false)
+            .await?;
         let source_metadata = self.session.symlink_metadata(source_path.clone()).await?;
         if source_path == target_path
             || (matches!(source_metadata.file_type(), FileType::Dir)
@@ -900,6 +929,8 @@ impl SftpClient {
     pub async fn chmod(&self, remote_path: &str, permissions: u32) -> Result<(), SshError> {
         validate_remote_permissions(permissions)?;
         let remote_path = validate_mutation_path(remote_path)?.to_owned();
+        self.reject_remote_symlink_components(&remote_path, true)
+            .await?;
         let metadata = self.session.symlink_metadata(remote_path.clone()).await?;
         if matches!(metadata.file_type(), FileType::Symlink | FileType::Other) {
             return Err(SshError::UnsupportedTransferEntry { path: remote_path });
@@ -927,6 +958,49 @@ impl SftpClient {
             }
             Err(error) => Err(error.into()),
         }
+    }
+
+    async fn reject_remote_symlink_components(
+        &self,
+        path: &str,
+        include_leaf: bool,
+    ) -> Result<(), SshError> {
+        let path = validate_remote_path(path)?;
+        let mut current = if path.starts_with('/') {
+            "/".to_owned()
+        } else {
+            ".".to_owned()
+        };
+        let components = path
+            .split('/')
+            .filter(|component| !component.is_empty() && *component != ".")
+            .collect::<Vec<_>>();
+        for (index, component) in components.iter().enumerate() {
+            current = join_remote_path(&current, component);
+            let metadata = match self.session.symlink_metadata(current.clone()).await {
+                Ok(metadata) => metadata,
+                Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
+                    break
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if metadata.file_type() == FileType::Symlink
+                && (include_leaf || index + 1 < components.len())
+            {
+                return Err(SshError::UnsupportedTransferEntry { path: current });
+            }
+        }
+        Ok(())
+    }
+
+    async fn canonicalize_remote_leaf(&self, path: &str) -> Result<String, SshError> {
+        let (parent, name) = path.rsplit_once('/').unwrap_or((".", path));
+        let parent = if parent.is_empty() { "/" } else { parent };
+        if name.is_empty() {
+            return self.session.canonicalize(path).await.map_err(Into::into);
+        }
+        let canonical_parent = self.canonicalize(parent).await?;
+        Ok(join_remote_path(&canonical_parent, name))
     }
 
     async fn publish_remote_file(
@@ -1288,7 +1362,11 @@ async fn cleanup_local_entries(created: &CreatedLocalEntries) -> Result<(), SshE
 }
 
 fn validate_remote_path(path: &str) -> Result<&str, SshError> {
-    if path.trim().is_empty() || path.contains('\0') {
+    if path.trim().is_empty()
+        || path.contains('\0')
+        || path.contains('\\')
+        || path.split('/').any(|component| component == "..")
+    {
         Err(SshError::InvalidRemotePath)
     } else {
         Ok(path)
@@ -1330,6 +1408,22 @@ async fn local_entry_metadata(path: &Path) -> Result<Option<std::fs::Metadata>, 
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
     }
+}
+
+async fn reject_local_symlink_components(path: &Path, include_leaf: bool) -> Result<(), SshError> {
+    for ancestor in path.ancestors() {
+        let metadata = match fs::symlink_metadata(ancestor).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() && (include_leaf || ancestor != path) {
+            return Err(SshError::UnsupportedTransferEntry {
+                path: ancestor.to_string_lossy().into_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 async fn resolve_local_file_target(
@@ -1527,6 +1621,15 @@ mod tests {
             validate_remote_path("bad\0path"),
             Err(SshError::InvalidRemotePath)
         ));
+        assert!(matches!(
+            validate_remote_path("/home/bx/../outside"),
+            Err(SshError::InvalidRemotePath)
+        ));
+        assert!(matches!(
+            validate_remote_path("/home/bx\\outside"),
+            Err(SshError::InvalidRemotePath)
+        ));
+        assert!(validate_remote_path("./release.zip").is_ok());
     }
 
     #[test]
