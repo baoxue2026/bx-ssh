@@ -1555,8 +1555,8 @@ fn temporary_local_backup_path(local_path: &Path) -> Result<PathBuf, SshError> {
 
 fn transfer_summary(bytes: u64, sha256: String, started_at: Instant) -> TransferSummary {
     let elapsed = started_at.elapsed();
-    let elapsed_ms = elapsed.as_millis().max(1) as u64;
-    let bytes_per_second = ((bytes as u128 * 1000) / elapsed_ms as u128) as u64;
+    let elapsed_ms = elapsed.as_millis().max(1).min(u128::from(u64::MAX)) as u64;
+    let bytes_per_second = transfer_rate(bytes, elapsed_ms);
     TransferSummary {
         bytes,
         elapsed_ms,
@@ -1571,8 +1571,12 @@ fn batch_summary(
     bytes: u64,
     started_at: Instant,
 ) -> TransferBatchSummary {
-    let elapsed_ms = started_at.elapsed().as_millis().max(1) as u64;
-    let bytes_per_second = ((bytes as u128 * 1000) / elapsed_ms as u128) as u64;
+    let elapsed_ms = started_at
+        .elapsed()
+        .as_millis()
+        .max(1)
+        .min(u128::from(u64::MAX)) as u64;
+    let bytes_per_second = transfer_rate(bytes, elapsed_ms);
     TransferBatchSummary {
         files,
         directories,
@@ -1580,6 +1584,11 @@ fn batch_summary(
         elapsed_ms,
         bytes_per_second,
     }
+}
+
+fn transfer_rate(bytes: u64, elapsed_ms: u64) -> u64 {
+    let rate = (u128::from(bytes) * 1000) / u128::from(elapsed_ms.max(1));
+    rate.min(u128::from(u64::MAX)) as u64
 }
 
 fn sftp_config() -> Config {
@@ -1737,6 +1746,16 @@ mod tests {
         assert_eq!(summary.directories, 4);
         assert_eq!(summary.bytes, 1024);
         assert!(summary.elapsed_ms >= 1);
+    }
+
+    #[test]
+    fn keeps_large_transfer_rates_bounded() {
+        let one_gib = 1024_u64 * 1024 * 1024;
+        let rate = super::transfer_rate(one_gib, 1_000);
+
+        assert_eq!(rate, one_gib);
+        assert_eq!(super::transfer_rate(u64::MAX, 1), u64::MAX);
+        assert_eq!(super::transfer_rate(1, 0), 1_000);
     }
 
     #[test]

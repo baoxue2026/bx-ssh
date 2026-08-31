@@ -11,6 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
 const DEFAULT_TEST_BYTES: u64 = 8 * 1024 * 1024;
+const ONE_GIB_BYTES: u64 = 1024 * 1024 * 1024;
 const DEFAULT_PHASE_TIMEOUT: Duration = Duration::from_secs(90);
 const DATA_BLOCK_BYTES: usize = 1024 * 1024;
 
@@ -24,6 +25,29 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     let test_bytes = env::var("BX_SSH_TEST_SFTP_BYTES")
         .map(|value| value.parse().unwrap())
         .unwrap_or(DEFAULT_TEST_BYTES);
+    let require_one_gib = env::var("BX_SSH_TEST_SFTP_REQUIRE_ONE_GIB")
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
+    if require_one_gib {
+        assert_eq!(
+            test_bytes, ONE_GIB_BYTES,
+            "BX_SSH_TEST_SFTP_REQUIRE_ONE_GIB requires BX_SSH_TEST_SFTP_BYTES=1073741824"
+        );
+    }
+    let minimum_speed_percent =
+        optional_env_u64("BX_SSH_TEST_SFTP_MIN_SPEED_PERCENT").unwrap_or(80);
+    assert!(
+        (1..=100).contains(&minimum_speed_percent),
+        "BX_SSH_TEST_SFTP_MIN_SPEED_PERCENT must be between 1 and 100"
+    );
+    let baseline_speed = optional_env_u64("BX_SSH_TEST_SFTP_BASELINE_BPS");
+    if let Some(baseline_speed) = baseline_speed {
+        assert!(
+            baseline_speed > 0,
+            "BX_SSH_TEST_SFTP_BASELINE_BPS must be greater than zero"
+        );
+    } else if require_one_gib {
+        panic!("BX_SSH_TEST_SFTP_REQUIRE_ONE_GIB also requires BX_SSH_TEST_SFTP_BASELINE_BPS");
+    }
     let phase_timeout = env::var("BX_SSH_TEST_SFTP_PHASE_TIMEOUT_SECS")
         .map(|value| Duration::from_secs(value.parse().unwrap()))
         .unwrap_or(DEFAULT_PHASE_TIMEOUT);
@@ -117,6 +141,19 @@ async fn validates_sftp_directory_transfer_and_sha256() {
             .find(|entry| entry.name == remote_name)
             .expect("uploaded file was not returned by read_dir");
         assert_eq!(uploaded_entry.size, test_bytes);
+        run_phase(
+            "chmod_uploaded_file",
+            phase_timeout,
+            sftp.chmod(&remote_path, 0o640),
+        )
+        .await?;
+        let chmod_file = run_phase(
+            "verify_uploaded_file_permissions",
+            phase_timeout,
+            sftp.stat_path(&remote_path),
+        )
+        .await?;
+        assert_eq!(chmod_file.permissions, Some(0o640));
 
         let download = run_phase(
             "download_and_verify",
@@ -262,9 +299,40 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     assert_eq!(directory_download.directories, directory_upload.directories);
     assert_eq!(directory_download.bytes, directory_upload.bytes);
     println!(
-        "BX_SFTP_RESULT bytes={} upload_bps={} download_bps={} sha256={}",
-        test_bytes, upload.bytes_per_second, download.bytes_per_second, upload.sha256
+        "BX_SFTP_RESULT bytes={} upload_bps={} download_bps={} sha256={} required_one_gib={}",
+        test_bytes,
+        upload.bytes_per_second,
+        download.bytes_per_second,
+        upload.sha256,
+        require_one_gib,
     );
+    if let Some(baseline_speed) = baseline_speed {
+        let minimum_speed = minimum_speed(baseline_speed, minimum_speed_percent);
+        assert!(
+            upload.bytes_per_second >= minimum_speed,
+            "SFTP upload speed {} B/s is below the {}% OpenSSH baseline target of {} B/s (baseline {} B/s)",
+            upload.bytes_per_second,
+            minimum_speed_percent,
+            minimum_speed,
+            baseline_speed
+        );
+        assert!(
+            download.bytes_per_second >= minimum_speed,
+            "SFTP download speed {} B/s is below the {}% OpenSSH baseline target of {} B/s (baseline {} B/s)",
+            download.bytes_per_second,
+            minimum_speed_percent,
+            minimum_speed,
+            baseline_speed
+        );
+        println!(
+            "BX_SFTP_SPEED baseline_bps={} minimum_percent={} minimum_bps={} upload_percent={} download_percent={}",
+            baseline_speed,
+            minimum_speed_percent,
+            minimum_speed,
+            speed_percent(upload.bytes_per_second, baseline_speed),
+            speed_percent(download.bytes_per_second, baseline_speed),
+        );
+    }
 }
 
 async fn run_phase<T>(
@@ -348,4 +416,25 @@ fn temporary_test_directory() -> PathBuf {
 
 fn required_env(name: &str) -> String {
     env::var(name).unwrap_or_else(|_| panic!("missing required environment variable {name}"))
+}
+
+fn optional_env_u64(name: &str) -> Option<u64> {
+    env::var(name).ok().map(|value| {
+        value
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} must be an unsigned integer"))
+    })
+}
+
+fn minimum_speed(baseline: u64, percentage: u64) -> u64 {
+    (u128::from(baseline) * u128::from(percentage))
+        .div_ceil(100)
+        .min(u128::from(u64::MAX)) as u64
+}
+
+fn speed_percent(speed: u64, baseline: u64) -> u64 {
+    if baseline == 0 {
+        return 0;
+    }
+    ((u128::from(speed) * 100) / u128::from(baseline)).min(u128::from(u64::MAX)) as u64
 }

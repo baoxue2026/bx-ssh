@@ -48,7 +48,9 @@ pub enum SshError {
     LegacyRsaSignatureOnly,
     #[error("terminal columns and rows must be greater than zero")]
     InvalidTerminalSize,
-    #[error("remote SFTP path must not be empty or contain a null byte")]
+    #[error(
+        "remote SFTP path must not be empty, contain a null byte, a backslash, or a parent-directory component"
+    )]
     InvalidRemotePath,
     #[error("local transfer path must reference a regular file")]
     InvalidLocalFile,

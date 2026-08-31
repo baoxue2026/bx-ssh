@@ -303,6 +303,26 @@ describe("SftpPane", () => {
     });
   });
 
+  it("edits remote permissions as an octal mode", async () => {
+    const onChmodEntry = vi.fn(async () => undefined);
+    renderPane({ onChmodEntry });
+
+    fireEvent.click(screen.getByText("notes.txt"));
+    fireEvent.click(screen.getByRole("button", { name: "修改远端权限" }));
+    const permissionsInput = screen.getByRole("textbox", { name: "权限" });
+    expect(permissionsInput).toHaveValue("0644");
+
+    fireEvent.change(permissionsInput, { target: { value: "0888" } });
+    expect(screen.getByRole("button", { name: /确\s*定/ })).toBeDisabled();
+
+    fireEvent.change(permissionsInput, { target: { value: "0755" } });
+    fireEvent.click(screen.getByRole("button", { name: /确\s*定/ }));
+
+    await vi.waitFor(() => {
+      expect(onChmodEntry).toHaveBeenCalledWith("/home/bx/notes.txt", 0o755);
+    });
+  });
+
   it("creates a remote directory", async () => {
     const onCreateDirectory = vi.fn(async () => undefined);
     renderPane({ onCreateDirectory });
