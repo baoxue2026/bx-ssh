@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { Button, Input, InputNumber, Select, Switch } from "antd";
 import {
   CheckCircle2,
@@ -9,6 +10,8 @@ import {
   Key,
   Palette,
   RefreshCw,
+  RotateCcw,
+  Save,
   ScrollText,
   Settings as SettingsIcon,
   ShieldCheck,
@@ -18,8 +21,17 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { ConnectionGroup } from "../ipc/bindings";
-import { useUiPreferences } from "../ui/preferenceContext";
+import type {
+  ApplicationSettings,
+  ConnectionGroup,
+  ConnectionSettings,
+  GlobalSettingsSnapshot,
+} from "../ipc/bindings";
+import {
+  DEFAULT_APPLICATION_SETTINGS,
+  DEFAULT_GLOBAL_CONNECTION_SETTINGS,
+} from "../ui/applicationSettings";
+import { FeedbackNotice } from "./Feedback";
 
 type SettingsCategory =
   | "general"
@@ -34,17 +46,23 @@ type SettingsCategory =
 
 interface SettingsViewProps {
   appName: string;
+  errorMessage?: string;
   groups: ConnectionGroup[];
   left: number;
+  loading?: boolean;
+  notice?: string;
+  saving?: boolean;
+  settings: GlobalSettingsSnapshot;
   version: string;
   onCheckForUpdates(): void;
   onClose(): void;
+  onSave(
+    application: ApplicationSettings,
+    connection: ConnectionSettings,
+  ): void;
 }
 
-const categories: Array<{
-  icon: LucideIcon;
-  id: SettingsCategory;
-}> = [
+const categories: Array<{ icon: LucideIcon; id: SettingsCategory }> = [
   { id: "general", icon: SettingsIcon },
   { id: "terminal", icon: SquareTerminal },
   { id: "appearance", icon: Palette },
@@ -58,15 +76,60 @@ const categories: Array<{
 
 export function SettingsView({
   appName,
+  errorMessage,
   groups,
   left,
+  loading = false,
+  notice,
+  saving = false,
+  settings,
   version,
   onCheckForUpdates,
   onClose,
+  onSave,
 }: SettingsViewProps) {
   const { t } = useTranslation();
   const [active, setActive] = useState<SettingsCategory>("general");
-  const preferences = useUiPreferences();
+  const [draft, setDraft] = useState(settings);
+  const [source, setSource] = useState(settings);
+  const [browseError, setBrowseError] = useState<string>();
+
+  if (settings !== source) {
+    setSource(settings);
+    setDraft(settings);
+  }
+
+  const dirty = useMemo(
+    () =>
+      !settings.applicationInitialized ||
+      JSON.stringify(draft) !== JSON.stringify(settings),
+    [draft, settings],
+  );
+  const disabled = loading || saving;
+
+  const updateApplication = (patch: Partial<ApplicationSettings>) => {
+    setDraft((current) => ({
+      ...current,
+      application: { ...current.application, ...patch },
+    }));
+  };
+
+  const browseLocalDirectory = async () => {
+    setBrowseError(undefined);
+    try {
+      const selected = await openFileDialog({
+        defaultPath: draft.application.sftpDefaultLocalDirectory ?? undefined,
+        directory: true,
+        multiple: false,
+        title: t("settings.actions.chooseLocalDirectory"),
+      });
+      if (typeof selected === "string") {
+        updateApplication({ sftpDefaultLocalDirectory: selected });
+      }
+    } catch {
+      setBrowseError(t("settings.feedback.directoryUnavailable"));
+    }
+  };
 
   return (
     <section
@@ -78,6 +141,7 @@ export function SettingsView({
         <strong id="settings-title">{t("settings.title")}</strong>
         <Button
           aria-label={t("settings.close")}
+          disabled={saving}
           icon={<X size={15} />}
           size="small"
           type="text"
@@ -104,17 +168,71 @@ export function SettingsView({
         <main className="settings-content">
           <div className="settings-content-inner">
             <h2>{t(`settings.categories.${active}`)}</h2>
+            {(errorMessage || browseError) && (
+              <FeedbackNotice
+                type="error"
+                showIcon
+                message={t("settings.feedback.saveFailed")}
+                description={errorMessage ?? browseError}
+              />
+            )}
+            {notice && !errorMessage && !browseError && (
+              <FeedbackNotice type="success" showIcon message={notice} />
+            )}
             <SettingsContent
               active={active}
               appName={appName}
+              disabled={disabled}
+              draft={draft}
               groups={groups}
               version={version}
+              onBrowseLocalDirectory={() => void browseLocalDirectory()}
               onCheckForUpdates={onCheckForUpdates}
-              preferences={preferences}
+              onConnectionChange={(connection) =>
+                setDraft((current) => ({ ...current, connection }))
+              }
+              onApplicationChange={updateApplication}
             />
           </div>
         </main>
       </div>
+
+      <footer className="settings-footer">
+        <span className="settings-save-state" role="status">
+          {loading
+            ? t("settings.feedback.loading")
+            : dirty
+              ? t("settings.feedback.unsaved")
+              : t("settings.feedback.saved")}
+        </span>
+        <div className="settings-footer-actions">
+          <Button
+            disabled={disabled || active === "shortcuts"}
+            icon={<RotateCcw size={13} />}
+            onClick={() => setDraft(resetCategory(draft, active))}
+          >
+            {t("settings.actions.restoreDefaults")}
+          </Button>
+          <Button
+            disabled={disabled || !dirty}
+            icon={<Save size={13} />}
+            loading={saving}
+            type="primary"
+            onClick={() =>
+              onSave(
+                {
+                  ...draft.application,
+                  sftpDefaultLocalDirectory:
+                    draft.application.sftpDefaultLocalDirectory?.trim() || null,
+                },
+                draft.connection,
+              )
+            }
+          >
+            {t("settings.actions.save")}
+          </Button>
+        </div>
+      </footer>
     </section>
   );
 }
@@ -122,19 +240,28 @@ export function SettingsView({
 function SettingsContent({
   active,
   appName,
+  disabled,
+  draft,
   groups,
   version,
+  onApplicationChange,
+  onBrowseLocalDirectory,
   onCheckForUpdates,
-  preferences,
+  onConnectionChange,
 }: {
   active: SettingsCategory;
   appName: string;
+  disabled: boolean;
+  draft: GlobalSettingsSnapshot;
   groups: ConnectionGroup[];
   version: string;
+  onApplicationChange(patch: Partial<ApplicationSettings>): void;
+  onBrowseLocalDirectory(): void;
   onCheckForUpdates(): void;
-  preferences: ReturnType<typeof useUiPreferences>;
+  onConnectionChange(connection: ConnectionSettings): void;
 }) {
   const { t } = useTranslation();
+  const application = draft.application;
 
   if (active === "general") {
     return (
@@ -147,25 +274,25 @@ function SettingsContent({
             <Select
               aria-label={t("appearance.language")}
               className="settings-control"
-              value={preferences.language}
+              disabled={disabled}
+              value={application.language}
               options={[
-                {
-                  label: t("appearance.languageChinese"),
-                  value: "zh-CN",
-                },
-                {
-                  label: t("appearance.languageEnglish"),
-                  value: "en-US",
-                },
+                { label: t("appearance.languageChinese"), value: "zh-CN" },
+                { label: t("appearance.languageEnglish"), value: "en-US" },
               ]}
-              onChange={preferences.setLanguage}
+              onChange={(language) => onApplicationChange({ language })}
             />
           </SettingsRow>
           <SettingsRow
             title={t("settings.rows.confirmClose")}
             description={t("settings.descriptions.confirmClose")}
           >
-            <ReadOnlyToggle label={t("settings.rows.confirmClose")} />
+            <Switch
+              aria-label={t("settings.rows.confirmClose")}
+              checked={application.confirmClose}
+              disabled={disabled}
+              onChange={(confirmClose) => onApplicationChange({ confirmClose })}
+            />
           </SettingsRow>
           <SettingsRow
             title={t("settings.rows.singleInstance")}
@@ -181,19 +308,19 @@ function SettingsContent({
           >
             <Select
               aria-label={t("settings.rows.defaultGroup")}
-              className="settings-control is-readonly"
-              disabled
-              value="ungrouped"
+              className="settings-control"
+              disabled={disabled}
+              value={application.defaultGroupId ?? ""}
               options={[
-                {
-                  label: t("settings.values.ungrouped"),
-                  value: "ungrouped",
-                },
+                { label: t("settings.values.ungrouped"), value: "" },
                 ...groups.map((group) => ({
                   label: group.name,
                   value: group.id,
                 })),
               ]}
+              onChange={(defaultGroupId) =>
+                onApplicationChange({ defaultGroupId: defaultGroupId || null })
+              }
             />
           </SettingsRow>
         </SettingsSection>
@@ -211,12 +338,13 @@ function SettingsContent({
         >
           {(["light", "dark", "system"] as const).map((themeMode) => (
             <button
-              className={`settings-theme-option${preferences.themeMode === themeMode ? " is-active" : ""}`}
+              className={`settings-theme-option${application.themeMode === themeMode ? " is-active" : ""}`}
+              disabled={disabled}
               key={themeMode}
               type="button"
               role="radio"
-              aria-checked={preferences.themeMode === themeMode}
-              onClick={() => preferences.setThemeMode(themeMode)}
+              aria-checked={application.themeMode === themeMode}
+              onClick={() => onApplicationChange({ themeMode })}
             >
               <span className={`settings-theme-preview mode-${themeMode}`}>
                 <span />
@@ -230,7 +358,12 @@ function SettingsContent({
           title={t("settings.rows.compactLayout")}
           description={t("settings.descriptions.compactLayout")}
         >
-          <ReadOnlyToggle label={t("settings.rows.compactLayout")} />
+          <Switch
+            aria-label={t("settings.rows.compactLayout")}
+            checked={application.compactLayout}
+            disabled={disabled}
+            onChange={(compactLayout) => onApplicationChange({ compactLayout })}
+          />
         </SettingsRow>
       </SettingsSection>
     );
@@ -247,17 +380,15 @@ function SettingsContent({
             <Select
               aria-label={t("settings.rows.terminalFont")}
               className="settings-control"
-              value={preferences.terminalAppearance.fontFamily}
+              disabled={disabled}
+              value={application.terminalFontFamily}
               options={[
                 { label: "Cascadia Mono", value: "cascadiaMono" },
                 { label: "Cascadia Code", value: "cascadiaCode" },
                 { label: "Consolas", value: "consolas" },
               ]}
-              onChange={(fontFamily) =>
-                preferences.setTerminalAppearance({
-                  ...preferences.terminalAppearance,
-                  fontFamily,
-                })
+              onChange={(terminalFontFamily) =>
+                onApplicationChange({ terminalFontFamily })
               }
             />
           </SettingsRow>
@@ -269,15 +400,13 @@ function SettingsContent({
               aria-label={t("settings.rows.terminalFontSize")}
               className="settings-number"
               controls={false}
+              disabled={disabled}
               max={20}
               min={10}
-              value={preferences.terminalAppearance.fontSize}
-              onChange={(fontSize) => {
-                if (fontSize !== null) {
-                  preferences.setTerminalAppearance({
-                    ...preferences.terminalAppearance,
-                    fontSize,
-                  });
+              value={application.terminalFontSize}
+              onChange={(terminalFontSize) => {
+                if (terminalFontSize !== null) {
+                  onApplicationChange({ terminalFontSize });
                 }
               }}
             />
@@ -288,12 +417,17 @@ function SettingsContent({
           >
             <Select
               aria-label={t("settings.rows.terminalLineHeight")}
-              className="settings-control is-readonly"
-              disabled
-              value="standard"
+              className="settings-control"
+              disabled={disabled}
+              value={application.terminalLineHeight}
               options={[
+                { label: t("settings.values.compact"), value: "compact" },
                 { label: t("settings.values.standard"), value: "standard" },
+                { label: t("settings.values.relaxed"), value: "relaxed" },
               ]}
+              onChange={(terminalLineHeight) =>
+                onApplicationChange({ terminalLineHeight })
+              }
             />
           </SettingsRow>
         </SettingsSection>
@@ -305,23 +439,18 @@ function SettingsContent({
             <Select
               aria-label={t("settings.rows.terminalCursorStyle")}
               className="settings-control"
-              value={preferences.terminalAppearance.cursorStyle}
+              disabled={disabled}
+              value={application.terminalCursorStyle}
               options={[
-                {
-                  label: t("settings.values.cursorBlock"),
-                  value: "block",
-                },
+                { label: t("settings.values.cursorBlock"), value: "block" },
                 {
                   label: t("settings.values.cursorUnderline"),
                   value: "underline",
                 },
                 { label: t("settings.values.cursorBar"), value: "bar" },
               ]}
-              onChange={(cursorStyle) =>
-                preferences.setTerminalAppearance({
-                  ...preferences.terminalAppearance,
-                  cursorStyle,
-                })
+              onChange={(terminalCursorStyle) =>
+                onApplicationChange({ terminalCursorStyle })
               }
             />
           </SettingsRow>
@@ -331,12 +460,10 @@ function SettingsContent({
           >
             <Switch
               aria-label={t("settings.rows.terminalCursorBlink")}
-              checked={preferences.terminalAppearance.cursorBlink}
-              onChange={(cursorBlink) =>
-                preferences.setTerminalAppearance({
-                  ...preferences.terminalAppearance,
-                  cursorBlink,
-                })
+              checked={application.terminalCursorBlink}
+              disabled={disabled}
+              onChange={(terminalCursorBlink) =>
+                onApplicationChange({ terminalCursorBlink })
               }
             />
           </SettingsRow>
@@ -347,7 +474,8 @@ function SettingsContent({
             <Select
               aria-label={t("settings.rows.terminalColorScheme")}
               className="settings-control"
-              value={preferences.terminalAppearance.colorScheme}
+              disabled={disabled}
+              value={application.terminalColorScheme}
               options={[
                 { label: t("settings.values.bxDark"), value: "bxDark" },
                 {
@@ -356,11 +484,8 @@ function SettingsContent({
                 },
                 { label: t("settings.values.bxLight"), value: "bxLight" },
               ]}
-              onChange={(colorScheme) =>
-                preferences.setTerminalAppearance({
-                  ...preferences.terminalAppearance,
-                  colorScheme,
-                })
+              onChange={(terminalColorScheme) =>
+                onApplicationChange({ terminalColorScheme })
               }
             />
           </SettingsRow>
@@ -370,15 +495,24 @@ function SettingsContent({
             title={t("settings.rows.multilinePaste")}
             description={t("settings.descriptions.multilinePaste")}
           >
-            <ReadOnlyToggle label={t("settings.rows.multilinePaste")} />
+            <Switch
+              aria-label={t("settings.rows.multilinePaste")}
+              checked={application.multilinePasteConfirmation}
+              disabled={disabled}
+              onChange={(multilinePasteConfirmation) =>
+                onApplicationChange({ multilinePasteConfirmation })
+              }
+            />
           </SettingsRow>
           <SettingsRow
             title={t("settings.rows.copyOnSelect")}
             description={t("settings.descriptions.copyOnSelect")}
           >
-            <ReadOnlyToggle
-              label={t("settings.rows.copyOnSelect")}
-              checked={false}
+            <Switch
+              aria-label={t("settings.rows.copyOnSelect")}
+              checked={application.copyOnSelect}
+              disabled={disabled}
+              onChange={(copyOnSelect) => onApplicationChange({ copyOnSelect })}
             />
           </SettingsRow>
         </SettingsSection>
@@ -393,19 +527,42 @@ function SettingsContent({
           title={t("settings.rows.connectTimeout")}
           description={t("settings.descriptions.connectTimeout")}
         >
-          <SettingNumber value={10} unit={t("settings.units.seconds")} />
+          <SettingNumber
+            disabled={disabled}
+            min={1}
+            unit={t("settings.units.seconds")}
+            value={draft.connection.connectTimeoutSecs}
+            onChange={(connectTimeoutSecs) =>
+              onConnectionChange({ ...draft.connection, connectTimeoutSecs })
+            }
+          />
         </SettingsRow>
         <SettingsRow
           title={t("settings.rows.keepAlive")}
           description={t("settings.descriptions.keepAlive")}
         >
-          <SettingNumber value={30} unit={t("settings.units.seconds")} />
+          <SettingNumber
+            disabled={disabled}
+            min={0}
+            unit={t("settings.units.seconds")}
+            value={draft.connection.keepAliveSecs}
+            onChange={(keepAliveSecs) =>
+              onConnectionChange({ ...draft.connection, keepAliveSecs })
+            }
+          />
         </SettingsRow>
         <SettingsRow
           title={t("settings.rows.reconnectConfirm")}
           description={t("settings.descriptions.reconnectConfirm")}
         >
-          <ReadOnlyToggle label={t("settings.rows.reconnectConfirm")} />
+          <Switch
+            aria-label={t("settings.rows.reconnectConfirm")}
+            checked={application.reconnectConfirmation}
+            disabled={disabled}
+            onChange={(reconnectConfirmation) =>
+              onApplicationChange({ reconnectConfirmation })
+            }
+          />
         </SettingsRow>
       </SettingsSection>
     );
@@ -422,10 +579,20 @@ function SettingsContent({
             <div className="settings-inline-control">
               <Input
                 aria-label={t("settings.rows.defaultLocalDirectory")}
-                disabled
+                disabled={disabled}
                 placeholder={t("settings.values.systemDefault")}
+                value={application.sftpDefaultLocalDirectory ?? ""}
+                onChange={(event) =>
+                  onApplicationChange({
+                    sftpDefaultLocalDirectory: event.target.value || null,
+                  })
+                }
               />
-              <Button disabled icon={<FolderOpen size={13} />}>
+              <Button
+                disabled={disabled}
+                icon={<FolderOpen size={13} />}
+                onClick={onBrowseLocalDirectory}
+              >
                 {t("settings.actions.browse")}
               </Button>
             </div>
@@ -438,12 +605,18 @@ function SettingsContent({
           >
             <Select
               aria-label={t("settings.rows.fileConflict")}
-              className="settings-control is-readonly"
-              disabled
-              value="ask"
+              className="settings-control"
+              disabled={disabled}
+              value={application.sftpConflictAction}
               options={[
                 { label: t("settings.values.askEveryTime"), value: "ask" },
+                { label: t("settings.values.skip"), value: "skip" },
+                { label: t("settings.values.autoRename"), value: "rename" },
+                { label: t("settings.values.overwrite"), value: "overwrite" },
               ]}
+              onChange={(sftpConflictAction) =>
+                onApplicationChange({ sftpConflictAction })
+              }
             />
           </SettingsRow>
         </SettingsSection>
@@ -468,13 +641,27 @@ function SettingsContent({
             title={t("settings.rows.externalLinkConfirm")}
             description={t("settings.descriptions.externalLinkConfirm")}
           >
-            <ReadOnlyToggle label={t("settings.rows.externalLinkConfirm")} />
+            <Switch
+              aria-label={t("settings.rows.externalLinkConfirm")}
+              checked={application.externalLinkConfirmation}
+              disabled={disabled}
+              onChange={(externalLinkConfirmation) =>
+                onApplicationChange({ externalLinkConfirmation })
+              }
+            />
           </SettingsRow>
           <SettingsRow
             title={t("settings.rows.excludeCredentials")}
             description={t("settings.descriptions.excludeCredentials")}
           >
-            <ReadOnlyToggle label={t("settings.rows.excludeCredentials")} />
+            <Switch
+              aria-label={t("settings.rows.excludeCredentials")}
+              checked={application.excludeCredentialsFromExport}
+              disabled={disabled}
+              onChange={(excludeCredentialsFromExport) =>
+                onApplicationChange({ excludeCredentialsFromExport })
+              }
+            />
           </SettingsRow>
         </SettingsSection>
         <SettingsSection title={t("settings.sections.sshKeys")}>
@@ -504,7 +691,14 @@ function SettingsContent({
           title={t("settings.rows.autoUpdate")}
           description={t("settings.descriptions.autoUpdate")}
         >
-          <ReadOnlyToggle label={t("settings.rows.autoUpdate")} />
+          <Switch
+            aria-label={t("settings.rows.autoUpdate")}
+            checked={application.autoCheckUpdates}
+            disabled={disabled}
+            onChange={(autoCheckUpdates) =>
+              onApplicationChange({ autoCheckUpdates })
+            }
+          />
         </SettingsRow>
         <Button icon={<RefreshCw size={13} />} onClick={onCheckForUpdates}>
           {t("menu.checkUpdates")}
@@ -552,10 +746,16 @@ function SettingsContent({
         >
           <Select
             aria-label={t("settings.rows.logLevel")}
-            className="settings-control is-readonly"
-            disabled
-            value="info"
-            options={[{ label: t("settings.values.info"), value: "info" }]}
+            className="settings-control"
+            disabled={disabled}
+            value={application.logLevel}
+            options={[
+              { label: t("settings.values.error"), value: "error" },
+              { label: t("settings.values.warning"), value: "warn" },
+              { label: t("settings.values.info"), value: "info" },
+              { label: t("settings.values.debug"), value: "debug" },
+            ]}
+            onChange={(logLevel) => onApplicationChange({ logLevel })}
           />
         </SettingsRow>
       </SettingsSection>
@@ -571,6 +771,99 @@ function SettingsContent({
       </SettingsSection>
     </>
   );
+}
+
+function resetCategory(
+  current: GlobalSettingsSnapshot,
+  category: SettingsCategory,
+): GlobalSettingsSnapshot {
+  const defaults = DEFAULT_APPLICATION_SETTINGS;
+  if (category === "general") {
+    return {
+      ...current,
+      application: {
+        ...current.application,
+        language: defaults.language,
+        confirmClose: defaults.confirmClose,
+        defaultGroupId: defaults.defaultGroupId,
+      },
+    };
+  }
+  if (category === "appearance") {
+    return {
+      ...current,
+      application: {
+        ...current.application,
+        themeMode: defaults.themeMode,
+        compactLayout: defaults.compactLayout,
+      },
+    };
+  }
+  if (category === "terminal") {
+    return {
+      ...current,
+      application: {
+        ...current.application,
+        terminalFontFamily: defaults.terminalFontFamily,
+        terminalFontSize: defaults.terminalFontSize,
+        terminalLineHeight: defaults.terminalLineHeight,
+        terminalCursorStyle: defaults.terminalCursorStyle,
+        terminalCursorBlink: defaults.terminalCursorBlink,
+        terminalColorScheme: defaults.terminalColorScheme,
+        multilinePasteConfirmation: defaults.multilinePasteConfirmation,
+        copyOnSelect: defaults.copyOnSelect,
+      },
+    };
+  }
+  if (category === "connection") {
+    return {
+      ...current,
+      application: {
+        ...current.application,
+        reconnectConfirmation: defaults.reconnectConfirmation,
+      },
+      connection: { ...DEFAULT_GLOBAL_CONNECTION_SETTINGS },
+    };
+  }
+  if (category === "sftp") {
+    return {
+      ...current,
+      application: {
+        ...current.application,
+        sftpDefaultLocalDirectory: defaults.sftpDefaultLocalDirectory,
+        sftpConflictAction: defaults.sftpConflictAction,
+      },
+    };
+  }
+  if (category === "security") {
+    return {
+      ...current,
+      application: {
+        ...current.application,
+        externalLinkConfirmation: defaults.externalLinkConfirmation,
+        excludeCredentialsFromExport: defaults.excludeCredentialsFromExport,
+      },
+    };
+  }
+  if (category === "update") {
+    return {
+      ...current,
+      application: {
+        ...current.application,
+        autoCheckUpdates: defaults.autoCheckUpdates,
+      },
+    };
+  }
+  if (category === "logs") {
+    return {
+      ...current,
+      application: {
+        ...current.application,
+        logLevel: defaults.logLevel,
+      },
+    };
+  }
+  return current;
 }
 
 function SettingsSection({
@@ -608,35 +901,38 @@ function SettingsRow({
   );
 }
 
-function SettingNumber({ value, unit }: { value: number; unit: string }) {
+function SettingNumber({
+  disabled,
+  min,
+  unit,
+  value,
+  onChange,
+}: {
+  disabled: boolean;
+  min: number;
+  unit: string;
+  value: number;
+  onChange(value: number): void;
+}) {
   return (
     <div className="settings-number-with-unit">
-      <InputNumber controls={false} disabled value={value} />
+      <InputNumber
+        controls={false}
+        disabled={disabled}
+        max={4_294_967_295}
+        min={min}
+        value={value}
+        onChange={(nextValue) => {
+          if (nextValue !== null) onChange(nextValue);
+        }}
+      />
       <span>{unit}</span>
     </div>
   );
 }
 
-function ReadOnlyToggle({
-  checked = true,
-  label,
-}: {
-  checked?: boolean;
-  label: string;
-}) {
-  return (
-    <button
-      aria-checked={checked}
-      aria-disabled="true"
-      aria-label={label}
-      className={`settings-toggle${checked ? " is-checked" : ""}`}
-      disabled
-      role="switch"
-      type="button"
-    >
-      <span />
-    </button>
-  );
+function ReadOnlyToggle({ label }: { label: string }) {
+  return <Switch aria-label={label} checked disabled />;
 }
 
 function ShortcutRow({ label, value }: { label: string; value: string }) {

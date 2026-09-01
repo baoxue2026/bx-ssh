@@ -12,6 +12,10 @@ import { App } from "./App";
 import type { TerminalAppearancePreferences } from "./components/terminalAppearance";
 import i18n from "./i18n";
 import { UiPreferencesProvider } from "./ui/preferences";
+import {
+  DEFAULT_APPLICATION_SETTINGS,
+  DEFAULT_GLOBAL_CONNECTION_SETTINGS,
+} from "./ui/applicationSettings";
 
 const mocks = vi.hoisted(() => ({
   channels: [] as Array<{ onmessage(message: unknown): void }>,
@@ -105,7 +109,7 @@ vi.mock("./components/TerminalPane", async () => {
   };
 });
 
-describe("App", { timeout: 15_000 }, () => {
+describe("App", { timeout: 30_000 }, () => {
   beforeEach(async () => {
     localStorage.clear();
     delete document.documentElement.dataset.theme;
@@ -159,6 +163,24 @@ describe("App", { timeout: 15_000 }, () => {
       }
       if (command === "list_connections") {
         return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "get_global_settings") {
+        return Promise.resolve({
+          application: DEFAULT_APPLICATION_SETTINGS,
+          applicationInitialized: true,
+          connection: DEFAULT_GLOBAL_CONNECTION_SETTINGS,
+        });
+      }
+      if (command === "save_global_settings") {
+        const settings = args as {
+          application: typeof DEFAULT_APPLICATION_SETTINGS;
+          connection: typeof DEFAULT_GLOBAL_CONNECTION_SETTINGS;
+        };
+        return Promise.resolve({
+          application: settings.application,
+          applicationInitialized: true,
+          connection: settings.connection,
+        });
       }
       return Promise.resolve();
     });
@@ -220,12 +242,13 @@ describe("App", { timeout: 15_000 }, () => {
     const terminalFontSize = within(settings).getByRole("spinbutton", {
       name: "字号",
     });
-    expect(terminalFontSize).toBeEnabled();
+    await waitFor(() => expect(terminalFontSize).toBeEnabled());
     fireEvent.change(terminalFontSize, { target: { value: "16" } });
+    fireEvent.click(within(settings).getByRole("switch", { name: "光标闪烁" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "保存设置" }));
     await waitFor(() =>
       expect(mocks.terminalProps?.appearance?.fontSize).toBe(16),
     );
-    fireEvent.click(within(settings).getByRole("switch", { name: "光标闪烁" }));
     await waitFor(() =>
       expect(mocks.terminalProps?.appearance?.cursorBlink).toBe(false),
     );
@@ -238,7 +261,10 @@ describe("App", { timeout: 15_000 }, () => {
 
     fireEvent.click(within(settings).getByRole("button", { name: "外观" }));
     fireEvent.click(within(settings).getByRole("radio", { name: "浅色" }));
-    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    fireEvent.click(within(settings).getByRole("button", { name: "保存设置" }));
+    await waitFor(() =>
+      expect(document.documentElement).toHaveAttribute("data-theme", "light"),
+    );
 
     fireEvent.click(within(settings).getByRole("button", { name: "关闭设置" }));
     expect(
@@ -246,7 +272,7 @@ describe("App", { timeout: 15_000 }, () => {
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
     expect(screen.getByRole("region", { name: "设置" })).toBeInTheDocument();
-  });
+  }, 30_000);
 
   it("shows the first-start state separately from an empty connection list", async () => {
     renderApp();

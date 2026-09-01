@@ -504,6 +504,7 @@ describe("TerminalPane", () => {
           cursorStyle: "bar",
           fontFamily: "consolas",
           fontSize: 17,
+          lineHeight: "relaxed",
         }}
         connected
         onData={vi.fn()}
@@ -516,6 +517,7 @@ describe("TerminalPane", () => {
       cursorBlink: false,
       cursorStyle: "bar",
       fontSize: 17,
+      lineHeight: 1.7,
       theme: TERMINAL_THEMES.bxLight,
     });
     expect(terminal.options.fontFamily).toContain("Consolas");

@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 import "@xterm/xterm/css/xterm.css";
 import {
   DEFAULT_TERMINAL_APPEARANCE,
+  terminalLineHeight,
   terminalFontStack,
   terminalTheme,
   type TerminalAppearancePreferences,
@@ -152,7 +153,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         drawBoldTextInBrightColors: true,
         fontFamily: terminalFontStack(initialAppearance.fontFamily),
         fontSize: initialAppearance.fontSize,
-        lineHeight: 1.15,
+        lineHeight: terminalLineHeight(initialAppearance.lineHeight),
         minimumContrastRatio: 1,
         scrollback: 100_000,
         theme: terminalTheme(initialAppearance.colorScheme),
@@ -274,6 +275,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
 
       terminal.options.fontFamily = terminalFontStack(appearance.fontFamily);
       terminal.options.fontSize = appearance.fontSize;
+      terminal.options.lineHeight = terminalLineHeight(appearance.lineHeight);
       terminal.options.cursorBlink = appearance.cursorBlink;
       terminal.options.cursorStyle = appearance.cursorStyle;
       terminal.options.theme = terminalTheme(appearance.colorScheme);

@@ -21,6 +21,7 @@ mod openssh_import;
 mod platform;
 mod private_keys;
 mod session_manager;
+mod settings;
 mod sftp;
 mod terminal;
 mod update;
@@ -120,6 +121,8 @@ fn command_builder() -> Builder<tauri::Wry> {
             connections::reorder_connection_groups,
             connections::set_connection_favorite,
             connections::reorder_connections,
+            settings::get_global_settings,
+            settings::save_global_settings,
             openssh_import::preview_openssh_config,
             openssh_import::import_openssh_connections,
             session_manager::cancel_ssh_connection
@@ -286,6 +289,8 @@ pub fn run() {
             reorder_connection_groups,
             set_connection_favorite,
             reorder_connections,
+            settings::get_global_settings,
+            settings::save_global_settings,
             preview_openssh_config,
             import_openssh_connections
         ])

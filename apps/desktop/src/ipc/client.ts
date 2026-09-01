@@ -3,9 +3,12 @@ import {
   commands,
   type CommandError,
   type CommandErrorCode,
+  type ApplicationSettings,
   type ConnectionConfig,
   type ConnectionGroup,
+  type ConnectionSettings,
   type ConnectionSettingsOverride,
+  type GlobalSettingsSnapshot,
   type HostKeyInfo,
   type KeyboardInteractiveEvent,
   type LocalDirectoryListing,
@@ -126,6 +129,13 @@ export const ipc = {
     unwrapVoid(() => commands.openExternalUrl(url)),
   listConnections: () => unwrap(() => commands.listConnections()),
   getConnection: (id: string) => unwrap(() => commands.getConnection(id)),
+  getGlobalSettings: (): Promise<GlobalSettingsSnapshot> =>
+    unwrap(() => commands.getGlobalSettings()),
+  saveGlobalSettings: (
+    application: ApplicationSettings,
+    connection: ConnectionSettings,
+  ): Promise<GlobalSettingsSnapshot> =>
+    unwrap(() => commands.saveGlobalSettings(application, connection)),
   previewOpenSshConfig: (path: string | null) =>
     unwrap(() => commands.previewOpensshConfig(path)),
   importOpenSshConnections: (request: OpenSshImportRequest) =>

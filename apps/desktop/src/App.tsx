@@ -108,6 +108,7 @@ import { IpcError, ipc } from "./ipc/client";
 import type {
   AppInfo,
   AppMenuAction,
+  ApplicationSettings,
   AuthMethod,
   ConnectionCatalog,
   ConnectionConfig,
@@ -131,6 +132,10 @@ import type {
   TerminalEvent,
 } from "./ipc/bindings";
 import { useUiPreferences } from "./ui/preferenceContext";
+import {
+  initialGlobalSettings,
+  terminalAppearanceFromSettings,
+} from "./ui/applicationSettings";
 
 type ConnectionState =
   | "idle"
@@ -209,8 +214,22 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "bx-ssh.sidebar-collapsed";
 
 export function App() {
   const { t } = useTranslation();
-  const { language, terminalAppearance } = useUiPreferences();
+  const {
+    language,
+    setLanguage,
+    setTerminalAppearance,
+    setThemeMode,
+    terminalAppearance,
+    themeMode,
+  } = useUiPreferences();
   const [appInfo, setAppInfo] = useState(fallbackInfo);
+  const [globalSettings, setGlobalSettings] = useState(() =>
+    initialGlobalSettings(language, themeMode, terminalAppearance),
+  );
+  const [globalSettingsLoading, setGlobalSettingsLoading] = useState(true);
+  const [globalSettingsSaving, setGlobalSettingsSaving] = useState(false);
+  const [globalSettingsError, setGlobalSettingsError] = useState<string>();
+  const [globalSettingsNotice, setGlobalSettingsNotice] = useState<string>();
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(22);
   const [username, setUsername] = useState("");
@@ -277,6 +296,7 @@ export function App() {
     null,
   );
   const [sessionCloseOpen, setSessionCloseOpen] = useState(false);
+  const [reconnectConfirmOpen, setReconnectConfirmOpen] = useState(false);
   const [sessionClosePending, setSessionClosePending] = useState(false);
   const [sessionCloseError, setSessionCloseError] = useState<string | null>(
     null,
@@ -399,6 +419,14 @@ export function App() {
   const localizedErrorText = useCallback(
     (error: unknown) => errorText(error, t),
     [t],
+  );
+  const applyApplicationSettings = useCallback(
+    (settings: ApplicationSettings) => {
+      setLanguage(settings.language);
+      setThemeMode(settings.themeMode);
+      setTerminalAppearance(terminalAppearanceFromSettings(settings));
+    },
+    [setLanguage, setTerminalAppearance, setThemeMode],
   );
 
   const visibleSessionTabs = useMemo(() => {
@@ -613,6 +641,39 @@ export function App() {
     let active = true;
 
     void ipc
+      .getGlobalSettings()
+      .then((snapshot) => {
+        if (!active || !snapshot) return;
+        setGlobalSettingsError(undefined);
+        if (snapshot.applicationInitialized) {
+          setGlobalSettings(snapshot);
+          applyApplicationSettings(snapshot.application);
+        } else {
+          setGlobalSettings((current) => ({
+            ...snapshot,
+            application: current.application,
+          }));
+        }
+        if (!loadedConnectionIdRef.current) {
+          setConnectionSettings(snapshot.connection);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) setGlobalSettingsError(localizedErrorText(error));
+      })
+      .finally(() => {
+        if (active) setGlobalSettingsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [applyApplicationSettings, localizedErrorText]);
+
+  useEffect(() => {
+    let active = true;
+
+    void ipc
       .listConnections()
       .then((catalog) => {
         if (active) {
@@ -701,6 +762,14 @@ export function App() {
     let removeListener: (() => void) | undefined;
 
     void listen<ExitImpact>(EXIT_REQUESTED_EVENT, (event) => {
+      if (!globalSettings.application.confirmClose) {
+        void ipc.confirmAppExit().catch((error) => {
+          setExitImpact(event.payload);
+          setExitPending(false);
+          setExitError(localizedErrorText(error));
+        });
+        return;
+      }
       setExitImpact(event.payload);
       setExitPending(false);
       setExitError(null);
@@ -718,7 +787,7 @@ export function App() {
       disposed = true;
       removeListener?.();
     };
-  }, []);
+  }, [globalSettings.application.confirmClose, localizedErrorText]);
 
   useEffect(() => {
     let disposed = false;
@@ -1210,6 +1279,14 @@ export function App() {
         ? "keyboardInteractive"
         : "password",
     );
+  };
+
+  const requestReconnect = () => {
+    if (globalSettings.application.reconnectConfirmation) {
+      setReconnectConfirmOpen(true);
+      return;
+    }
+    void reconnectSession();
   };
 
   const recordLoadedConnectionSuccess = async () => {
@@ -1861,6 +1938,11 @@ export function App() {
       return;
     }
 
+    if (!globalSettings.application.confirmClose) {
+      void confirmSessionClose();
+      return;
+    }
+
     setSessionCloseError(null);
     setSessionCloseOpen(true);
   };
@@ -2070,8 +2152,15 @@ export function App() {
       return;
     }
     localDirectoryLoadRef.current = true;
-    void navigateLocal(".");
-  }, [localDirectory, navigateLocal, workspaceMode]);
+    void navigateLocal(
+      globalSettings.application.sftpDefaultLocalDirectory ?? ".",
+    );
+  }, [
+    globalSettings.application.sftpDefaultLocalDirectory,
+    localDirectory,
+    navigateLocal,
+    workspaceMode,
+  ]);
 
   const uploadSftp = async (localPath: string, remotePath: string) => {
     const activeSessionId = sftpSessionIdRef.current;
@@ -2153,7 +2242,7 @@ export function App() {
               remotePath,
               isDirectory: source?.kind === "directory",
             };
-            setSftpConflict({
+            const conflictDetails: SftpConflictDetails = {
               direction: "upload",
               sourcePath: source?.path ?? localPath,
               targetPath: target.path,
@@ -2161,7 +2250,13 @@ export function App() {
               sourceModifiedAt: source?.modifiedAt ?? null,
               targetSize: target.size,
               targetModifiedAt: target.modifiedAt,
-            });
+            };
+            const defaultAction = globalSettings.application.sftpConflictAction;
+            if (defaultAction === "ask") {
+              setSftpConflict(conflictDetails);
+            } else {
+              await resolveSftpConflict(defaultAction, false);
+            }
           } catch {
             setErrorMessage(localizedErrorText(error));
           }
@@ -2260,7 +2355,7 @@ export function App() {
               remotePath,
               isDirectory: source?.kind === "directory",
             };
-            setSftpConflict({
+            const conflictDetails: SftpConflictDetails = {
               direction: "download",
               sourcePath: source?.path ?? remotePath,
               targetPath: target.path,
@@ -2268,7 +2363,13 @@ export function App() {
               sourceModifiedAt: source?.modifiedAt ?? null,
               targetSize: target.size,
               targetModifiedAt: target.modifiedAt,
-            });
+            };
+            const defaultAction = globalSettings.application.sftpConflictAction;
+            if (defaultAction === "ask") {
+              setSftpConflict(conflictDetails);
+            } else {
+              await resolveSftpConflict(defaultAction, false);
+            }
           } catch {
             setErrorMessage(localizedErrorText(error));
           }
@@ -2582,7 +2683,10 @@ export function App() {
       const text = await ipc.readClipboardText();
       if (sessionIdRef.current !== activeSessionId || !text) return;
       const details = terminalPasteDetails(text);
-      if (details.requiresConfirmation) {
+      if (
+        details.requiresConfirmation &&
+        globalSettings.application.multilinePasteConfirmation
+      ) {
         setPendingTerminalPaste({ text, ...details });
       } else {
         pasteTerminalText(text);
@@ -2647,6 +2751,14 @@ export function App() {
       setTerminalInteractionError(t("terminal.externalLinkInvalid"));
       return;
     }
+    if (!globalSettings.application.externalLinkConfirmation) {
+      void ipc
+        .openExternalUrl(link.url)
+        .catch((error) =>
+          setTerminalInteractionError(localizedErrorText(error)),
+        );
+      return;
+    }
     setExternalLinkError(null);
     setExternalTerminalLink(link);
   };
@@ -2685,6 +2797,28 @@ export function App() {
     }
     setExitImpact(null);
     setExitError(null);
+  };
+
+  const saveApplicationSettings = async (
+    application: ApplicationSettings,
+    connection: ConnectionSettings,
+  ) => {
+    setGlobalSettingsSaving(true);
+    setGlobalSettingsError(undefined);
+    setGlobalSettingsNotice(undefined);
+    try {
+      const saved = await ipc.saveGlobalSettings(application, connection);
+      setGlobalSettings(saved);
+      applyApplicationSettings(saved.application);
+      if (!loadedConnectionIdRef.current) {
+        setConnectionSettings(saved.connection);
+      }
+      setGlobalSettingsNotice(t("settings.feedback.saved"));
+    } catch (error) {
+      setGlobalSettingsError(localizedErrorText(error));
+    } finally {
+      setGlobalSettingsSaving(false);
+    }
   };
 
   const busy = ["probing", "connecting", "closing"].includes(connectionState);
@@ -2741,7 +2875,9 @@ export function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell${globalSettings.application.compactLayout ? " is-compact" : ""}`}
+    >
       <WindowTitleBar
         appName={appInfo.name}
         connectionLabel={connectionLabel(connectionState, connectionStage, t)}
@@ -3489,7 +3625,7 @@ export function App() {
                 type="primary"
                 icon={<RefreshCw size={15} />}
                 disabled={busy}
-                onClick={() => void reconnectSession()}
+                onClick={requestReconnect}
                 block
               >
                 {t("connection.reconnect")}
@@ -3519,8 +3655,7 @@ export function App() {
             )}
           </div>
 
-          {errorMessage &&
-            !(workspaceMode === "sftp" && sftpRetryTransfer) && (
+          {errorMessage && !(workspaceMode === "sftp" && sftpRetryTransfer) && (
             <FeedbackNotice
               className="connection-error"
               type="error"
@@ -3704,7 +3839,15 @@ export function App() {
                       onOpenLink={requestExternalTerminalLink}
                       onPasteRequest={() => void requestTerminalPaste()}
                       onResize={resizeTerminal}
-                      onSelectionChange={setTerminalSelection}
+                      onSelectionChange={(selection) => {
+                        setTerminalSelection(selection);
+                        if (
+                          selection &&
+                          globalSettings.application.copyOnSelect
+                        ) {
+                          void copyTerminalSelection(selection);
+                        }
+                      }}
                     />
                     {terminalInteractionError && (
                       <FeedbackNotice
@@ -3800,13 +3943,21 @@ export function App() {
         {settingsOpen && (
           <SettingsView
             appName={appInfo.name}
+            errorMessage={globalSettingsError}
             groups={connectionCatalog.groups}
             left={sidebarCollapsed ? 0 : sidebarWidth}
+            loading={globalSettingsLoading}
+            notice={globalSettingsNotice}
+            saving={globalSettingsSaving}
+            settings={globalSettings}
             version={appInfo.version}
             onCheckForUpdates={() =>
               setUpdateRequestId((current) => current + 1)
             }
             onClose={() => setSettingsOpen(false)}
+            onSave={(application, connection) =>
+              void saveApplicationSettings(application, connection)
+            }
           />
         )}
       </div>
@@ -3963,6 +4114,32 @@ export function App() {
           />
         )}
       </AppDialog>
+
+      <AppDialog
+        open={reconnectConfirmOpen}
+        title={t("connection.reconnect")}
+        closable
+        closeOnEscape
+        maskClosable={false}
+        description={t("settings.descriptions.reconnectConfirm")}
+        onClose={() => setReconnectConfirmOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setReconnectConfirmOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="primary"
+              onClick={() => {
+                setReconnectConfirmOpen(false);
+                void reconnectSession();
+              }}
+            >
+              {t("connection.reconnect")}
+            </Button>
+          </>
+        }
+      />
 
       <AppDialog
         open={sessionCloseOpen}
@@ -4223,6 +4400,7 @@ export function App() {
       />
 
       <ConnectionEditorDialog
+        defaultGroupId={globalSettings.application.defaultGroupId}
         errorMessage={connectionEditorError ?? undefined}
         groupOptions={connectionCatalog.groups.map((group) => ({
           label: group.name,

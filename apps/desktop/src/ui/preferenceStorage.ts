@@ -83,6 +83,12 @@ export function readTerminalAppearance(): TerminalAppearancePreferences {
         stored.fontSize <= TERMINAL_FONT_SIZE_MAX
           ? stored.fontSize
           : DEFAULT_TERMINAL_APPEARANCE.fontSize,
+      lineHeight:
+        stored.lineHeight === "compact" ||
+        stored.lineHeight === "standard" ||
+        stored.lineHeight === "relaxed"
+          ? stored.lineHeight
+          : DEFAULT_TERMINAL_APPEARANCE.lineHeight,
     };
   } catch {
     return { ...DEFAULT_TERMINAL_APPEARANCE };

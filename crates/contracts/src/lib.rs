@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 mod connection;
+mod settings;
 
 pub use connection::{
     AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionGroup,
@@ -11,6 +12,12 @@ pub use connection::{
     OpenSshDuplicateStrategy, OpenSshImportError, OpenSshImportItem, OpenSshImportPreview,
     OpenSshImportRequest, OpenSshImportResult, OpenSshImportWarning, DEFAULT_CONNECTION_PORT,
     DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS, MIN_CONNECT_TIMEOUT_SECS,
+};
+pub use settings::{
+    ApplicationLanguage, ApplicationSettings, ApplicationSettingsValidationError,
+    GlobalSettingsSnapshot, LogLevel, TerminalColorScheme, TerminalCursorStyle, TerminalFontFamily,
+    TerminalLineHeight, ThemeMode, CURRENT_APPLICATION_SETTINGS_VERSION, MAX_TERMINAL_FONT_SIZE,
+    MIN_TERMINAL_FONT_SIZE,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]

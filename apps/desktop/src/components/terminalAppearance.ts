@@ -4,6 +4,7 @@ import { MONOSPACE_FONT_STACK } from "../ui/fontStacks";
 export type TerminalFontFamily = "cascadiaMono" | "cascadiaCode" | "consolas";
 export type TerminalCursorStyle = "block" | "underline" | "bar";
 export type TerminalColorScheme = "bxDark" | "solarizedDark" | "bxLight";
+export type TerminalLineHeight = "compact" | "standard" | "relaxed";
 
 export interface TerminalAppearancePreferences {
   colorScheme: TerminalColorScheme;
@@ -11,6 +12,7 @@ export interface TerminalAppearancePreferences {
   cursorStyle: TerminalCursorStyle;
   fontFamily: TerminalFontFamily;
   fontSize: number;
+  lineHeight: TerminalLineHeight;
 }
 
 export const TERMINAL_FONT_SIZE_MIN = 10;
@@ -22,6 +24,7 @@ export const DEFAULT_TERMINAL_APPEARANCE: TerminalAppearancePreferences = {
   cursorStyle: "block",
   fontFamily: "cascadiaMono",
   fontSize: 13,
+  lineHeight: "standard",
 };
 
 export const TERMINAL_THEME: ITheme = {
@@ -113,4 +116,10 @@ export function terminalFontStack(fontFamily: TerminalFontFamily): string {
 
 export function terminalTheme(colorScheme: TerminalColorScheme): ITheme {
   return TERMINAL_THEMES[colorScheme];
+}
+
+export function terminalLineHeight(lineHeight: TerminalLineHeight): number {
+  if (lineHeight === "compact") return 1.3;
+  if (lineHeight === "relaxed") return 1.7;
+  return 1.5;
 }

@@ -40,6 +40,7 @@ export interface ConnectionEditorValue {
 }
 
 export interface ConnectionEditorDialogProps {
+  defaultGroupId?: string | null;
   errorMessage?: string;
   groupOptions?: ConnectionGroupOption[];
   initialValue?: ConnectionEditorValue;
@@ -94,6 +95,7 @@ const SETTINGS_FIELDS: Array<keyof FormValues> = [
 ];
 
 export function ConnectionEditorDialog({
+  defaultGroupId,
   errorMessage,
   groupOptions = [],
   initialValue,
@@ -216,7 +218,7 @@ export function ConnectionEditorDialog({
     handleSubmit,
     reset,
   } = useForm<FormValues>({
-    defaultValues: toFormValues(initialValue),
+    defaultValues: toFormValues(initialValue, defaultGroupId),
     resolver: zodResolver(schema),
     shouldFocusError: false,
     shouldUnregister: false,
@@ -227,11 +229,11 @@ export function ConnectionEditorDialog({
       const nextDraftId = initialValue?.config.id ?? createConnectionId();
       setDraftId(nextDraftId);
       setEditingSource(initialValue);
-      reset(toFormValues(initialValue));
+      reset(toFormValues(initialValue, defaultGroupId));
       setActiveTab("basic");
     }
     wasOpenRef.current = open;
-  }, [initialValue, open, reset]);
+  }, [defaultGroupId, initialValue, open, reset]);
 
   const authMethod = useWatch({ control, name: "authMethod" });
   const credentialMode = useWatch({ control, name: "credentialMode" });
@@ -891,7 +893,10 @@ function TabLabel({
   );
 }
 
-function toFormValues(value: ConnectionEditorValue | undefined): FormValues {
+function toFormValues(
+  value: ConnectionEditorValue | undefined,
+  defaultGroupId?: string | null,
+): FormValues {
   return {
     authMethod: value?.config.authMethod ?? "password",
     color: value?.config.color ?? "",
@@ -899,7 +904,7 @@ function toFormValues(value: ConnectionEditorValue | undefined): FormValues {
     credentialMode:
       value?.credentialMode ?? (value?.config.credentialRef ? "vault" : "ask"),
     credentialRef: value?.config.credentialRef ?? "",
-    groupId: value?.config.groupId ?? "",
+    groupId: value?.config.groupId ?? defaultGroupId ?? "",
     host: value?.config.host ?? "",
     keepAliveSecs: value?.settings.keepAliveSecs ?? null,
     keyReferenceId: value?.config.keyReferenceId ?? "",

@@ -393,6 +393,22 @@ async reorderConnections(groupId: string | null, ids: string[]) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
+async getGlobalSettings() : Promise<Result<GlobalSettingsSnapshot, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_global_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveGlobalSettings(application: ApplicationSettings, connection: ConnectionSettings) : Promise<Result<GlobalSettingsSnapshot, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_global_settings", { application, connection }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewOpensshConfig(path: string | null) : Promise<Result<OpenSshImportPreview, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_openssh_config", { path }) };
@@ -431,6 +447,8 @@ async cancelSshConnection(attemptId: string) : Promise<Result<boolean, CommandEr
 
 export type AppInfo = { name: string; version: string }
 export type AppMenuAction = "show-terminal" | "show-sftp" | "check-for-updates"
+export type ApplicationLanguage = "zh-CN" | "en-US"
+export type ApplicationSettings = { version: number; language: ApplicationLanguage; themeMode: ThemeMode; confirmClose: boolean; defaultGroupId: string | null; compactLayout: boolean; terminalFontFamily: TerminalFontFamily; terminalFontSize: number; terminalLineHeight: TerminalLineHeight; terminalCursorStyle: TerminalCursorStyle; terminalCursorBlink: boolean; terminalColorScheme: TerminalColorScheme; multilinePasteConfirmation: boolean; copyOnSelect: boolean; reconnectConfirmation: boolean; sftpDefaultLocalDirectory: string | null; sftpConflictAction: SftpConflictAction; externalLinkConfirmation: boolean; excludeCredentialsFromExport: boolean; autoCheckUpdates: boolean; logLevel: LogLevel }
 export type AuthMethod = "password" | "privateKey" | "keyboardInteractive"
 export type CommandError = { code: CommandErrorCode; message: string; stage: SshConnectionStage | null }
 export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_path" | "local_path_not_found" | "local_path_not_directory" | "local_path_permission_denied" | "local_path_io_error" | "invalid_local_file" | "invalid_local_directory" | "invalid_remote_directory" | "unsupported_transfer_entry" | "local_target_exists" | "remote_target_exists" | "remote_directory_not_empty" | "invalid_remote_permissions" | "transfer_integrity_mismatch" | "transfer_cancelled" | "transfer_cleanup_failed" | "connect_timeout" | "dns_lookup_timeout" | "dns_lookup_failed" | "tcp_connect_timeout" | "connection_refused" | "network_unreachable" | "tcp_connect_failed" | "handshake_timeout" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "invalid_transfer_id" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "keep_alive_failed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "terminal_output_unavailable" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "credential_store_locked" | "credential_store_unavailable" | "credential_store_failed" | "invalid_credential" | "clipboard_unavailable" | "invalid_external_url" | "external_link_open_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
@@ -445,6 +463,7 @@ export type ConnectionSettingsOverride = { connectTimeoutSecs: number | null; ke
 export type ConnectionSettingsScope = { kind: "global" } | { kind: "group"; groupId: string } | { kind: "connection"; connectionId: string }
 export type ConnectionSettingsSnapshot = { layers: ConnectionSettingsLayers; resolved: ConnectionSettings }
 export type ExitImpact = { activeSessions: number; activeTransfers: number }
+export type GlobalSettingsSnapshot = { application: ApplicationSettings; applicationInitialized: boolean; connection: ConnectionSettings }
 export type HostKeyInfo = { algorithm: string; fingerprintSha256: string }
 export type KeyboardInteractiveEvent = { type: "prompt"; attemptId: string; name: string; instructions: string; prompts: KeyboardInteractivePromptItem[] }
 export type KeyboardInteractivePromptItem = { prompt: string; echo: boolean }
@@ -452,6 +471,7 @@ export type LocalDirectoryListing = { path: string; parentPath: string | null; e
 export type LocalFileEntry = { name: string; path: string; kind: LocalFileKind; size: number; modifiedAt: number | null; readonly: boolean; hidden: boolean }
 export type LocalFileKind = "directory" | "file" | "symlink" | "other"
 export type LocalPathRequest = { path: string }
+export type LogLevel = "error" | "warn" | "info" | "debug"
 export type OpenSshDuplicateStrategy = "skip" | "overwrite"
 export type OpenSshImportError = "invalidPort" | "missingHost" | "missingUsername"
 export type OpenSshImportItem = { sourceId: string; alias: string; host: string; port: number; username: string; identityFile: string | null; duplicateConnectionId: string | null; duplicateConnectionName: string | null; errors: OpenSshImportError[]; warnings: OpenSshImportWarning[] }
@@ -475,7 +495,12 @@ export type StartSftpRequest = { attemptId: string; host: string; port: number; 
 export type StartSftpResponse = { sessionId: string; hostKey: HostKeyInfo; directory: RemoteDirectoryListing }
 export type StartShellRequest = { attemptId: string; host: string; port: number; username: string; password: string; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
 export type StartShellResponse = { sessionId: string; hostKey: HostKeyInfo }
+export type TerminalColorScheme = "bxDark" | "solarizedDark" | "bxLight"
+export type TerminalCursorStyle = "block" | "underline" | "bar"
 export type TerminalEvent = { type: "exited"; code: number | null; signal: string | null } | { type: "error"; code: CommandErrorCode; message: string }
+export type TerminalFontFamily = "cascadiaMono" | "cascadiaCode" | "consolas"
+export type TerminalLineHeight = "compact" | "standard" | "relaxed"
+export type ThemeMode = "light" | "dark" | "system"
 export type TransferBatchSummary = { files: number; directories: number; bytes: number; elapsedMs: number; bytesPerSecond: number }
 export type TransferSummary = { bytes: number; elapsedMs: number; bytesPerSecond: number; sha256: string }
 export type TrustHostFingerprintRequest = { host: string; port: number; hostKey: HostKeyInfo }

@@ -756,6 +756,25 @@ select {
   border-radius: 4px;
 }
 
+.app-shell.is-compact .connection-catalog-item {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.app-shell.is-compact .connection-catalog-color {
+  height: 22px;
+}
+
+.app-shell.is-compact .connection-tree-group-heading {
+  min-height: 21px;
+}
+
+.app-shell.is-compact .settings-row {
+  min-height: 54px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
 .connection-catalog-item[tabindex="0"],
 .connection-recent-item[tabindex="0"] {
   cursor: pointer;
@@ -2363,6 +2382,33 @@ select {
   font-weight: 650;
 }
 
+.settings-footer {
+  display: flex;
+  min-height: 50px;
+  flex: 0 0 50px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 14px 7px 200px;
+  background: var(--surface-subtle);
+  border-top: 1px solid var(--border);
+}
+
+.settings-footer-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.settings-save-state {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-layout {
   display: flex;
   min-height: 0;
@@ -2415,7 +2461,7 @@ select {
 
 .settings-content-inner {
   width: min(100%, 860px);
-  padding: 22px 30px 48px;
+  padding: 22px 30px 30px;
 }
 
 .settings-content-inner > h2 {
@@ -2587,6 +2633,11 @@ select {
   color: var(--text);
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
+}
+
+.settings-theme-option:disabled {
+  cursor: default;
+  opacity: 0.65;
 }
 
 .settings-theme-preview {
@@ -2838,6 +2889,10 @@ select {
   .settings-content-inner {
     padding-right: 18px;
     padding-left: 18px;
+  }
+
+  .settings-footer {
+    padding-left: 168px;
   }
 
   .settings-row {

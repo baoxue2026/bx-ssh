@@ -2,9 +2,10 @@ use std::collections::HashSet;
 use std::fmt;
 
 use bx_contracts::{
-    AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionGroup,
-    ConnectionListItem, ConnectionSettingsLayers, ConnectionSettingsOverride,
-    ConnectionSettingsScope, ConnectionSettingsSnapshot, HostKeyInfo,
+    ApplicationSettings, AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails,
+    ConnectionGroup, ConnectionListItem, ConnectionSettings, ConnectionSettingsLayers,
+    ConnectionSettingsOverride, ConnectionSettingsScope, ConnectionSettingsSnapshot,
+    GlobalSettingsSnapshot, HostKeyInfo,
 };
 use rusqlite::{params, OptionalExtension, Row, Transaction};
 
@@ -12,6 +13,7 @@ use crate::{EncryptedDatabase, PersistenceError, Result, APPLICATION_MIGRATIONS}
 
 const CONNECT_TIMEOUT_KEY: &str = "connection.connectTimeoutSecs";
 const KEEP_ALIVE_KEY: &str = "connection.keepAliveSecs";
+const APPLICATION_SETTINGS_KEY: &str = "application.settings";
 
 const CONNECTION_LIST_SQL: &str = "
     SELECT c.id, c.group_id, c.name, c.host, c.port, c.username, c.notes, c.color,
@@ -427,6 +429,97 @@ impl ConnectionRepository {
         transaction
             .commit()
             .map_err(|source| database_operation("commit a settings transaction", source))
+    }
+
+    pub fn get_global_settings(&self) -> Result<GlobalSettingsSnapshot> {
+        let (mut application, application_initialized) =
+            read_application_settings(self.database.connection())?;
+        if let Some(group_id) = application.default_group_id.as_deref() {
+            let exists = self
+                .database
+                .connection()
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM connection_groups WHERE id = ?1)",
+                    [group_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|source| database_operation("validate the default group", source))?;
+            if !exists {
+                application.default_group_id = None;
+            }
+        }
+        let layers = ConnectionSettingsLayers {
+            global: self.load_setting_override(SettingOwner::Global)?,
+            group: None,
+            connection: None,
+        };
+        let connection =
+            layers
+                .resolve_checked()
+                .map_err(|_| PersistenceError::InvalidStoredRecord {
+                    entity: "connection setting",
+                })?;
+        Ok(GlobalSettingsSnapshot {
+            application,
+            application_initialized,
+            connection,
+        })
+    }
+
+    pub fn save_global_settings(
+        &mut self,
+        application: &ApplicationSettings,
+        connection: ConnectionSettings,
+        now_ms: u64,
+    ) -> Result<GlobalSettingsSnapshot> {
+        application
+            .validate()
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
+        connection
+            .validate()
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
+        if let Some(group_id) = application.default_group_id.as_deref() {
+            let exists = self
+                .database
+                .connection()
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM connection_groups WHERE id = ?1)",
+                    [group_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|source| database_operation("validate the default group", source))?;
+            if !exists {
+                return Err(PersistenceError::InvalidConnectionConfiguration);
+            }
+        }
+        let serialized = serde_json::to_string(application)
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
+        let now = timestamp_to_i64(now_ms)?;
+        let transaction = self
+            .database
+            .transaction()
+            .map_err(|source| database_operation("start a global settings transaction", source))?;
+        write_global_json_setting(&transaction, APPLICATION_SETTINGS_KEY, &serialized, now)
+            .map_err(|source| database_operation("save application settings", source))?;
+        apply_settings(
+            &transaction,
+            SettingOwner::Global,
+            ConnectionSettingsOverride {
+                connect_timeout_secs: Some(connection.connect_timeout_secs),
+                keep_alive_secs: Some(connection.keep_alive_secs),
+            },
+            now,
+        )
+        .map_err(|source| database_operation("save global connection settings", source))?;
+        transaction
+            .commit()
+            .map_err(|source| database_operation("commit a global settings transaction", source))?;
+
+        Ok(GlobalSettingsSnapshot {
+            application: application.clone(),
+            application_initialized: true,
+            connection,
+        })
     }
 
     pub fn delete_connection(&mut self, id: &str, now_ms: u64) -> Result<bool> {
@@ -885,6 +978,51 @@ fn write_setting(
     .map(|_| ())
 }
 
+fn write_global_json_setting(
+    transaction: &Transaction<'_>,
+    key: &str,
+    value_json: &str,
+    now: i64,
+) -> rusqlite::Result<()> {
+    transaction
+        .execute(
+            "INSERT INTO settings (key, value_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?3)
+             ON CONFLICT(key) WHERE group_id IS NULL AND connection_id IS NULL
+             DO UPDATE SET value_json = excluded.value_json,
+                           updated_at = excluded.updated_at,
+                           revision = settings.revision + 1",
+            params![key, value_json, now],
+        )
+        .map(|_| ())
+}
+
+fn read_application_settings(
+    connection: &rusqlite::Connection,
+) -> Result<(ApplicationSettings, bool)> {
+    let value_json = connection
+        .query_row(
+            "SELECT value_json FROM settings
+             WHERE key = ?1 AND group_id IS NULL AND connection_id IS NULL",
+            [APPLICATION_SETTINGS_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|source| database_operation("read application settings", source))?;
+    let Some(value_json) = value_json else {
+        return Ok((ApplicationSettings::default(), false));
+    };
+    let settings = serde_json::from_str::<ApplicationSettings>(&value_json)
+        .map_err(|_| PersistenceError::InvalidStoredRecord {
+            entity: "application setting",
+        })?
+        .migrate()
+        .map_err(|_| PersistenceError::InvalidStoredRecord {
+            entity: "application setting",
+        })?;
+    Ok((settings, true))
+}
+
 fn read_setting_rows<P>(
     statement: rusqlite::Result<rusqlite::Statement<'_>>,
     parameters: P,
@@ -1030,7 +1168,8 @@ mod tests {
     use std::ops::{Deref, DerefMut};
 
     use bx_contracts::{
-        ConnectionSettings, HostKeyInfo, DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS,
+        ConnectionSettings, HostKeyInfo, LogLevel, ThemeMode, DEFAULT_CONNECT_TIMEOUT_SECS,
+        DEFAULT_KEEP_ALIVE_SECS,
     };
     use tempfile::{tempdir, TempDir};
 
@@ -1425,6 +1564,89 @@ mod tests {
                 entity: "connection setting"
             })
         ));
+    }
+
+    #[test]
+    fn saves_and_loads_versioned_global_settings_atomically() {
+        let mut repository = test_repository();
+        let initial = repository.get_global_settings().unwrap();
+        assert!(!initial.application_initialized);
+        assert_eq!(initial.application, ApplicationSettings::default());
+        assert_eq!(initial.connection, ConnectionSettings::default());
+
+        repository
+            .save_group(&test_group("group-1", "Production", "#1677FF", 0), 1000)
+            .unwrap();
+        let application = ApplicationSettings {
+            theme_mode: ThemeMode::Light,
+            default_group_id: Some("group-1".to_owned()),
+            terminal_font_size: 16,
+            log_level: LogLevel::Debug,
+            ..ApplicationSettings::default()
+        };
+        let connection = ConnectionSettings {
+            connect_timeout_secs: 20,
+            keep_alive_secs: 45,
+        };
+
+        let saved = repository
+            .save_global_settings(&application, connection, 1001)
+            .unwrap();
+        assert!(saved.application_initialized);
+        assert_eq!(saved.application, application);
+        assert_eq!(saved.connection, connection);
+        assert_eq!(repository.get_global_settings().unwrap(), saved);
+    }
+
+    #[test]
+    fn migrates_older_application_settings_and_clears_a_stale_default_group() {
+        let repository = test_repository();
+        repository
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO settings (key, value_json, created_at, updated_at)
+                 VALUES (?1, ?2, 1000, 1000)",
+                params![
+                    APPLICATION_SETTINGS_KEY,
+                    r#"{"version":0,"themeMode":"light","defaultGroupId":"deleted-group"}"#
+                ],
+            )
+            .unwrap();
+
+        let settings = repository.get_global_settings().unwrap();
+        assert!(settings.application_initialized);
+        assert_eq!(settings.application.theme_mode, ThemeMode::Light);
+        assert_eq!(settings.application.default_group_id, None);
+        assert_eq!(settings.application.log_level, LogLevel::Info);
+    }
+
+    #[test]
+    fn rejects_an_unknown_default_group_without_partial_global_settings() {
+        let mut repository = test_repository();
+        let application = ApplicationSettings {
+            default_group_id: Some("missing-group".to_owned()),
+            ..ApplicationSettings::default()
+        };
+
+        assert!(matches!(
+            repository.save_global_settings(
+                &application,
+                ConnectionSettings {
+                    connect_timeout_secs: 20,
+                    keep_alive_secs: 45,
+                },
+                1000,
+            ),
+            Err(PersistenceError::InvalidConnectionConfiguration)
+        ));
+
+        let setting_count: i64 = repository
+            .database
+            .connection()
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(setting_count, 0);
     }
 
     #[test]
