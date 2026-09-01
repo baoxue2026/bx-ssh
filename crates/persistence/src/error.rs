@@ -28,6 +28,10 @@ pub enum PersistenceError {
         #[source]
         source: rusqlite::Error,
     },
+    #[error("failed to create the pre-migration database backup")]
+    MigrationBackupFailed(#[source] rusqlite::Error),
+    #[error("failed to publish the pre-migration database backup")]
+    MigrationBackupIoFailed(#[source] std::io::Error),
     #[error("database migrations must be strictly ordered by version")]
     InvalidMigrationOrder,
     #[error("database schema version {actual} is newer than supported version {supported}")]

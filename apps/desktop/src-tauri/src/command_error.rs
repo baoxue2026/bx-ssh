@@ -184,7 +184,10 @@ impl From<PersistenceError> for CommandError {
             PersistenceError::DatabaseOperation { .. }
             | PersistenceError::InvalidConnectionConfiguration
             | PersistenceError::InvalidStoredRecord { .. }
-            | PersistenceError::InvalidTimestamp => CommandErrorCode::DatabaseQueryFailed,
+            | PersistenceError::InvalidTimestamp
+            | PersistenceError::MigrationFailed { .. }
+            | PersistenceError::MigrationBackupFailed(_)
+            | PersistenceError::MigrationBackupIoFailed(_) => CommandErrorCode::DatabaseQueryFailed,
             PersistenceError::InvalidCredential => CommandErrorCode::InvalidCredential,
             PersistenceError::CredentialStoreLocked => CommandErrorCode::CredentialStoreLocked,
             PersistenceError::CredentialStoreUnavailable => {
@@ -262,7 +265,11 @@ mod tests {
 
         let locked = CommandError::from(bx_persistence::PersistenceError::CredentialStoreLocked);
         let invalid = CommandError::from(bx_persistence::PersistenceError::InvalidCredential);
+        let backup = CommandError::from(bx_persistence::PersistenceError::MigrationBackupIoFailed(
+            std::io::Error::other("test backup failure"),
+        ));
         assert_eq!(locked.code, CommandErrorCode::CredentialStoreLocked);
         assert_eq!(invalid.code, CommandErrorCode::InvalidCredential);
+        assert_eq!(backup.code, CommandErrorCode::DatabaseQueryFailed);
     }
 }

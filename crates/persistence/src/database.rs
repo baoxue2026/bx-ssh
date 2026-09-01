@@ -1,7 +1,9 @@
 use std::fmt;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use rusqlite::{ffi, Connection, Transaction};
+use rusqlite::{backup::Backup, ffi, Connection, Transaction};
 use secrecy::ExposeSecret;
 
 use crate::key::DATA_KEY_LEN;
@@ -25,6 +27,8 @@ impl Migration {
 
 pub struct EncryptedDatabase {
     connection: Connection,
+    path: PathBuf,
+    key: DataKey,
 }
 
 impl fmt::Debug for EncryptedDatabase {
@@ -35,7 +39,8 @@ impl fmt::Debug for EncryptedDatabase {
 
 impl EncryptedDatabase {
     pub fn open(path: impl AsRef<Path>, key: &DataKey) -> Result<Self> {
-        let connection = Connection::open(path).map_err(PersistenceError::DatabaseOpen)?;
+        let path = path.as_ref().to_owned();
+        let connection = Connection::open(&path).map_err(PersistenceError::DatabaseOpen)?;
         apply_raw_key(&connection, key)?;
 
         let cipher_version = connection
@@ -60,7 +65,11 @@ impl EncryptedDatabase {
             .pragma_update(None, "foreign_keys", "ON")
             .map_err(PersistenceError::DatabaseUnlock)?;
 
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            path,
+            key: DataKey::from_bytes(key.expose_secret())?,
+        })
     }
 
     pub fn open_or_initialize(
@@ -118,6 +127,13 @@ impl EncryptedDatabase {
             return Ok(());
         }
 
+        // A pre-upgrade copy gives operators a recoverable encrypted artifact if a
+        // future migration or process failure leaves the database in doubt. The
+        // initial schema has no user data to protect, so it does not need a backup.
+        if current_version > 0 {
+            self.create_migration_backup(current_version)?;
+        }
+
         let transaction = self
             .connection
             .transaction()
@@ -149,12 +165,56 @@ impl EncryptedDatabase {
             .map_err(PersistenceError::DatabaseOpen)
     }
 
+    /// Returns the recovery path for a database schema version.
+    pub fn migration_backup_path(&self, version: u32) -> PathBuf {
+        let mut path = self.path.as_os_str().to_owned();
+        path.push(format!(".migration-backup-v{version}"));
+        PathBuf::from(path)
+    }
+
     pub(crate) fn connection(&self) -> &Connection {
         &self.connection
     }
 
     pub(crate) fn transaction(&mut self) -> rusqlite::Result<Transaction<'_>> {
         self.connection.transaction()
+    }
+
+    fn create_migration_backup(&self, version: u32) -> Result<()> {
+        let backup_path = self.migration_backup_path(version);
+        if backup_path.exists() {
+            return Ok(());
+        }
+
+        let mut temporary_path = backup_path.as_os_str().to_owned();
+        temporary_path.push(".tmp");
+        let temporary_path = PathBuf::from(temporary_path);
+        if temporary_path.exists() {
+            fs::remove_file(&temporary_path).map_err(PersistenceError::MigrationBackupIoFailed)?;
+        }
+
+        let backup_result = (|| {
+            let mut destination = Connection::open(&temporary_path)
+                .map_err(PersistenceError::MigrationBackupFailed)?;
+            apply_raw_key(&destination, &self.key)?;
+            let backup = Backup::new(&self.connection, &mut destination)
+                .map_err(PersistenceError::MigrationBackupFailed)?;
+            backup
+                .run_to_completion(100, Duration::ZERO, None)
+                .map_err(PersistenceError::MigrationBackupFailed)
+        })();
+        if let Err(error) = backup_result {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(error);
+        }
+
+        match fs::rename(&temporary_path, &backup_path) {
+            Ok(()) => Ok(()),
+            Err(source) => {
+                let _ = fs::remove_file(&temporary_path);
+                Err(PersistenceError::MigrationBackupIoFailed(source))
+            }
+        }
     }
 }
 
@@ -327,6 +387,71 @@ mod tests {
             )
             .unwrap();
         assert_eq!(table_count, 0);
+    }
+
+    #[test]
+    fn failed_upgrade_keeps_old_data_and_a_recovery_backup() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.db");
+        let key = DataKey::generate().unwrap();
+        let mut database = EncryptedDatabase::open(&path, &key).unwrap();
+        database
+            .apply_migrations(&[Migration::new(
+                1,
+                "CREATE TABLE stable (value TEXT NOT NULL);\
+                 INSERT INTO stable VALUES ('migration-canary');",
+            )])
+            .unwrap();
+
+        let error = database
+            .apply_migrations(&[
+                Migration::new(
+                    1,
+                    "CREATE TABLE stable (value TEXT NOT NULL);\
+                     INSERT INTO stable VALUES ('migration-canary');",
+                ),
+                Migration::new(
+                    2,
+                    "CREATE TABLE should_rollback (id INTEGER); THIS IS NOT SQL;",
+                ),
+            ])
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PersistenceError::MigrationFailed { version: 2, .. }
+        ));
+
+        let value: String = database
+            .connection
+            .query_row("SELECT value FROM stable", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "migration-canary");
+
+        let backup_path = database.migration_backup_path(1);
+        assert!(backup_path.is_file());
+        let backup = EncryptedDatabase::open(&backup_path, &key).unwrap();
+        assert_eq!(backup.user_version().unwrap(), 1);
+        let backup_value: String = backup
+            .connection
+            .query_row("SELECT value FROM stable", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(backup_value, "migration-canary");
+        let backup_bytes = fs::read(backup_path).unwrap();
+        assert!(!contains(&backup_bytes, b"SQLite format 3"));
+        assert!(!contains(&backup_bytes, b"migration-canary"));
+    }
+
+    #[test]
+    fn initial_schema_failure_does_not_leave_a_backup_artifact() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.db");
+        let key = DataKey::generate().unwrap();
+        let mut database = EncryptedDatabase::open(&path, &key).unwrap();
+
+        assert!(database
+            .apply_migrations(&[Migration::new(1, "THIS IS NOT SQL;")])
+            .is_err());
+        assert!(!database.migration_backup_path(0).exists());
     }
 
     #[test]
