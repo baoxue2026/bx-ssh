@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bx_contracts::{
     ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionGroup,
-    ConnectionSettingsOverride,
+    ConnectionSettingsOverride, SensitiveString,
 };
 use bx_persistence::{
     ConnectionRepository, EncryptedDatabase, PersistenceError, SecretCredentialStore,
@@ -73,24 +73,24 @@ pub(crate) async fn save_connection(
 #[specta::specta]
 pub(crate) async fn get_password_credential(
     credential_ref: String,
-) -> Result<Option<String>, CommandError> {
+) -> Result<Option<SensitiveString>, CommandError> {
     let store = password_store(&credential_ref)?;
     Ok(store
         .load_secret()?
-        .map(|secret| secret.expose_secret().to_owned()))
+        .map(|secret| SensitiveString::from(secret.expose_secret().to_owned())))
 }
 
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn save_password_credential(
     credential_ref: String,
-    password: String,
+    password: SensitiveString,
 ) -> Result<(), CommandError> {
-    if password.is_empty() {
+    if password.as_str().is_empty() {
         return Err(PersistenceError::InvalidCredential.into());
     }
     let store = password_store(&credential_ref)?;
-    store.save_secret(&SecretString::from(password))?;
+    store.save_secret(&SecretString::from(password.into_inner()))?;
     Ok(())
 }
 

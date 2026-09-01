@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 mod connection;
+mod sensitive;
 mod settings;
 
 pub use connection::{
@@ -13,6 +14,7 @@ pub use connection::{
     OpenSshImportRequest, OpenSshImportResult, OpenSshImportWarning, DEFAULT_CONNECTION_PORT,
     DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS, MIN_CONNECT_TIMEOUT_SECS,
 };
+pub use sensitive::SensitiveString;
 pub use settings::{
     ApplicationLanguage, ApplicationSettings, ApplicationSettingsValidationError,
     GlobalSettingsSnapshot, LogLevel, TerminalColorScheme, TerminalCursorStyle, TerminalFontFamily,

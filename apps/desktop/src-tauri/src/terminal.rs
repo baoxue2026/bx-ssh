@@ -3,7 +3,7 @@ use std::future::pending;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bx_contracts::{ConnectionSettings, HostKeyInfo, SshConnectionStage};
+use bx_contracts::{ConnectionSettings, HostKeyInfo, SensitiveString, SshConnectionStage};
 use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
     authenticate_keyboard_interactive_with_progress, authenticate_password_with_progress,
@@ -40,7 +40,7 @@ pub(crate) struct TerminalSessionManager {
 
 struct PendingKeyboardPrompt {
     owner: String,
-    sender: mpsc::Sender<Vec<String>>,
+    sender: mpsc::Sender<Vec<SensitiveString>>,
 }
 
 enum SessionCommand {
@@ -85,7 +85,7 @@ pub(crate) struct StartShellRequest {
     host: String,
     port: u16,
     username: String,
-    password: String,
+    password: SensitiveString,
     expected_fingerprint: String,
     settings: ConnectionSettings,
     columns: u32,
@@ -280,7 +280,7 @@ pub(crate) async fn start_password_shell(
         &endpoint,
         &request.username,
         &request.expected_fingerprint,
-        &request.password,
+        request.password.as_str(),
         &cancellation,
         |stage| {
             if let Ok(event) =
@@ -441,7 +441,9 @@ pub(crate) async fn start_keyboard_interactive_shell(
                 tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
-                    response = receiver.recv() => response.ok_or(SshError::ConnectionCancelled),
+                    response = receiver.recv() => response
+                        .map(|answers| answers.into_iter().map(SensitiveString::into_inner).collect())
+                        .ok_or(SshError::ConnectionCancelled),
                 }
             }
         },
@@ -553,7 +555,7 @@ pub(crate) struct StartPrivateKeyShellRequest {
     port: u16,
     username: String,
     key_reference_id: String,
-    passphrase: Option<String>,
+    passphrase: Option<SensitiveString>,
     expected_fingerprint: String,
     settings: ConnectionSettings,
     columns: u32,
@@ -787,7 +789,7 @@ pub(crate) async fn respond_keyboard_interactive(
     window: WebviewWindow,
     manager: State<'_, TerminalSessionManager>,
     attempt_id: String,
-    responses: Vec<String>,
+    responses: Vec<SensitiveString>,
 ) -> Result<(), CommandError> {
     manager
         .respond_keyboard_prompt(window.label(), &attempt_id, responses)
@@ -807,7 +809,7 @@ impl TerminalSessionManager {
         &self,
         owner: &str,
         attempt_id: &str,
-        sender: mpsc::Sender<Vec<String>>,
+        sender: mpsc::Sender<Vec<SensitiveString>>,
     ) -> Result<(), CommandError> {
         let mut prompts = self.keyboard_prompts.lock().await;
         if prompts.contains_key(attempt_id) {
@@ -840,7 +842,7 @@ impl TerminalSessionManager {
         &self,
         owner: &str,
         attempt_id: &str,
-        responses: Vec<String>,
+        responses: Vec<SensitiveString>,
     ) -> Result<(), CommandError> {
         let sender = self
             .keyboard_prompts
@@ -1193,8 +1195,8 @@ mod tests {
     use std::sync::{Arc, Mutex as StdMutex};
 
     use super::{
-        send_output_channel_error, send_terminal_completion, SessionCommand, TerminalOutputFlow,
-        TerminalSessionManager, OUTPUT_ACK_TIMEOUT, OUTPUT_BATCH_MAX_BYTES,
+        send_output_channel_error, send_terminal_completion, SensitiveString, SessionCommand,
+        TerminalOutputFlow, TerminalSessionManager, OUTPUT_ACK_TIMEOUT, OUTPUT_BATCH_MAX_BYTES,
         OUTPUT_MAX_IN_FLIGHT_BATCHES,
     };
     use crate::command_error::CommandErrorCode;
@@ -1222,16 +1224,19 @@ mod tests {
             .unwrap();
 
         let error = manager
-            .respond_keyboard_prompt("other", "attempt-1", vec!["secret".to_owned()])
+            .respond_keyboard_prompt("other", "attempt-1", vec![SensitiveString::from("secret")])
             .await
             .unwrap_err();
         assert_eq!(error.code, CommandErrorCode::SessionNotFound);
 
         manager
-            .respond_keyboard_prompt("main", "attempt-1", vec!["secret".to_owned()])
+            .respond_keyboard_prompt("main", "attempt-1", vec![SensitiveString::from("secret")])
             .await
             .unwrap();
-        assert_eq!(receiver.recv().await, Some(vec!["secret".to_owned()]));
+        let received = receiver.recv().await.unwrap();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].as_str(), "secret");
+        assert_eq!(format!("{:?}", received), "[[REDACTED]]");
 
         manager.remove_keyboard_prompt("main", "attempt-1").await;
         assert!(manager
@@ -1465,7 +1470,7 @@ mod tests {
         manager.close_all().await;
 
         assert!(manager
-            .respond_keyboard_prompt("main", "attempt-1", vec!["secret".to_owned()])
+            .respond_keyboard_prompt("main", "attempt-1", vec![SensitiveString::from("secret")])
             .await
             .is_err());
     }

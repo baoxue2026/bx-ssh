@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bx_contracts::{
-    ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, RemoteFileEntry, SftpConflictAction,
-    SftpTransferDirection, SftpTransferProgress, SshConnectionStage, TransferBatchSummary,
-    TransferSummary,
+    ConnectionSettings, HostKeyInfo, RemoteDirectoryListing, RemoteFileEntry, SensitiveString,
+    SftpConflictAction, SftpTransferDirection, SftpTransferProgress, SshConnectionStage,
+    TransferBatchSummary, TransferSummary,
 };
 use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
@@ -51,7 +51,7 @@ pub(crate) struct StartSftpRequest {
     host: String,
     port: u16,
     username: String,
-    password: String,
+    password: SensitiveString,
     expected_fingerprint: String,
     settings: ConnectionSettings,
     initial_path: Option<String>,
@@ -86,7 +86,7 @@ pub(crate) async fn start_password_sftp(
         &endpoint,
         &request.username,
         &request.expected_fingerprint,
-        &request.password,
+        request.password.as_str(),
         &cancellation,
         |stage| {
             if let Ok(event) =
@@ -200,7 +200,7 @@ pub(crate) struct StartPrivateKeySftpRequest {
     port: u16,
     username: String,
     key_reference_id: String,
-    passphrase: Option<String>,
+    passphrase: Option<SensitiveString>,
     expected_fingerprint: String,
     settings: ConnectionSettings,
     initial_path: Option<String>,

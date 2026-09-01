@@ -1,5 +1,6 @@
 use std::fs;
 
+use bx_contracts::SensitiveString;
 use bx_persistence::{
     CredentialStore, EncryptedPrivateKey, ExposeSecret, SecretCredentialStore, SecretString,
     SystemCredentialStore,
@@ -21,7 +22,7 @@ pub(crate) async fn resolve_private_key(
     app: &AppHandle,
     state: &State<'_, ConnectionRepositoryState>,
     id: &str,
-    supplied_passphrase: Option<String>,
+    supplied_passphrase: Option<SensitiveString>,
 ) -> Result<ResolvedPrivateKey, CommandError> {
     let data_directory = app_data_directory(app)?;
     let reference = run_query(state.inner().clone(), data_directory, {
@@ -66,7 +67,7 @@ pub(crate) async fn resolve_private_key(
     };
 
     let passphrase = match supplied_passphrase {
-        Some(value) => Some(SecretString::from(value)),
+        Some(value) => Some(SecretString::from(value.into_inner())),
         None => reference
             .passphrase_credential_ref
             .as_deref()

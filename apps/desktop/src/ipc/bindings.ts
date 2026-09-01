@@ -89,7 +89,7 @@ async closeTerminalSession(sessionId: string) : Promise<Result<null, CommandErro
     else return { status: "error", error: e  as any };
 }
 },
-async respondKeyboardInteractive(attemptId: string, responses: string[]) : Promise<Result<null, CommandError>> {
+async respondKeyboardInteractive(attemptId: string, responses: SensitiveString[]) : Promise<Result<null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("respond_keyboard_interactive", { attemptId, responses }) };
 } catch (e) {
@@ -305,7 +305,7 @@ async saveConnection(config: ConnectionConfig, settings: ConnectionSettingsOverr
     else return { status: "error", error: e  as any };
 }
 },
-async getPasswordCredential(credentialRef: string) : Promise<Result<string | null, CommandError>> {
+async getPasswordCredential(credentialRef: string) : Promise<Result<SensitiveString | null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_password_credential", { credentialRef }) };
 } catch (e) {
@@ -313,7 +313,7 @@ async getPasswordCredential(credentialRef: string) : Promise<Result<string | nul
     else return { status: "error", error: e  as any };
 }
 },
-async savePasswordCredential(credentialRef: string, password: string) : Promise<Result<null, CommandError>> {
+async savePasswordCredential(credentialRef: string, password: SensitiveString) : Promise<Result<null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("save_password_credential", { credentialRef, password }) };
 } catch (e) {
@@ -483,17 +483,26 @@ export type ProbeHostRequest = { host: string; port: number; settings: Connectio
 export type RemoteDirectoryListing = { path: string; entries: RemoteFileEntry[] }
 export type RemoteFileEntry = { name: string; path: string; kind: RemoteFileKind; size: number; modifiedAt: number | null; permissions: number | null }
 export type RemoteFileKind = "directory" | "file" | "symlink" | "other"
+/**
+ * A string that must not be rendered or logged as plaintext.
+ *
+ * The transparent serde representation keeps the IPC wire contract as a
+ * string while the Rust value is cleared when it is dropped. Callers should
+ * use `into_inner` only at the final hand-off to a library that requires an
+ * owned `String`.
+ */
+export type SensitiveString = string
 export type SftpConflictAction = "ask" | "overwrite" | "skip" | "rename"
 export type SftpTransferDirection = "upload" | "download"
 export type SftpTransferProgress = { transferId: string | null; direction: SftpTransferDirection; path: string; bytesTransferred: number; totalBytes: number | null; filesCompleted: number; totalFiles: number | null }
 export type SshConnectionEvent = { attemptId: string; stage: SshConnectionStage }
 export type SshConnectionStage = "created" | "resolvingDns" | "connectingTcp" | "handshaking" | "authenticating" | "openingChannel" | "connected" | "closing" | "closed" | "cancelled" | "failed"
 export type StartKeyboardInteractiveShellRequest = { attemptId: string; host: string; port: number; username: string; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
-export type StartPrivateKeySftpRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: string | null; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }
-export type StartPrivateKeyShellRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: string | null; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
-export type StartSftpRequest = { attemptId: string; host: string; port: number; username: string; password: string; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }
+export type StartPrivateKeySftpRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: SensitiveString | null; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }
+export type StartPrivateKeyShellRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: SensitiveString | null; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
+export type StartSftpRequest = { attemptId: string; host: string; port: number; username: string; password: SensitiveString; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }
 export type StartSftpResponse = { sessionId: string; hostKey: HostKeyInfo; directory: RemoteDirectoryListing }
-export type StartShellRequest = { attemptId: string; host: string; port: number; username: string; password: string; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
+export type StartShellRequest = { attemptId: string; host: string; port: number; username: string; password: SensitiveString; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
 export type StartShellResponse = { sessionId: string; hostKey: HostKeyInfo }
 export type TerminalColorScheme = "bxDark" | "solarizedDark" | "bxLight"
 export type TerminalCursorStyle = "block" | "underline" | "bar"
