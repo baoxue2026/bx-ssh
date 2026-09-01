@@ -4,6 +4,7 @@ use specta::Type;
 pub const DEFAULT_CONNECTION_PORT: u16 = 22;
 pub const DEFAULT_CONNECT_TIMEOUT_SECS: u32 = 10;
 pub const DEFAULT_KEEP_ALIVE_SECS: u32 = 30;
+pub const MIN_CONNECT_TIMEOUT_SECS: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -166,11 +167,37 @@ impl Default for ConnectionSettings {
     }
 }
 
+impl ConnectionSettings {
+    pub fn validate(&self) -> Result<(), ConnectionSettingsValidationError> {
+        if self.connect_timeout_secs < MIN_CONNECT_TIMEOUT_SECS {
+            return Err(ConnectionSettingsValidationError::InvalidConnectTimeout);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionSettingsOverride {
     pub connect_timeout_secs: Option<u32>,
     pub keep_alive_secs: Option<u32>,
+}
+
+impl ConnectionSettingsOverride {
+    pub fn validate(&self) -> Result<(), ConnectionSettingsValidationError> {
+        if self
+            .connect_timeout_secs
+            .is_some_and(|value| value < MIN_CONNECT_TIMEOUT_SECS)
+        {
+            return Err(ConnectionSettingsValidationError::InvalidConnectTimeout);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionSettingsValidationError {
+    InvalidConnectTimeout,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -349,6 +376,21 @@ impl ConnectionSettingsLayers {
         }
         resolved
     }
+
+    pub fn resolve_checked(&self) -> Result<ConnectionSettings, ConnectionSettingsValidationError> {
+        if let Some(layer) = self.global {
+            layer.validate()?;
+        }
+        if let Some(layer) = self.group {
+            layer.validate()?;
+        }
+        if let Some(layer) = self.connection {
+            layer.validate()?;
+        }
+        let resolved = self.resolve();
+        resolved.validate()?;
+        Ok(resolved)
+    }
 }
 
 fn is_hex_color(color: &str) -> bool {
@@ -490,6 +532,33 @@ mod tests {
                 connect_timeout_secs: 5,
                 keep_alive_secs: 60,
             }
+        );
+        assert_eq!(
+            layers.resolve_checked().unwrap(),
+            ConnectionSettings {
+                connect_timeout_secs: 5,
+                keep_alive_secs: 60,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_zero_connect_timeout_in_settings() {
+        assert_eq!(
+            ConnectionSettings {
+                connect_timeout_secs: 0,
+                keep_alive_secs: 30,
+            }
+            .validate(),
+            Err(ConnectionSettingsValidationError::InvalidConnectTimeout)
+        );
+        assert_eq!(
+            ConnectionSettingsOverride {
+                connect_timeout_secs: Some(0),
+                keep_alive_secs: None,
+            }
+            .validate(),
+            Err(ConnectionSettingsValidationError::InvalidConnectTimeout)
         );
     }
 

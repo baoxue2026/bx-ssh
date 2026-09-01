@@ -108,7 +108,12 @@ impl ConnectionRepository {
         };
         let layers = self
             .load_settings_layers(&connection.config.id, connection.config.group_id.as_deref())?;
-        let resolved = layers.resolve();
+        let resolved =
+            layers
+                .resolve_checked()
+                .map_err(|_| PersistenceError::InvalidStoredRecord {
+                    entity: "connection setting",
+                })?;
         Ok(Some(ConnectionDetails {
             connection,
             settings: ConnectionSettingsSnapshot { layers, resolved },
@@ -353,6 +358,9 @@ impl ConnectionRepository {
         config
             .validate()
             .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
+        settings
+            .validate()
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
         let now = timestamp_to_i64(now_ms)?;
         let transaction = self
             .database
@@ -394,6 +402,9 @@ impl ConnectionRepository {
         settings: ConnectionSettingsOverride,
         now_ms: u64,
     ) -> Result<()> {
+        settings
+            .validate()
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
         let owner = match scope {
             ConnectionSettingsScope::Global => SettingOwner::Global,
             ConnectionSettingsScope::Group { group_id } if !group_id.trim().is_empty() => {
@@ -740,6 +751,9 @@ fn save_connection_record(
     settings: ConnectionSettingsOverride,
     now: i64,
 ) -> Result<()> {
+    settings
+        .validate()
+        .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
     transaction
         .execute(
             "INSERT INTO connections
@@ -900,6 +914,11 @@ where
             _ => {}
         }
     }
+    values
+        .validate()
+        .map_err(|_| PersistenceError::InvalidStoredRecord {
+            entity: "connection setting",
+        })?;
     Ok(values)
 }
 
@@ -1356,6 +1375,56 @@ mod tests {
                 keep_alive_secs: 50,
             }
         );
+    }
+
+    #[test]
+    fn rejects_zero_connect_timeout_without_persisting_other_settings() {
+        let mut repository = test_repository();
+
+        assert!(matches!(
+            repository.save_settings(
+                &ConnectionSettingsScope::Global,
+                ConnectionSettingsOverride {
+                    connect_timeout_secs: Some(0),
+                    keep_alive_secs: Some(45),
+                },
+                1000,
+            ),
+            Err(PersistenceError::InvalidConnectionConfiguration)
+        ));
+
+        let setting_count: i64 = repository
+            .database
+            .connection()
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(setting_count, 0);
+    }
+
+    #[test]
+    fn rejects_a_connection_with_corrupted_stored_settings() {
+        let mut repository = test_repository();
+        let config = ConnectionConfig::new("connection-1", "Production", "example.com", "alice");
+        repository
+            .save_connection(&config, ConnectionSettingsOverride::default(), 1000)
+            .unwrap();
+        repository
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO settings
+                 (key, value_json, connection_id, created_at, updated_at)
+                 VALUES (?1, '0', ?2, 1001, 1001)",
+                params![CONNECT_TIMEOUT_KEY, config.id],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            repository.get_connection(&config.id),
+            Err(PersistenceError::InvalidStoredRecord {
+                entity: "connection setting"
+            })
+        ));
     }
 
     #[test]
