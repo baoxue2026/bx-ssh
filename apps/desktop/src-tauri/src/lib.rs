@@ -1,4 +1,4 @@
-use bx_contracts::AppInfo;
+use bx_contracts::{AppInfo, LogLevel};
 #[cfg(any(debug_assertions, test))]
 use bx_contracts::{
     ConnectionConfig, ConnectionSettings, ConnectionSettingsLayers, ConnectionSettingsScope,
@@ -17,6 +17,7 @@ mod desktop_shell;
 mod external_links;
 mod lifecycle;
 mod local_files;
+mod logging;
 mod openssh_import;
 mod platform;
 mod private_keys;
@@ -205,6 +206,13 @@ pub fn run() {
         .on_menu_event(desktop_shell::handle_menu_event)
         .on_tray_icon_event(desktop_shell::handle_tray_event)
         .setup(|app| {
+            let log_directory = app.path().app_data_dir()?.join("logs");
+            logging::initialize(log_directory, LogLevel::Info)?;
+            logging::event(
+                LogLevel::Info,
+                "application_started",
+                logging::LogFields::default(),
+            );
             desktop_shell::setup_tray(app.handle())?;
             Ok(())
         });

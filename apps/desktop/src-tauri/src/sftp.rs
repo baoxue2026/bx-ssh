@@ -106,6 +106,7 @@ pub(crate) async fn start_password_sftp(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::Authenticating,
             );
             return Err(error.into());
         }
@@ -132,6 +133,7 @@ pub(crate) async fn start_password_sftp(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::OpeningChannel,
             );
             return Err(connection_error(error, SshConnectionStage::OpeningChannel));
         }
@@ -153,6 +155,7 @@ pub(crate) async fn start_password_sftp(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::OpeningChannel,
             );
             return Err(connection_error(error, SshConnectionStage::OpeningChannel));
         }
@@ -237,6 +240,7 @@ pub(crate) async fn start_private_key_sftp(
     {
         Ok(key) => key,
         Err(error) => {
+            crate::logging::connection_error(SessionKind::Sftp, &request.attempt_id, &error);
             if let Some(event) = session_manager.finish_attempt(
                 &owner,
                 &request.attempt_id,
@@ -273,6 +277,7 @@ pub(crate) async fn start_private_key_sftp(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::Authenticating,
             );
             return Err(error.into());
         }
@@ -299,6 +304,7 @@ pub(crate) async fn start_private_key_sftp(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::OpeningChannel,
             );
             return Err(connection_error(error, SshConnectionStage::OpeningChannel));
         }
@@ -320,6 +326,7 @@ pub(crate) async fn start_private_key_sftp(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::OpeningChannel,
             );
             return Err(connection_error(error, SshConnectionStage::OpeningChannel));
         }
@@ -522,7 +529,13 @@ pub(crate) async fn upload_sftp_file(
             .await
     };
     manager.finish_transfer(&transfer_id).await;
-    let summary = result?.ok_or_else(|| CommandError::from(SshError::RemoteTargetExists))?;
+    let summary = transfer_result(&session_id, &transfer_id, result)?.ok_or_else(|| {
+        transfer_error(
+            &session_id,
+            &transfer_id,
+            SshError::RemoteTargetExists.into(),
+        )
+    })?;
     notify_transfer_completed(
         &app,
         localized_transfer_title(&language, "上传完成", "Upload complete"),
@@ -584,7 +597,7 @@ pub(crate) async fn upload_sftp_file_with_conflict(
             .await
     };
     manager.finish_transfer(&transfer_id).await;
-    let summary = result?;
+    let summary = transfer_result(&session_id, &transfer_id, result)?;
     if summary.is_some() {
         notify_transfer_completed(
             &app,
@@ -647,7 +660,13 @@ pub(crate) async fn download_sftp_file(
             .await
     };
     manager.finish_transfer(&transfer_id).await;
-    let summary = result?.ok_or(SshError::LocalTargetExists)?;
+    let summary = transfer_result(&session_id, &transfer_id, result)?.ok_or_else(|| {
+        transfer_error(
+            &session_id,
+            &transfer_id,
+            SshError::LocalTargetExists.into(),
+        )
+    })?;
     notify_transfer_completed(
         &app,
         localized_transfer_title(&language, "下载完成", "Download complete"),
@@ -709,7 +728,7 @@ pub(crate) async fn download_sftp_file_with_conflict(
             .await
     };
     manager.finish_transfer(&transfer_id).await;
-    let summary = result?;
+    let summary = transfer_result(&session_id, &transfer_id, result)?;
     if summary.is_some() {
         notify_transfer_completed(
             &app,
@@ -772,7 +791,7 @@ pub(crate) async fn upload_sftp_directory(
             .await
     };
     manager.finish_transfer(&transfer_id).await;
-    let summary = result?;
+    let summary = transfer_result(&session_id, &transfer_id, result)?;
     notify_transfer_completed(
         &app,
         localized_transfer_title(&language, "目录上传完成", "Directory upload complete"),
@@ -834,7 +853,7 @@ pub(crate) async fn upload_sftp_directory_with_conflict(
             .await
     };
     manager.finish_transfer(&transfer_id).await;
-    let summary = result?;
+    let summary = transfer_result(&session_id, &transfer_id, result)?;
     notify_transfer_completed(
         &app,
         localized_transfer_title(&language, "目录上传完成", "Directory upload complete"),
@@ -895,7 +914,7 @@ pub(crate) async fn download_sftp_directory(
             .await
     };
     manager.finish_transfer(&transfer_id).await;
-    let summary = result?;
+    let summary = transfer_result(&session_id, &transfer_id, result)?;
     notify_transfer_completed(
         &app,
         localized_transfer_title(&language, "目录下载完成", "Directory download complete"),
@@ -957,7 +976,7 @@ pub(crate) async fn download_sftp_directory_with_conflict(
             .await
     };
     manager.finish_transfer(&transfer_id).await;
-    let summary = result?;
+    let summary = transfer_result(&session_id, &transfer_id, result)?;
     notify_transfer_completed(
         &app,
         localized_transfer_title(&language, "目录下载完成", "Directory download complete"),
@@ -986,6 +1005,28 @@ fn notify_transfer_completed(app: &AppHandle, title: &str, path: &str) {
     }
 
     let _ = app.notification().builder().title(title).body(path).show();
+}
+
+fn transfer_result<T>(
+    session_id: &str,
+    transfer_id: &str,
+    result: Result<T, SshError>,
+) -> Result<T, CommandError> {
+    result.map_err(|error| transfer_error(session_id, transfer_id, error.into()))
+}
+
+fn transfer_error(session_id: &str, transfer_id: &str, error: CommandError) -> CommandError {
+    crate::logging::command_error(
+        "sftp_transfer_failed",
+        &error,
+        crate::logging::LogFields {
+            session_type: Some("sftp"),
+            session_id: Some(session_id),
+            transfer_id: Some(transfer_id),
+            ..crate::logging::LogFields::default()
+        },
+    );
+    error
 }
 
 const SFTP_TRANSFER_PROGRESS_EVENT: &str = "sftp-transfer-progress";
@@ -1069,7 +1110,9 @@ fn finish_connection_attempt(
     attempt_id: &str,
     channel: &Channel<SshConnectionEvent>,
     error: &SshError,
+    fallback_stage: SshConnectionStage,
 ) {
+    crate::logging::connection_ssh_error(SessionKind::Sftp, attempt_id, error, fallback_stage);
     let stage = if matches!(error, SshError::ConnectionCancelled) {
         SshConnectionStage::Cancelled
     } else {

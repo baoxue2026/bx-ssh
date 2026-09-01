@@ -122,7 +122,13 @@ fn map_updater_error(error: UpdaterError) -> CommandError {
         CommandErrorCode::UpdateInsecureEndpoint => "The update endpoint must use HTTPS".to_owned(),
         _ => error.to_string(),
     };
-    CommandError::update(code, message)
+    let error = CommandError::update(code, message);
+    crate::logging::command_error(
+        "update_failed",
+        &error,
+        crate::logging::LogFields::default(),
+    );
+    error
 }
 
 #[cfg(test)]

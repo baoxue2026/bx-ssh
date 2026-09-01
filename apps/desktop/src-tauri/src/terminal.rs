@@ -300,6 +300,7 @@ pub(crate) async fn start_password_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::Authenticating,
             );
             return Err(error.into());
         }
@@ -326,6 +327,7 @@ pub(crate) async fn start_password_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::OpeningChannel,
             );
             return Err(error.into());
         }
@@ -469,6 +471,7 @@ pub(crate) async fn start_keyboard_interactive_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::Authenticating,
             );
             return Err(error.into());
         }
@@ -495,6 +498,7 @@ pub(crate) async fn start_keyboard_interactive_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::OpeningChannel,
             );
             return Err(error.into());
         }
@@ -604,6 +608,7 @@ pub(crate) async fn start_private_key_shell(
     {
         Ok(key) => key,
         Err(error) => {
+            crate::logging::connection_error(SessionKind::Terminal, &request.attempt_id, &error);
             if let Some(event) = session_manager.finish_attempt(
                 &owner,
                 &request.attempt_id,
@@ -640,6 +645,7 @@ pub(crate) async fn start_private_key_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::Authenticating,
             );
             return Err(error.into());
         }
@@ -666,6 +672,7 @@ pub(crate) async fn start_private_key_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::OpeningChannel,
             );
             return Err(error.into());
         }
@@ -1057,7 +1064,9 @@ fn finish_connection_attempt(
     attempt_id: &str,
     channel: &Channel<SshConnectionEvent>,
     error: &SshError,
+    fallback_stage: SshConnectionStage,
 ) {
+    crate::logging::connection_ssh_error(SessionKind::Terminal, attempt_id, error, fallback_stage);
     let stage = if matches!(error, SshError::ConnectionCancelled) {
         SshConnectionStage::Cancelled
     } else {

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use bx_contracts::SshConnectionStage;
+use bx_contracts::{LogLevel, SshConnectionStage};
 use bx_ssh_core::{ConnectionCancellation, SshConnectionStateMachine};
 use serde::Serialize;
 use specta::Type;
@@ -9,11 +9,21 @@ use tauri::{State, WebviewWindow};
 use uuid::{Uuid, Version};
 
 use crate::command_error::{CommandError, CommandErrorCode};
+use crate::logging::{self, LogFields};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SessionKind {
     Terminal,
     Sftp,
+}
+
+impl SessionKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Terminal => "terminal",
+            Self::Sftp => "sftp",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -57,10 +67,12 @@ impl SshSessionManager {
         validate_attempt_id(attempt_id)?;
         let mut inner = self.inner.lock().expect("SSH session manager poisoned");
         if inner.attempts.contains_key(attempt_id) {
-            return Err(CommandError::new(
+            let error = CommandError::new(
                 CommandErrorCode::ConnectionAttemptConflict,
                 "SSH connection attempt is already active",
-            ));
+            );
+            logging::connection_error(kind, attempt_id, &error);
+            return Err(error);
         }
 
         let cancellation = ConnectionCancellation::default();
@@ -73,6 +85,7 @@ impl SshSessionManager {
                 cancellation: cancellation.clone(),
             },
         );
+        log_connection_stage(kind, attempt_id, SshConnectionStage::Created);
         Ok(cancellation)
     }
 
@@ -88,10 +101,13 @@ impl SshSessionManager {
             .get_mut(attempt_id)
             .filter(|attempt| attempt.owner == owner)
             .ok_or_else(|| CommandError::session_not_found("SSH connection attempt"))?;
-        attempt.state.transition(stage).map_err(|error| {
-            CommandError::new(CommandErrorCode::SessionStateInvalid, error.to_string())
-                .with_stage(Some(stage))
-        })?;
+        if let Err(error) = attempt.state.transition(stage) {
+            let error = CommandError::new(CommandErrorCode::SessionStateInvalid, error.to_string())
+                .with_stage(Some(stage));
+            logging::connection_error(attempt.kind, attempt_id, &error);
+            return Err(error);
+        }
+        log_connection_stage(attempt.kind, attempt_id, stage);
         Ok(SshConnectionEvent {
             attempt_id: attempt_id.to_owned(),
             stage,
@@ -116,15 +132,16 @@ impl SshSessionManager {
             .remove(attempt_id)
             .expect("authorized SSH connection attempt disappeared");
         if let Err(error) = attempt.state.transition(SshConnectionStage::Connected) {
+            let kind = attempt.kind;
             inner.attempts.insert(attempt_id.to_owned(), attempt);
-            return Err(CommandError::new(
-                CommandErrorCode::SessionStateInvalid,
-                error.to_string(),
-            )
-            .with_stage(Some(SshConnectionStage::Connected)));
+            let error = CommandError::new(CommandErrorCode::SessionStateInvalid, error.to_string())
+                .with_stage(Some(SshConnectionStage::Connected));
+            logging::connection_error(kind, attempt_id, &error);
+            return Err(error);
         }
 
         let session_id = next_session_id(&inner.sessions);
+        let kind = attempt.kind;
         inner.sessions.insert(
             session_id.clone(),
             ManagedSession {
@@ -133,6 +150,7 @@ impl SshSessionManager {
                 state: attempt.state,
             },
         );
+        log_connection_stage(kind, attempt_id, SshConnectionStage::Connected);
         Ok((
             session_id,
             SshConnectionEvent {
@@ -157,6 +175,7 @@ impl SshSessionManager {
         if attempt.state.transition(stage).is_err() {
             return None;
         }
+        log_connection_stage(attempt.kind, attempt_id, stage);
         Some(SshConnectionEvent {
             attempt_id: attempt_id.to_owned(),
             stage,
@@ -206,6 +225,16 @@ impl SshSessionManager {
             .is_some_and(|session| session.kind == kind)
         {
             inner.sessions.remove(session_id);
+            logging::event(
+                LogLevel::Info,
+                "ssh_session_closed",
+                LogFields {
+                    session_type: Some(kind.as_str()),
+                    session_id: Some(session_id),
+                    connection_stage: Some(SshConnectionStage::Closed),
+                    ..LogFields::default()
+                },
+            );
         }
     }
 
@@ -217,6 +246,19 @@ impl SshSessionManager {
         inner.attempts.clear();
         inner.sessions.clear();
     }
+}
+
+fn log_connection_stage(kind: SessionKind, attempt_id: &str, stage: SshConnectionStage) {
+    logging::event(
+        LogLevel::Info,
+        "ssh_connection_stage_changed",
+        LogFields {
+            session_type: Some(kind.as_str()),
+            attempt_id: Some(attempt_id),
+            connection_stage: Some(stage),
+            ..LogFields::default()
+        },
+    );
 }
 
 #[tauri::command]

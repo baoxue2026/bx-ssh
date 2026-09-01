@@ -122,11 +122,9 @@ impl CommandError {
     pub(crate) fn update(code: CommandErrorCode, message: impl Into<String>) -> Self {
         Self::new(code, message)
     }
-}
 
-impl From<SshError> for CommandError {
-    fn from(error: SshError) -> Self {
-        let code = match &error {
+    pub(crate) fn from_ssh(error: &SshError) -> Self {
+        let code = match error {
             SshError::InvalidHost => CommandErrorCode::InvalidHost,
             SshError::InvalidPort => CommandErrorCode::InvalidPort,
             SshError::InvalidUsername => CommandErrorCode::InvalidUsername,
@@ -175,6 +173,12 @@ impl From<SshError> for CommandError {
 
         let stage = error.connection_stage();
         Self::new(code, error.to_string()).with_stage(stage)
+    }
+}
+
+impl From<SshError> for CommandError {
+    fn from(error: SshError) -> Self {
+        Self::from_ssh(&error)
     }
 }
 
