@@ -40,6 +40,7 @@ const reviewedApplicationCommands = [
   "set_webview_memory_usage",
   "check_for_update",
   "install_update",
+  "cancel_update",
   "confirm_app_exit",
   "list_connections",
   "get_connection",
@@ -56,6 +57,7 @@ const productionPermissions = new Set([
   "core:window:allow-start-dragging",
   "core:window:allow-toggle-maximize",
   "dialog:allow-open",
+  "dialog:allow-save",
 ]);
 const e2ePermissions = new Set([
   "allow-main-commands",
