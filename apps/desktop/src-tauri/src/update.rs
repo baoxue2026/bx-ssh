@@ -1,17 +1,79 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
 use specta::Type;
 use tauri::{ipc::Channel, AppHandle, State};
 use tauri_plugin_updater::{Error as UpdaterError, UpdaterExt};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::command_error::{CommandError, CommandErrorCode};
 use crate::connections::{app_data_directory, run_query, ConnectionRepositoryState};
 
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Default)]
+pub(crate) struct UpdateOperationState {
+    active: Arc<AtomicBool>,
+    cancelled: Arc<AtomicBool>,
+    cancel_notify: Arc<Notify>,
+}
+
+struct UpdateOperationGuard {
+    state: UpdateOperationState,
+}
+
+impl UpdateOperationState {
+    fn begin(&self) -> Result<UpdateOperationGuard, CommandError> {
+        if self
+            .active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(CommandError::update(
+                CommandErrorCode::UpdateInProgress,
+                "An update is already in progress",
+            ));
+        }
+        Ok(UpdateOperationGuard {
+            state: self.clone(),
+        })
+    }
+
+    fn cancel(&self) {
+        if self.active.load(Ordering::Acquire) {
+            self.cancelled.store(true, Ordering::Release);
+            self.cancel_notify.notify_waiters();
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    async fn wait_for_cancel(&self) {
+        loop {
+            let notified = self.cancel_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+impl Drop for UpdateOperationGuard {
+    fn drop(&mut self) {
+        self.state.active.store(false, Ordering::Release);
+        self.state.cancelled.store(false, Ordering::Release);
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -61,10 +123,12 @@ pub(crate) async fn check_for_update(app: AppHandle) -> Result<Option<UpdateInfo
 #[tauri::command]
 pub(crate) async fn install_update(
     app: AppHandle,
+    operation: State<'_, UpdateOperationState>,
     state: State<'_, ConnectionRepositoryState>,
     expected_version: String,
     on_event: Channel<UpdateEvent>,
 ) -> Result<(), CommandError> {
+    let _operation_guard = operation.begin()?;
     let update = app
         .updater_builder()
         .timeout(UPDATE_TIMEOUT)
@@ -96,19 +160,33 @@ pub(crate) async fn install_update(
 
     let progress_channel = on_event.clone();
     let mut started = false;
-    let bytes = update
-        .download(
-            move |chunk_length, content_length| {
-                if !started {
-                    started = true;
-                    let _ = progress_channel.send(UpdateEvent::Started { content_length });
-                }
-                let _ = progress_channel.send(UpdateEvent::Progress { chunk_length });
-            },
-            || {},
-        )
-        .await
-        .map_err(map_updater_error)?;
+    let download = update.download(
+        move |chunk_length, content_length| {
+            if !started {
+                started = true;
+                let _ = progress_channel.send(UpdateEvent::Started { content_length });
+            }
+            let _ = progress_channel.send(UpdateEvent::Progress { chunk_length });
+        },
+        || {},
+    );
+    tokio::pin!(download);
+    let bytes = tokio::select! {
+        result = &mut download => result.map_err(map_updater_error)?,
+        _ = operation.wait_for_cancel() => {
+            return Err(CommandError::update(
+                CommandErrorCode::UpdateCancelled,
+                "Update download was cancelled",
+            ));
+        }
+    };
+
+    if operation.is_cancelled() {
+        return Err(CommandError::update(
+            CommandErrorCode::UpdateCancelled,
+            "Update download was cancelled",
+        ));
+    }
 
     // Download() returns only after the updater has verified the package signature.
     // The database backup is deliberately performed after verification and immediately
@@ -146,10 +224,25 @@ pub(crate) async fn install_update(
         return Err(command_error);
     }
 
+    if operation.is_cancelled() {
+        return Err(CommandError::update(
+            CommandErrorCode::UpdateCancelled,
+            "Update installation was cancelled",
+        ));
+    }
+
     let _ = on_event.send(UpdateEvent::Verified);
     update.install(bytes).map_err(map_updater_error)?;
 
     app.restart();
+}
+
+#[tauri::command]
+pub(crate) fn cancel_update(
+    operation: State<'_, UpdateOperationState>,
+) -> Result<(), CommandError> {
+    operation.cancel();
+    Ok(())
 }
 
 fn is_strictly_newer_version(current: &str, candidate: &str) -> bool {
@@ -210,7 +303,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        is_strictly_newer_version, map_updater_error, update_backup_path, UpdateEvent, UpdaterError,
+        is_strictly_newer_version, map_updater_error, update_backup_path, UpdateEvent,
+        UpdateOperationState, UpdaterError,
     };
     use crate::command_error::CommandErrorCode;
 
@@ -228,6 +322,21 @@ mod tests {
 
         assert_eq!(error.code, CommandErrorCode::UpdateSignatureInvalid);
         assert_eq!(error.message, "Update signature verification failed");
+    }
+
+    #[test]
+    fn cancels_only_the_active_update_operation() {
+        let operation = UpdateOperationState::default();
+        operation.cancel();
+        assert!(!operation.is_cancelled());
+
+        let guard = operation.begin().expect("operation should start");
+        operation.cancel();
+        assert!(operation.is_cancelled());
+        assert!(operation.begin().is_err());
+        assert!(operation.is_cancelled());
+        drop(guard);
+        assert!(!operation.is_cancelled());
     }
 
     #[test]

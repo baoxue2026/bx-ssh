@@ -22,6 +22,8 @@ import { UpdateControl } from "./UpdateControl";
 type WorkspaceMode = "terminal" | "sftp";
 
 interface WindowTitleBarProps {
+  activeSessions?: number;
+  activeTransfers?: number;
   appName: string;
   connectionLabel: string;
   connectionState: string;
@@ -41,6 +43,8 @@ interface WindowTitleBarProps {
 }
 
 export function WindowTitleBar({
+  activeSessions = 0,
+  activeTransfers = 0,
   appName,
   connectionLabel,
   connectionState,
@@ -262,7 +266,12 @@ export function WindowTitleBar({
             type="text"
           />
         </Dropdown>
-        <UpdateControl currentVersion={version} requestId={updateRequestId} />
+        <UpdateControl
+          activeSessions={activeSessions}
+          activeTransfers={activeTransfers}
+          currentVersion={version}
+          requestId={updateRequestId}
+        />
         <Tooltip title={t("settings.title")} mouseEnterDelay={0.5}>
           <Button
             aria-label={t("settings.title")}

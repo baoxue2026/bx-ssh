@@ -63,6 +63,8 @@ pub(crate) enum CommandErrorCode {
     UpdateSignatureInvalid,
     UpdateInsecureEndpoint,
     UpdateUnavailable,
+    UpdateCancelled,
+    UpdateInProgress,
     UpdateBackupFailed,
     UpdateFailed,
     WebviewMemoryUsageFailed,

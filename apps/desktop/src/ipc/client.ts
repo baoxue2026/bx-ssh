@@ -428,6 +428,7 @@ export const ipc = {
         onEvent: createChannel(onEvent),
       }),
     ),
+  cancelUpdate: () => call(() => invoke<void>("cancel_update")),
 };
 
 function isCommandError(error: unknown): error is CommandError {

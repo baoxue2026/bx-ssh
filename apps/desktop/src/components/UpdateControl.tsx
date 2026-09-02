@@ -8,10 +8,10 @@ import {
 } from "react";
 import { Button, Progress, Tooltip } from "antd";
 import type { TFunction } from "i18next";
-import { Download, RefreshCw, ShieldCheck } from "lucide-react";
+import { Download, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { AppDialog, FeedbackNotice } from "./Feedback";
-import { ipc } from "../ipc/client";
+import { IpcError, ipc } from "../ipc/client";
 import type { UpdateInfo } from "../ipc/bindings";
 import { useAsyncAction } from "./useAsyncAction";
 
@@ -25,11 +25,15 @@ type UpdateStatus =
   | "error";
 
 interface UpdateControlProps {
+  activeSessions?: number;
+  activeTransfers?: number;
   currentVersion: string;
   requestId?: number;
 }
 
 export function UpdateControl({
+  activeSessions = 0,
+  activeTransfers = 0,
   currentVersion,
   requestId = 0,
 }: UpdateControlProps) {
@@ -40,6 +44,7 @@ export function UpdateControl({
   const [downloadedBytes, setDownloadedBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
   const handledRequestId = useRef(0);
   const checkButtonRef = useRef<HTMLButtonElement>(null);
   const dialogDescriptionId = useId();
@@ -52,13 +57,15 @@ export function UpdateControl({
   const checkForUpdate = useCallback(async () => {
     setStatus("checking");
     setErrorMessage(null);
+    setNoticeMessage(null);
+    setUpdate(null);
     try {
       const available = await ipc.checkForUpdate();
       setUpdate(available ?? null);
       setStatus(available ? "available" : "current");
       setOpen(true);
     } catch (error) {
-      setErrorMessage(errorText(error, t("update.serviceUnavailable")));
+      setErrorMessage(updateErrorText(error, t));
       setStatus("error");
       setOpen(true);
     }
@@ -79,6 +86,7 @@ export function UpdateControl({
     setDownloadedBytes(0);
     setTotalBytes(null);
     setErrorMessage(null);
+    setNoticeMessage(null);
 
     try {
       await ipc.installUpdate(update.version, (event) => {
@@ -91,16 +99,42 @@ export function UpdateControl({
         }
       });
     } catch (error) {
-      setErrorMessage(errorText(error, t("update.serviceUnavailable")));
-      setStatus("error");
+      if (isUpdateCancelled(error)) {
+        setDownloadedBytes(0);
+        setTotalBytes(null);
+        setNoticeMessage(t("update.cancelled"));
+        setStatus("available");
+      } else {
+        setErrorMessage(updateErrorText(error, t));
+        setStatus("error");
+      }
     }
   }, [t, update]);
   const { execute: runInstallUpdate, pending: installPending } =
     useAsyncAction(installUpdate);
 
+  const cancelDownload = useCallback(async () => {
+    setErrorMessage(null);
+    try {
+      await ipc.cancelUpdate();
+    } catch (error) {
+      setErrorMessage(updateErrorText(error, t));
+    }
+  }, [t]);
+  const { execute: runCancelDownload, pending: cancelPending } =
+    useAsyncAction(cancelDownload);
+
   const close = () => {
     if (status === "downloading" || status === "verified") return;
     setOpen(false);
+  };
+
+  const retry = () => {
+    if (update) {
+      void runInstallUpdate();
+    } else {
+      void runCheckForUpdate();
+    }
   };
 
   return (
@@ -144,13 +178,41 @@ export function UpdateControl({
                   {t("update.downloadAndInstall")}
                 </Button>,
               ]
-            : status === "downloading" || status === "verified"
-              ? null
-              : [
-                  <Button key="close" type="primary" onClick={close}>
-                    {t("common.confirm")}
+            : status === "downloading"
+              ? [
+                  <Button
+                    key="cancel"
+                    danger
+                    disabled={cancelPending}
+                    icon={<X size={15} />}
+                    loading={cancelPending}
+                    onClick={() => void runCancelDownload()}
+                  >
+                    {t("update.cancelDownload")}
                   </Button>,
                 ]
+              : status === "verified"
+                ? null
+                : status === "error"
+                  ? [
+                      <Button key="close" onClick={close}>
+                        {t("common.cancel")}
+                      </Button>,
+                      <Button
+                        key="retry"
+                        type="primary"
+                        icon={<RefreshCw size={15} />}
+                        loading={checkPending || installPending}
+                        onClick={retry}
+                      >
+                        {t("update.retry")}
+                      </Button>,
+                    ]
+                  : [
+                      <Button key="close" type="primary" onClick={close}>
+                        {t("common.confirm")}
+                      </Button>,
+                    ]
         }
       >
         <div id={dialogDescriptionId}>
@@ -173,6 +235,35 @@ export function UpdateControl({
                 </span>
               </div>
               {update.notes && <p>{update.notes}</p>}
+              {noticeMessage && (
+                <FeedbackNotice type="info" showIcon message={noticeMessage} />
+              )}
+              {(activeSessions > 0 || activeTransfers > 0) && (
+                <FeedbackNotice
+                  type="warning"
+                  showIcon
+                  message={t("update.activityTitle")}
+                  description={
+                    <div>
+                      <p>{t("update.activityDescription")}</p>
+                      {activeSessions > 0 && (
+                        <p>
+                          {t("update.activitySessions", {
+                            count: activeSessions,
+                          })}
+                        </p>
+                      )}
+                      {activeTransfers > 0 && (
+                        <p>
+                          {t("update.activityTransfers", {
+                            count: activeTransfers,
+                          })}
+                        </p>
+                      )}
+                    </div>
+                  }
+                />
+              )}
             </div>
           )}
 
@@ -194,7 +285,7 @@ export function UpdateControl({
           {status === "verified" && (
             <div className="update-verified">
               <ShieldCheck size={20} />
-              <span>{t("update.verified")}</span>
+              <span>{t("update.readyToRestart")}</span>
             </div>
           )}
 
@@ -235,4 +326,26 @@ function errorText(error: unknown, fallback: string): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   return fallback;
+}
+
+function isUpdateCancelled(error: unknown): boolean {
+  return error instanceof IpcError && error.code === "update_cancelled";
+}
+
+function updateErrorText(error: unknown, t: TFunction): string {
+  if (error instanceof IpcError) {
+    switch (error.code) {
+      case "update_signature_invalid":
+        return t("update.signatureInvalid");
+      case "update_backup_failed":
+        return t("update.backupFailed");
+      case "update_changed":
+        return t("update.changed");
+      case "update_unavailable":
+        return t("update.serviceUnavailable");
+      default:
+        return errorText(error, t("update.serviceUnavailable"));
+    }
+  }
+  return errorText(error, t("update.serviceUnavailable"));
 }

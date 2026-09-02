@@ -608,7 +608,17 @@ export const resources = {
         transferRetry: "重试",
       },
       update: {
+        activityDescription: "安装更新后应用会重启，请确认可以中断当前工作。",
+        activitySessions_one: "将断开 {{count}} 个活动会话。",
+        activitySessions_other: "将断开 {{count}} 个活动会话。",
+        activityTitle: "更新会影响当前活动",
+        activityTransfers_one: "将终止 {{count}} 个文件传输。",
+        activityTransfers_other: "将终止 {{count}} 个文件传输。",
         availableTitle: "发现新版本 v{{version}}",
+        backupFailed: "升级前数据库备份失败，更新未安装。",
+        cancelDownload: "取消下载",
+        cancelled: "更新下载已取消，可以重新尝试。",
+        changed: "可用版本已变化，请重新检查更新。",
         checking: "检查更新",
         current: "当前版本 v{{version}} 已是最新版本。",
         currentVersion: "当前版本 v{{version}}",
@@ -619,9 +629,12 @@ export const resources = {
         errorTitle: "无法完成更新",
         installTitle: "安装更新",
         newVersion: "新版本 v{{version}}",
+        readyToRestart: "更新包已验证，应用将重启完成安装。",
+        retry: "重试",
         serviceUnavailable: "更新服务暂时不可用",
+        signatureInvalid: "更新包签名校验失败，未安装任何内容。",
         signedPrototype: "已签名的原型更新",
-        verified: "签名验证通过，正在安装并重新启动。",
+        verified: "更新包已验证，正在安装并重新启动。",
         versionTitle: "版本更新",
         later: "稍后",
       },
@@ -1334,7 +1347,20 @@ export const resources = {
         transferRetry: "Retry",
       },
       update: {
+        activityDescription:
+          "The application will restart after installation. Confirm that the current work can be interrupted.",
+        activitySessions_one: "{{count}} active session will be disconnected.",
+        activitySessions_other:
+          "{{count}} active sessions will be disconnected.",
+        activityTitle: "The update affects current activity",
+        activityTransfers_one: "{{count}} file transfer will be stopped.",
+        activityTransfers_other: "{{count}} file transfers will be stopped.",
         availableTitle: "Version {{version}} is available",
+        backupFailed:
+          "The pre-update database backup failed. The update was not installed.",
+        cancelDownload: "Cancel Download",
+        cancelled: "The update download was cancelled. You can try again.",
+        changed: "The available version changed. Check for updates again.",
         checking: "Check for updates",
         current: "Version {{version}} is up to date.",
         currentVersion: "Current version {{version}}",
@@ -1346,7 +1372,12 @@ export const resources = {
         installTitle: "Install Update",
         later: "Later",
         newVersion: "New version {{version}}",
+        readyToRestart:
+          "The update package was verified. The application will restart to install it.",
+        retry: "Retry",
         serviceUnavailable: "The update service is temporarily unavailable",
+        signatureInvalid:
+          "The update package signature is invalid. Nothing was installed.",
         signedPrototype: "Signed prototype update",
         verified: "Signature verified. Installing and restarting.",
         versionTitle: "Application Update",
@@ -1389,7 +1420,8 @@ export const resources = {
           "The network or target host is unreachable. Check the network and routing settings.",
         sshOperation: "SSH operation failed",
         logDirectoryUnavailable: "The log directory could not be opened.",
-        diagnosticsExportFailed: "The redacted diagnostics package could not be exported.",
+        diagnosticsExportFailed:
+          "The redacted diagnostics package could not be exported.",
         tcpConnectFailed:
           "The SSH network connection could not be established. Check the network and server.",
         tcpConnectTimeout:

@@ -60,7 +60,7 @@ use terminal::{
     start_password_shell, start_private_key_shell, trust_host_fingerprint, write_terminal,
     TerminalSessionManager,
 };
-use update::{check_for_update, install_update};
+use update::{cancel_update, check_for_update, install_update, UpdateOperationState};
 
 #[cfg(all(feature = "e2e", not(debug_assertions)))]
 compile_error!("the e2e feature must never be enabled in release builds");
@@ -232,6 +232,7 @@ pub fn run() {
         .manage(sftp_manager)
         .manage(session_manager)
         .manage(ConnectionRepositoryState::default())
+        .manage(UpdateOperationState::default())
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
@@ -286,6 +287,7 @@ pub fn run() {
             set_webview_memory_usage,
             check_for_update,
             install_update,
+            cancel_update,
             confirm_app_exit,
             list_local_directory,
             stat_local_path,

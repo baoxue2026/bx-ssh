@@ -2911,6 +2911,8 @@ export function App() {
       className={`app-shell${globalSettings.application.compactLayout ? " is-compact" : ""}`}
     >
       <WindowTitleBar
+        activeSessions={currentSessionCloseImpact.activeSessions}
+        activeTransfers={currentSessionCloseImpact.activeTransfers}
         appName={appInfo.name}
         connectionLabel={connectionLabel(connectionState, connectionStage, t)}
         connectionState={connectionState}
