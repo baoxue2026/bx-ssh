@@ -81,10 +81,26 @@ describe("SettingsView", () => {
       expect.objectContaining({ connectTimeoutSecs: 25 }),
     );
   });
+
+  it("opens logs and exports diagnostics from the diagnostics category", () => {
+    const onOpenLogDirectory = vi.fn();
+    const onExportDiagnostics = vi.fn();
+    renderSettings({ onExportDiagnostics, onOpenLogDirectory });
+    const settings = screen.getByRole("region", { name: "设置" });
+
+    fireEvent.click(within(settings).getByRole("button", { name: "日志与诊断" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "打开日志目录" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "导出脱敏诊断包" }));
+
+    expect(onOpenLogDirectory).toHaveBeenCalledOnce();
+    expect(onExportDiagnostics).toHaveBeenCalledOnce();
+  });
 });
 
 function renderSettings({
   connectTimeoutSecs = DEFAULT_GLOBAL_CONNECTION_SETTINGS.connectTimeoutSecs,
+  onExportDiagnostics = vi.fn(),
+  onOpenLogDirectory = vi.fn(),
   onSave = vi.fn() as (
     application: ApplicationSettings,
     connection: ConnectionSettings,
@@ -92,6 +108,8 @@ function renderSettings({
   terminalFontSize = DEFAULT_APPLICATION_SETTINGS.terminalFontSize,
 }: {
   connectTimeoutSecs?: number;
+  onExportDiagnostics?: () => void;
+  onOpenLogDirectory?: () => void;
   onSave?: (
     application: ApplicationSettings,
     connection: ConnectionSettings,
@@ -116,6 +134,8 @@ function renderSettings({
       }}
       version="0.1.0"
       onCheckForUpdates={vi.fn()}
+      onExportDiagnostics={onExportDiagnostics}
+      onOpenLogDirectory={onOpenLogDirectory}
       onClose={vi.fn()}
       onSave={onSave}
     />,

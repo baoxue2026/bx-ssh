@@ -478,6 +478,20 @@ describe("IPC client", () => {
     });
   });
 
+  it("uses the reviewed diagnostics commands", async () => {
+    mocks.invoke.mockResolvedValue(null);
+
+    await expect(ipc.openLogDirectory()).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("open_log_directory");
+
+    await expect(
+      ipc.exportDiagnostics("C:/Exports/bx-ssh-diagnostics.zip"),
+    ).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("export_diagnostics", {
+      destination: "C:/Exports/bx-ssh-diagnostics.zip",
+    });
+  });
+
   it("reads and writes text through the reviewed clipboard commands", async () => {
     mocks.invoke.mockResolvedValueOnce("selected output");
 

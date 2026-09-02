@@ -77,6 +77,8 @@ pub(crate) enum CommandErrorCode {
     OpenSshConfigNotFound,
     OpenSshConfigIoError,
     OpenSshConfigInvalid,
+    LogDirectoryUnavailable,
+    DiagnosticsExportFailed,
 }
 
 #[derive(Clone, Debug, Serialize, Type)]

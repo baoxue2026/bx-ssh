@@ -55,6 +55,8 @@ interface SettingsViewProps {
   settings: GlobalSettingsSnapshot;
   version: string;
   onCheckForUpdates(): void;
+  onExportDiagnostics(): void;
+  onOpenLogDirectory(): void;
   onClose(): void;
   onSave(
     application: ApplicationSettings,
@@ -85,6 +87,8 @@ export function SettingsView({
   settings,
   version,
   onCheckForUpdates,
+  onExportDiagnostics,
+  onOpenLogDirectory,
   onClose,
   onSave,
 }: SettingsViewProps) {
@@ -188,6 +192,8 @@ export function SettingsView({
               version={version}
               onBrowseLocalDirectory={() => void browseLocalDirectory()}
               onCheckForUpdates={onCheckForUpdates}
+              onExportDiagnostics={onExportDiagnostics}
+              onOpenLogDirectory={onOpenLogDirectory}
               onConnectionChange={(connection) =>
                 setDraft((current) => ({ ...current, connection }))
               }
@@ -248,6 +254,8 @@ function SettingsContent({
   onBrowseLocalDirectory,
   onCheckForUpdates,
   onConnectionChange,
+  onExportDiagnostics,
+  onOpenLogDirectory,
 }: {
   active: SettingsCategory;
   appName: string;
@@ -259,6 +267,8 @@ function SettingsContent({
   onBrowseLocalDirectory(): void;
   onCheckForUpdates(): void;
   onConnectionChange(connection: ConnectionSettings): void;
+  onExportDiagnostics(): void;
+  onOpenLogDirectory(): void;
 }) {
   const { t } = useTranslation();
   const application = draft.application;
@@ -761,10 +771,19 @@ function SettingsContent({
       </SettingsSection>
       <SettingsSection title={t("settings.sections.diagnostics")}>
         <div className="settings-button-row">
-          <Button disabled icon={<ExternalLink size={13} />}>
+          <Button
+            disabled={disabled}
+            icon={<ExternalLink size={13} />}
+            onClick={onOpenLogDirectory}
+          >
             {t("settings.actions.openLogDirectory")}
           </Button>
-          <Button disabled type="primary" icon={<Download size={13} />}>
+          <Button
+            disabled={disabled}
+            type="primary"
+            icon={<Download size={13} />}
+            onClick={onExportDiagnostics}
+          >
             {t("settings.actions.exportDiagnostics")}
           </Button>
         </div>

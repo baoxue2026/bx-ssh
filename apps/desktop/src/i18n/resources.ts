@@ -148,6 +148,7 @@ export const resources = {
           loading: "正在读取本机设置",
           saved: "设置已保存",
           saveFailed: "无法保存设置",
+          diagnosticsExported: "脱敏诊断包已导出",
           unsaved: "有尚未保存的更改",
         },
         credentialStore: {
@@ -650,6 +651,8 @@ export const resources = {
         keepAliveFailed: "服务器未响应 KeepAlive，SSH 连接已断开。",
         networkUnreachable: "网络或目标主机不可达，请检查网络和路由设置。",
         sshOperation: "SSH 操作失败",
+        logDirectoryUnavailable: "无法打开日志目录。",
+        diagnosticsExportFailed: "无法导出脱敏诊断包。",
         tcpConnectFailed: "无法建立 SSH 网络连接，请检查网络和服务器状态。",
         tcpConnectTimeout: "连接 SSH 服务器超时，请检查地址、端口和网络状态。",
         invalidCredential: "凭据引用或密码无效。",
@@ -841,6 +844,7 @@ export const resources = {
           loading: "Loading local settings",
           saved: "Settings saved",
           saveFailed: "Unable to save settings",
+          diagnosticsExported: "Redacted diagnostics exported",
           unsaved: "There are unsaved changes",
         },
         credentialStore: {
@@ -1384,6 +1388,8 @@ export const resources = {
         networkUnreachable:
           "The network or target host is unreachable. Check the network and routing settings.",
         sshOperation: "SSH operation failed",
+        logDirectoryUnavailable: "The log directory could not be opened.",
+        diagnosticsExportFailed: "The redacted diagnostics package could not be exported.",
         tcpConnectFailed:
           "The SSH network connection could not be established. Check the network and server.",
         tcpConnectTimeout:

@@ -127,6 +127,9 @@ export const ipc = {
     unwrapVoid(() => commands.writeClipboardText(text)),
   openExternalUrl: (url: string) =>
     unwrapVoid(() => commands.openExternalUrl(url)),
+  openLogDirectory: () => unwrapVoid(() => commands.openLogDirectory()),
+  exportDiagnostics: (destination: string) =>
+    unwrapVoid(() => commands.exportDiagnostics(destination)),
   listConnections: () => unwrap(() => commands.listConnections()),
   getConnection: (id: string) => unwrap(() => commands.getConnection(id)),
   getGlobalSettings: (): Promise<GlobalSettingsSnapshot> =>

@@ -9,7 +9,10 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import {
+  open as openFileDialog,
+  save as saveFileDialog,
+} from "@tauri-apps/plugin-dialog";
 import type { TFunction } from "i18next";
 import {
   Button,
@@ -2821,6 +2824,35 @@ export function App() {
     }
   };
 
+  const openLogDirectory = async () => {
+    setGlobalSettingsError(undefined);
+    setGlobalSettingsNotice(undefined);
+    try {
+      await ipc.openLogDirectory();
+    } catch (error) {
+      setGlobalSettingsError(localizedErrorText(error));
+    }
+  };
+
+  const exportDiagnostics = async () => {
+    setGlobalSettingsError(undefined);
+    setGlobalSettingsNotice(undefined);
+    try {
+      const destination = await saveFileDialog({
+        defaultPath: "bx-ssh-diagnostics.zip",
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+        title: t("settings.actions.exportDiagnostics"),
+      });
+      if (typeof destination !== "string") {
+        return;
+      }
+      await ipc.exportDiagnostics(destination);
+      setGlobalSettingsNotice(t("settings.feedback.diagnosticsExported"));
+    } catch (error) {
+      setGlobalSettingsError(localizedErrorText(error));
+    }
+  };
+
   const busy = ["probing", "connecting", "closing"].includes(connectionState);
   const connected = connectionState === "connected";
   const sessionFontSizeOverridden =
@@ -3954,6 +3986,8 @@ export function App() {
             onCheckForUpdates={() =>
               setUpdateRequestId((current) => current + 1)
             }
+            onExportDiagnostics={() => void exportDiagnostics()}
+            onOpenLogDirectory={() => void openLogDirectory()}
             onClose={() => setSettingsOpen(false)}
             onSave={(application, connection) =>
               void saveApplicationSettings(application, connection)
@@ -4729,6 +4763,10 @@ function commandErrorText(
       return t("errors.invalidCredential");
     case "private_key_error":
       return t("errors.privateKeyError");
+    case "log_directory_unavailable":
+      return t("errors.logDirectoryUnavailable");
+    case "diagnostics_export_failed":
+      return t("errors.diagnosticsExportFailed");
     case "authentication_rejected":
       return t("errors.authenticationRejected");
     case "legacy_rsa_signature_only":

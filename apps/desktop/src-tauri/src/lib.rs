@@ -14,6 +14,7 @@ mod clipboard;
 mod command_error;
 mod connections;
 mod desktop_shell;
+mod diagnostics;
 mod external_links;
 mod lifecycle;
 mod local_files;
@@ -37,6 +38,7 @@ use connections::{
 };
 #[cfg(any(debug_assertions, test))]
 use desktop_shell::AppMenuAction;
+use diagnostics::{export_diagnostics, open_log_directory};
 use external_links::open_external_url;
 use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
 use local_files::{list_local_directory, stat_local_path};
@@ -77,6 +79,8 @@ fn command_builder() -> Builder<tauri::Wry> {
             clipboard::read_clipboard_text,
             clipboard::write_clipboard_text,
             external_links::open_external_url,
+            diagnostics::open_log_directory,
+            diagnostics::export_diagnostics,
             terminal::probe_ssh_host,
             terminal::get_known_host,
             terminal::trust_host_fingerprint,
@@ -245,6 +249,8 @@ pub fn run() {
             read_clipboard_text,
             write_clipboard_text,
             open_external_url,
+            open_log_directory,
+            export_diagnostics,
             probe_ssh_host,
             get_known_host,
             trust_host_fingerprint,
