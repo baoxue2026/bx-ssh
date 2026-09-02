@@ -172,6 +172,68 @@ impl EncryptedDatabase {
         PathBuf::from(path)
     }
 
+    /// Creates an encrypted, point-in-time copy of the database.
+    ///
+    /// The copy is written to a sibling temporary file and atomically published so
+    /// callers never observe a partially written backup. SQLCipher's online backup
+    /// API is used instead of copying bytes because the source may be open and have
+    /// active WAL pages.
+    pub fn backup_to(&self, destination: impl AsRef<Path>) -> Result<()> {
+        let destination = destination.as_ref();
+        if destination == self.path {
+            return Err(PersistenceError::DatabaseBackupIoFailed(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "backup destination must differ from the source database",
+                ),
+            ));
+        }
+        if destination.exists() {
+            return Err(PersistenceError::DatabaseBackupIoFailed(
+                std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "backup destination already exists",
+                ),
+            ));
+        }
+
+        let mut temporary_path = destination.as_os_str().to_owned();
+        temporary_path.push(".tmp");
+        let temporary_path = PathBuf::from(temporary_path);
+        if temporary_path.exists() {
+            fs::remove_file(&temporary_path).map_err(PersistenceError::DatabaseBackupIoFailed)?;
+        }
+
+        let backup_result = (|| {
+            let mut destination_connection = Connection::open(&temporary_path)
+                .map_err(PersistenceError::DatabaseBackupFailed)?;
+            apply_raw_key(&destination_connection, &self.key).map_err(|error| match error {
+                PersistenceError::DatabaseUnlock(source)
+                | PersistenceError::DatabaseOpen(source) => {
+                    PersistenceError::DatabaseBackupFailed(source)
+                }
+                other => other,
+            })?;
+            let backup = Backup::new(&self.connection, &mut destination_connection)
+                .map_err(PersistenceError::DatabaseBackupFailed)?;
+            backup
+                .run_to_completion(100, Duration::ZERO, None)
+                .map_err(PersistenceError::DatabaseBackupFailed)
+        })();
+        if let Err(error) = backup_result {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(error);
+        }
+
+        match fs::rename(&temporary_path, destination) {
+            Ok(()) => Ok(()),
+            Err(source) => {
+                let _ = fs::remove_file(&temporary_path);
+                Err(PersistenceError::DatabaseBackupIoFailed(source))
+            }
+        }
+    }
+
     pub(crate) fn connection(&self) -> &Connection {
         &self.connection
     }
@@ -439,6 +501,51 @@ mod tests {
         let backup_bytes = fs::read(backup_path).unwrap();
         assert!(!contains(&backup_bytes, b"SQLite format 3"));
         assert!(!contains(&backup_bytes, b"migration-canary"));
+    }
+
+    #[test]
+    fn creates_an_encrypted_atomic_backup_for_an_open_database() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.db");
+        let backup_path = directory.path().join("backups").join("before-update.db");
+        fs::create_dir_all(backup_path.parent().unwrap()).unwrap();
+        let key = DataKey::generate().unwrap();
+        let mut database = EncryptedDatabase::open(&path, &key).unwrap();
+        database
+            .apply_migrations(&[Migration::new(
+                1,
+                "CREATE TABLE backup_probe (value TEXT NOT NULL);\
+                 INSERT INTO backup_probe VALUES ('update-canary');",
+            )])
+            .unwrap();
+
+        database.backup_to(&backup_path).unwrap();
+        assert!(backup_path.is_file());
+        assert!(!backup_path.with_file_name("before-update.db.tmp").exists());
+
+        let backup = EncryptedDatabase::open(&backup_path, &key).unwrap();
+        let value: String = backup
+            .connection
+            .query_row("SELECT value FROM backup_probe", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "update-canary");
+        let bytes = fs::read(backup_path).unwrap();
+        assert!(!contains(&bytes, b"update-canary"));
+    }
+
+    #[test]
+    fn refuses_to_overwrite_the_database_or_an_existing_backup() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.db");
+        let backup_path = directory.path().join("backup.db");
+        let key = DataKey::generate().unwrap();
+        let database = EncryptedDatabase::open(&path, &key).unwrap();
+        database.backup_to(&backup_path).unwrap();
+
+        let error = database.backup_to(&backup_path).unwrap_err();
+        assert!(matches!(error, PersistenceError::DatabaseBackupIoFailed(_)));
+        let error = database.backup_to(&path).unwrap_err();
+        assert!(matches!(error, PersistenceError::DatabaseBackupIoFailed(_)));
     }
 
     #[test]

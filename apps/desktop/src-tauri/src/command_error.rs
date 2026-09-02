@@ -63,6 +63,7 @@ pub(crate) enum CommandErrorCode {
     UpdateSignatureInvalid,
     UpdateInsecureEndpoint,
     UpdateUnavailable,
+    UpdateBackupFailed,
     UpdateFailed,
     WebviewMemoryUsageFailed,
     DatabaseUnavailable,
@@ -193,7 +194,9 @@ impl From<PersistenceError> for CommandError {
             | PersistenceError::InvalidTimestamp
             | PersistenceError::MigrationFailed { .. }
             | PersistenceError::MigrationBackupFailed(_)
-            | PersistenceError::MigrationBackupIoFailed(_) => CommandErrorCode::DatabaseQueryFailed,
+            | PersistenceError::MigrationBackupIoFailed(_)
+            | PersistenceError::DatabaseBackupFailed(_)
+            | PersistenceError::DatabaseBackupIoFailed(_) => CommandErrorCode::DatabaseQueryFailed,
             PersistenceError::InvalidCredential => CommandErrorCode::InvalidCredential,
             PersistenceError::CredentialStoreLocked => CommandErrorCode::CredentialStoreLocked,
             PersistenceError::CredentialStoreUnavailable => {
@@ -274,8 +277,14 @@ mod tests {
         let backup = CommandError::from(bx_persistence::PersistenceError::MigrationBackupIoFailed(
             std::io::Error::other("test backup failure"),
         ));
+        let update_backup =
+            CommandError::from(bx_persistence::PersistenceError::DatabaseBackupIoFailed(
+                std::io::Error::other("test update backup failure"),
+            ));
         assert_eq!(locked.code, CommandErrorCode::CredentialStoreLocked);
         assert_eq!(invalid.code, CommandErrorCode::InvalidCredential);
         assert_eq!(backup.code, CommandErrorCode::DatabaseQueryFailed);
+        assert_eq!(update_backup.code, CommandErrorCode::DatabaseQueryFailed);
+        assert!(!update_backup.message.contains("test update backup failure"));
     }
 }

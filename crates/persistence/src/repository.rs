@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::path::Path;
 
 use bx_contracts::{
     ApplicationSettings, AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails,
@@ -83,6 +84,11 @@ impl ConnectionRepository {
     pub fn new(mut database: EncryptedDatabase) -> Result<Self> {
         database.apply_migrations(APPLICATION_MIGRATIONS)?;
         Ok(Self { database })
+    }
+
+    /// Creates a consistent encrypted backup while the repository lock is held.
+    pub fn backup_to(&self, destination: impl AsRef<Path>) -> Result<()> {
+        self.database.backup_to(destination)
     }
 
     pub fn list_catalog(&self) -> Result<ConnectionCatalog> {

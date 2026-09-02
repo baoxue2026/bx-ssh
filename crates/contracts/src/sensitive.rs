@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 /// A string that must not be rendered or logged as plaintext.
-///
 /// The transparent serde representation keeps the IPC wire contract as a
 /// string while the Rust value is cleared when it is dropped. Callers should
 /// use `into_inner` only at the final hand-off to a library that requires an
