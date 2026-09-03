@@ -96,6 +96,7 @@ export function ConnectionWorkspaceEmptyState({
               </span>
               <Button
                 size="small"
+                disabled={loadingConnectionId === item.config.id}
                 loading={loadingConnectionId === item.config.id}
                 onClick={() => onQuickConnect(item)}
               >
