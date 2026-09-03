@@ -254,7 +254,9 @@ function validateCommand(command, workspaceRoot, violations) {
     return;
   }
 
-  const scriptPath = command.match(/^bash (scripts\/[^ ]+)(?:\s+.*)?$/)?.[1];
+  const scriptPath = command.match(
+    /^(?:bash|pwsh) (scripts\/[^ ]+)(?:\s+.*)?$/,
+  )?.[1];
   if (scriptPath) {
     if (!existsSync(join(workspaceRoot, ...scriptPath.split("/")))) {
       violations.push(

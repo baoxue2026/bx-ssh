@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bx_ssh_core::{
-    authenticate_password, authenticate_private_key, probe_host_key, product_algorithm_policy,
+    authenticate_keyboard_interactive_with_progress, authenticate_password,
+    authenticate_private_key, probe_host_key, product_algorithm_policy, ConnectionCancellation,
     ShellEvent, SshEndpoint, SshError, TerminalSize,
 };
 
@@ -23,9 +24,21 @@ async fn validates_host_key_authentication_and_interactive_shell() {
         .unwrap()
         .with_connect_timeout(Duration::from_secs(5))
         .with_operation_timeout(Duration::from_secs(10));
+    let auth_methods = env::var("BX_SSH_TEST_AUTH_METHODS")
+        .unwrap_or_else(|_| "password,public-key,keyboard-interactive".to_owned());
+    let shell_kind = env::var("BX_SSH_TEST_SHELL_KIND").unwrap_or_else(|_| "posix".to_owned());
+    let supports_auth = |method: &str| {
+        auth_methods
+            .split(',')
+            .map(str::trim)
+            .any(|configured| configured == method)
+    };
+    assert!(supports_auth("password"));
 
     let host_key = probe_host_key(&endpoint).await.unwrap();
-    assert_eq!(host_key.algorithm, "ssh-ed25519");
+    let expected_algorithm = env::var("BX_SSH_TEST_EXPECTED_HOST_KEY_ALGORITHM")
+        .unwrap_or_else(|_| "ssh-ed25519".to_owned());
+    assert_eq!(host_key.algorithm, expected_algorithm);
     assert!(host_key.fingerprint_sha256.starts_with("SHA256:"));
 
     let mismatch = authenticate_password(&endpoint, &username, WRONG_FINGERPRINT, &password).await;
@@ -69,38 +82,46 @@ async fn validates_host_key_authentication_and_interactive_shell() {
         .resize(TerminalSize::new(100, 31).unwrap())
         .await
         .unwrap();
-    shell.write("stty -echo; printf '\\001'\n").await.unwrap();
+    if shell_kind == "windows-cmd" {
+        shell
+            .write("@echo off\r\necho __BX_SHELL_READY__\r\nexit 23\r\n")
+            .await
+            .unwrap();
+    } else {
+        shell.write("stty -echo; printf '\\001'\n").await.unwrap();
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            match shell.next_event().await.unwrap() {
-                ShellEvent::Output(data) | ShellEvent::ExtendedOutput { data, .. }
-                    if data.contains(&1) =>
-                {
-                    break;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match shell.next_event().await.unwrap() {
+                    ShellEvent::Output(data) | ShellEvent::ExtendedOutput { data, .. }
+                        if data.contains(&1) =>
+                    {
+                        break;
+                    }
+                    ShellEvent::Output(_) | ShellEvent::ExtendedOutput { .. } | ShellEvent::Eof => {
+                    }
+                    ShellEvent::ExitStatus(status) => {
+                        panic!("shell exited before the test command with status {status}")
+                    }
+                    ShellEvent::ExitSignal { signal, .. } => {
+                        panic!("shell exited before the test command on signal {signal}")
+                    }
+                    ShellEvent::Closed => panic!("shell closed before the test command"),
                 }
-                ShellEvent::Output(_) | ShellEvent::ExtendedOutput { .. } | ShellEvent::Eof => {}
-                ShellEvent::ExitStatus(status) => {
-                    panic!("shell exited before the test command with status {status}")
-                }
-                ShellEvent::ExitSignal { signal, .. } => {
-                    panic!("shell exited before the test command on signal {signal}")
-                }
-                ShellEvent::Closed => panic!("shell closed before the test command"),
             }
-        }
-    })
-    .await
-    .expect("timed out while disabling terminal echo");
-
-    shell
-        .write(
-            format!(
-                "printf '__BX_SHELL_READY__\\n'; printf '__BX_TERM__%s\\n' \"$TERM\"; stty size; printf '中文宽字符\\n'; head -c {LARGE_OUTPUT_BYTES} /dev/zero | tr '\\0' 'x'; printf '\\n__BX_LARGE_OUTPUT_DONE__\\n'; exit 23\n"
-            ),
-        )
+        })
         .await
-        .unwrap();
+        .expect("timed out while disabling terminal echo");
+
+        shell
+            .write(
+                format!(
+                    "printf '__BX_SHELL_READY__\\n'; printf '__BX_TERM__%s\\n' \"$TERM\"; stty size; printf '中文宽字符\\n'; head -c {LARGE_OUTPUT_BYTES} /dev/zero | tr '\\0' 'x'; printf '\\n__BX_LARGE_OUTPUT_DONE__\\n'; exit 23\n"
+                ),
+            )
+            .await
+            .unwrap();
+    }
 
     let (output, exit_status) = tokio::time::timeout(Duration::from_secs(30), async {
         let mut output = Vec::new();
@@ -124,26 +145,52 @@ async fn validates_host_key_authentication_and_interactive_shell() {
 
     let output = String::from_utf8(output).unwrap();
     assert!(output.contains("__BX_SHELL_READY__"));
-    assert!(output.contains("__BX_TERM__xterm-256color"));
-    assert!(output.contains("31 100"));
-    assert!(output.contains("中文宽字符"));
-    assert!(output.contains("__BX_LARGE_OUTPUT_DONE__"));
-    assert!(output.len() >= LARGE_OUTPUT_BYTES);
+    if shell_kind != "windows-cmd" {
+        assert!(output.contains("__BX_TERM__xterm-256color"));
+        assert!(output.contains("31 100"));
+        assert!(output.contains("中文宽字符"));
+        assert!(output.contains("__BX_LARGE_OUTPUT_DONE__"));
+        assert!(output.len() >= LARGE_OUTPUT_BYTES);
+    }
     assert_eq!(exit_status, Some(23));
     drop(shell);
     password_session.disconnect().await.unwrap();
 
-    let key_session = authenticate_private_key(
-        &endpoint,
-        &username,
-        &host_key.fingerprint_sha256,
-        private_key,
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(key_session.host_key(), &host_key);
-    key_session.disconnect().await.unwrap();
+    if supports_auth("keyboard-interactive") {
+        let keyboard_password = password.clone();
+        let keyboard_session = authenticate_keyboard_interactive_with_progress(
+            &endpoint,
+            &username,
+            &host_key.fingerprint_sha256,
+            &ConnectionCancellation::default(),
+            move |prompt| {
+                let password = keyboard_password.clone();
+                async move {
+                    assert!(!prompt.prompts.is_empty());
+                    Ok(prompt.prompts.iter().map(|_| password.clone()).collect())
+                }
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(keyboard_session.host_key(), &host_key);
+        keyboard_session.disconnect().await.unwrap();
+    }
+
+    if supports_auth("public-key") {
+        let key_session = authenticate_private_key(
+            &endpoint,
+            &username,
+            &host_key.fingerprint_sha256,
+            private_key,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(key_session.host_key(), &host_key);
+        key_session.disconnect().await.unwrap();
+    }
 }
 
 fn required_env(name: &str) -> String {

@@ -124,15 +124,54 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Ubuntu 22.04
-            id: ubuntu-22-04
+          - name: Ubuntu 22.04 / Ed25519
+            id: ubuntu-22-04-ed25519
             image: ubuntu:22.04
-          - name: Ubuntu 24.04
-            id: ubuntu-24-04
+            host_key: ed25519
+          - name: Ubuntu 22.04 / ECDSA P-256
+            id: ubuntu-22-04-ecdsa-p256
+            image: ubuntu:22.04
+            host_key: ecdsa-p256
+          - name: Ubuntu 22.04 / RSA-SHA2
+            id: ubuntu-22-04-rsa-sha2
+            image: ubuntu:22.04
+            host_key: rsa-sha2
+          - name: Ubuntu 24.04 / Ed25519
+            id: ubuntu-24-04-ed25519
             image: ubuntu:24.04
-          - name: Debian 12
-            id: debian-12
+            host_key: ed25519
+          - name: Ubuntu 24.04 / ECDSA P-256
+            id: ubuntu-24-04-ecdsa-p256
+            image: ubuntu:24.04
+            host_key: ecdsa-p256
+          - name: Ubuntu 24.04 / RSA-SHA2
+            id: ubuntu-24-04-rsa-sha2
+            image: ubuntu:24.04
+            host_key: rsa-sha2
+          - name: Debian 12 / Ed25519
+            id: debian-12-ed25519
             image: debian:12-slim
+            host_key: ed25519
+          - name: Debian 12 / ECDSA P-256
+            id: debian-12-ecdsa-p256
+            image: debian:12-slim
+            host_key: ecdsa-p256
+          - name: Debian 12 / RSA-SHA2
+            id: debian-12-rsa-sha2
+            image: debian:12-slim
+            host_key: rsa-sha2
+          - name: Rocky Linux 9 / Ed25519
+            id: rocky-9-ed25519
+            image: rockylinux:9
+            host_key: ed25519
+          - name: Rocky Linux 9 / ECDSA P-256
+            id: rocky-9-ecdsa-p256
+            image: rockylinux:9
+            host_key: ecdsa-p256
+          - name: Rocky Linux 9 / RSA-SHA2
+            id: rocky-9-rsa-sha2
+            image: rockylinux:9
+            host_key: rsa-sha2
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -147,13 +186,58 @@ jobs:
           tool: cargo-nextest@0.9.140
 
       - name: Run containerized OpenSSH integration tests
-        run: bash scripts/test-openssh-docker.sh "${{ matrix.image }}" "${{ matrix.id }}"
+        run: bash scripts/test-openssh-docker.sh "${{ matrix.image }}" "${{ matrix.id }}" "${{ matrix.host_key }}"
 
       - name: Publish OpenSSH test summary
         if: always()
         run: cat "artifacts/test-reports/openssh-${{ matrix.id }}.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload OpenSSH test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bx-ssh-openssh-${{ matrix.id }}-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            artifacts/test-reports/*
+
+  openssh-windows:
+    name: OpenSSH (Windows Server 2025 / ${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ed25519
+            id: windows-server-2025-ed25519
+            host_key: ed25519
+          - name: ECDSA P-256
+            id: windows-server-2025-ecdsa-p256
+            host_key: ecdsa-p256
+          - name: RSA-SHA2
+            id: windows-server-2025-rsa-sha2
+            host_key: rsa-sha2
+    runs-on: windows-2025
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Run Windows OpenSSH integration tests
+        shell: pwsh
+        run: >-
+          ./scripts/test-openssh-windows.ps1
+          -MatrixId "${{ matrix.id }}"
+          -HostKeyAlgorithm "${{ matrix.host_key }}"
+
+      - name: Publish Windows OpenSSH test summary
+        if: always()
+        shell: pwsh
+        run: Get-Content "artifacts/test-reports/openssh-${{ matrix.id }}.md" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload Windows OpenSSH test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

@@ -123,4 +123,24 @@ describe("phase-1 QA policy", () => {
       /Test suite QA-FUNC-01 owner must be a non-empty string/,
     );
   });
+
+  it("accepts registered PowerShell automation scripts", () => {
+    const policy = policyWith({
+      testSuites: policyWith().testSuites.map((suite) =>
+        suite.category === "compatibility"
+          ? {
+              ...suite,
+              commands: [
+                {
+                  run: "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-ed25519 -HostKeyAlgorithm ed25519",
+                  type: "automated",
+                },
+              ],
+            }
+          : suite,
+      ),
+    });
+
+    assert.deepEqual(validatePolicy(policy), []);
+  });
 });

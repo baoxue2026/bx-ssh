@@ -104,6 +104,20 @@
           "purpose": "OpenSSH 协议兼容性"
         },
         {
+          "id": "openssh-rocky-9",
+          "platform": "Docker",
+          "os": "Rocky Linux 9 + OpenSSH",
+          "architecture": "x64",
+          "purpose": "RHEL 系 OpenSSH 协议兼容性"
+        },
+        {
+          "id": "openssh-windows-server-2025",
+          "platform": "Windows",
+          "os": "Windows Server 2025 + OpenSSH",
+          "architecture": "x64",
+          "purpose": "Windows OpenSSH 密码、公钥和主机密钥算法兼容性"
+        },
+        {
           "id": "macos-ci",
           "platform": "macOS",
           "os": "macOS 14",
@@ -111,17 +125,80 @@
           "purpose": "桌面技术验证，不作为一期发布平台"
         }
       ],
+      "matrixDimensions": {
+        "serverTargets": [
+          "ubuntu:22.04",
+          "ubuntu:24.04",
+          "debian:12-slim",
+          "rockylinux:9",
+          "windows-server-2025"
+        ],
+        "hostKeyAlgorithms": ["ed25519", "ecdsa-p256", "rsa-sha2"],
+        "authenticationMethods": [
+          "password",
+          "public-key-ed25519",
+          "keyboard-interactive"
+        ]
+      },
       "commands": [
         {
-          "run": "bash scripts/test-openssh-docker.sh ubuntu:22.04 ubuntu-22-04",
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:22.04 ubuntu-22-04-ed25519 ed25519",
           "type": "automated"
         },
         {
-          "run": "bash scripts/test-openssh-docker.sh ubuntu:24.04 ubuntu-24-04",
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:22.04 ubuntu-22-04-ecdsa-p256 ecdsa-p256",
           "type": "automated"
         },
         {
-          "run": "bash scripts/test-openssh-docker.sh debian:12-slim debian-12",
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:22.04 ubuntu-22-04-rsa-sha2 rsa-sha2",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:24.04 ubuntu-24-04-ed25519 ed25519",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:24.04 ubuntu-24-04-ecdsa-p256 ecdsa-p256",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:24.04 ubuntu-24-04-rsa-sha2 rsa-sha2",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh debian:12-slim debian-12-ed25519 ed25519",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh debian:12-slim debian-12-ecdsa-p256 ecdsa-p256",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh debian:12-slim debian-12-rsa-sha2 rsa-sha2",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh rockylinux:9 rocky-9-ed25519 ed25519",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh rockylinux:9 rocky-9-ecdsa-p256 ecdsa-p256",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh rockylinux:9 rocky-9-rsa-sha2 rsa-sha2",
+          "type": "automated"
+        },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-ed25519 -HostKeyAlgorithm ed25519",
+          "type": "automated"
+        },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-ecdsa-p256 -HostKeyAlgorithm ecdsa-p256",
+          "type": "automated"
+        },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-rsa-sha2 -HostKeyAlgorithm rsa-sha2",
           "type": "automated"
         },
         { "run": "pnpm test:e2e", "type": "automated" }
