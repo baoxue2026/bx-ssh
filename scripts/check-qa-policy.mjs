@@ -14,6 +14,7 @@ export function validatePolicy(policy, { workspaceRoot = workspace } = {}) {
     "functional",
     "compatibility",
     "performance",
+    "stability",
     "security",
     "installation",
     "recovery",
@@ -135,7 +136,7 @@ export function validatePolicy(policy, { workspaceRoot = workspace } = {}) {
   }
   if (suites.length !== requiredCategories.length) {
     violations.push(
-      "QA policy testSuites must contain exactly six phase-1 categories",
+      "QA policy testSuites must contain exactly seven phase-1 categories",
     );
   }
 
@@ -290,7 +291,7 @@ function main() {
     return;
   }
   console.log(
-    "QA policy check passed (six phase-1 test categories, owners, environments, gates, and commands).",
+    "QA policy check passed (seven phase-1 test categories, owners, environments, gates, and commands).",
   );
 }
 

@@ -68,6 +68,7 @@ function policyWith(overrides = {}) {
       validSuite,
       { ...validSuite, id: "QA-COMP-01", category: "compatibility" },
       { ...validSuite, id: "QA-PERF-01", category: "performance" },
+      { ...validSuite, id: "QA-STAB-01", category: "stability" },
       { ...validSuite, id: "QA-SEC-01", category: "security" },
       { ...validSuite, id: "QA-INSTALL-01", category: "installation" },
       { ...validSuite, id: "QA-RECOVERY-01", category: "recovery" },
@@ -83,11 +84,13 @@ describe("phase-1 QA policy", () => {
 
   it("rejects a missing test category", () => {
     const policy = policyWith({
-      testSuites: policyWith().testSuites.slice(0, 5),
+      testSuites: policyWith().testSuites.filter(
+        (suite) => suite.category !== "stability",
+      ),
     });
     assert.match(
       validatePolicy(policy).join("\n"),
-      /must define exactly one recovery test suite/,
+      /must define exactly one stability test suite/,
     );
   });
 

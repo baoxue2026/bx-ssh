@@ -74,6 +74,12 @@ jobs:
       - name: Test performance report validator
         run: pnpm performance:test
 
+      - name: Check stability controls
+        run: pnpm stability:controls
+
+      - name: Test stability report validator
+        run: pnpm stability:test
+
   rust:
     name: Rust checks (${{ matrix.os }})
     strategy:

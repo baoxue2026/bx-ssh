@@ -276,6 +276,57 @@
       ]
     },
     {
+      "id": "QA-STAB-01",
+      "category": "stability",
+      "name": "稳定性与资源泄漏测试",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "win11-stability",
+          "platform": "Windows",
+          "os": "Windows 11 24H2",
+          "architecture": "x64",
+          "purpose": "24 小时运行、休眠唤醒、断网恢复和资源释放验证"
+        }
+      ],
+      "matrixDimensions": {
+        "lifecycleScenarios": [
+          "24-hour-soak",
+          "sleep-wake",
+          "network-disconnect",
+          "manual-reconnect",
+          "sftp-transfer-cancel",
+          "full-cleanup"
+        ],
+        "resourceTypes": [
+          "all-related-process-working-set",
+          "terminal-session-handles",
+          "sftp-session-handles",
+          "sftp-transfer-handles"
+        ]
+      },
+      "commands": [
+        { "run": "pnpm stability:controls", "type": "automated" },
+        { "run": "pnpm stability:test", "type": "automated" }
+      ],
+      "manualChecks": [
+        "按 quality/phase-1-stability-budget.json 在参考设备执行连续 24 小时稳定性测试",
+        "执行规定次数的休眠/唤醒、网络中断、手动重连和 SFTP 取消场景",
+        "确认断网或远端关闭后状态不再显示已连接，重连创建新的会话句柄",
+        "测试结束后关闭全部会话和传输，确认旧句柄失效且无终端、SFTP 或传输句柄泄漏",
+        "使用 pnpm stability:report 校验 stability-report.json，内存相对稳定状态增长不得超过 15%"
+      ],
+      "artifacts": [
+        "artifacts/stability/stability-report.json",
+        "artifacts/stability/process-memory.csv",
+        "artifacts/stability/lifecycle-events.jsonl",
+        "artifacts/stability/fault-timeline.jsonl",
+        "artifacts/stability/handle-snapshots.jsonl",
+        "quality/phase-1-stability-budget.json"
+      ]
+    },
+    {
       "id": "QA-SEC-01",
       "category": "security",
       "name": "安全测试",

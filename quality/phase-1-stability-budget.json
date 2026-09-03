@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "phase": "P1",
+  "referenceEnvironment": {
+    "platform": "Windows",
+    "os": "Windows 11 24H2",
+    "architecture": "x64",
+    "cpuCores": 4,
+    "memoryGb": 16,
+    "storage": "NVMe"
+  },
+  "thresholds": {
+    "soakDurationHours": { "min": 24, "unit": "h" },
+    "workingSetGrowthRatio": { "max": 0.15, "unit": "ratio" },
+    "leakedSessionHandles": { "max": 0, "unit": "handles" },
+    "leakedTransferHandles": { "max": 0, "unit": "handles" },
+    "falseConnectedStates": { "max": 0, "unit": "occurrences" },
+    "staleHandleOperationsAccepted": { "max": 0, "unit": "occurrences" },
+    "unhandledFailures": { "max": 0, "unit": "occurrences" }
+  },
+  "protocol": {
+    "steadyStateWarmupMinutes": 30,
+    "workingSetSampleIntervalSeconds": 60,
+    "stateSampleIntervalSeconds": 60,
+    "handleSnapshotIntervalMinutes": 60,
+    "minimumWorkingSetSamples": 1440,
+    "minimumStateSamples": 1440,
+    "minimumHandleSnapshots": 24,
+    "terminalSessionCount": 5,
+    "sftpSessionCount": 1,
+    "sleepWakeCycles": 3,
+    "networkDisconnectCycles": 10,
+    "reconnectCycles": 10,
+    "sftpCancellationCycles": 10,
+    "networkOutageSeconds": 30,
+    "postCleanupObservationMinutes": 10,
+    "freshSessionIdRequired": true,
+    "allRelatedProcessesRequired": true,
+    "baselineCommitRequired": true
+  },
+  "requiredEvidence": [
+    "timestamped process working-set samples",
+    "SSH and SFTP lifecycle state observations",
+    "sleep/wake and network-disconnect timeline",
+    "session and transfer handle snapshots before and after cleanup",
+    "application logs and failure summary"
+  ]
+}

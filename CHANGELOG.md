@@ -24,4 +24,5 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 - Debug-only Tauri end-to-end testing on Windows, macOS, and Linux with keyboard workflows, Windows viewport/DPI profiles, WCAG 2.1 A/AA reports, and isolated test permissions.
 - Credential, host-fingerprint, CSP, command-boundary, path-traversal, external-link, and log-redaction security controls are validated by a dedicated regression gate.
 - Startup, multi-session, terminal-output, memory, and SFTP performance budgets are captured by a dedicated regression gate and report schema.
+- A 24-hour stability, sleep/wake, network interruption, reconnect, and resource-leak protocol is enforced through a versioned budget and report validator.
 - G0-09 security and supply-chain gates with Rust/npm vulnerability and license checks, full-history secret scanning, CycloneDX SBOM archival, automated dependency updates, and a threat model.
