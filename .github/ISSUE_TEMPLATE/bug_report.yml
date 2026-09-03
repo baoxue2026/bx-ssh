@@ -17,6 +17,32 @@ body:
     validations:
       required: true
   - type: dropdown
+    id: severity
+    attributes:
+      label: Defect severity
+      description: Select the highest applicable impact. P0/P1 defects block a release until resolved or explicitly mitigated.
+      options:
+        - "P0 - Emergency: security, data loss, cannot start or upgrade"
+        - "P1 - Critical: core SSH, terminal, SFTP, credentials, or update flow unavailable"
+        - "P2 - Major: important defect with a workaround"
+        - "P3 - Minor: low-risk experience, copy, or edge-case issue"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Connection management
+        - SSH or authentication
+        - Terminal
+        - SFTP or file transfer
+        - Settings or desktop integration
+        - Update, installation, or recovery
+        - Other
+    validations:
+      required: true
+  - type: dropdown
     id: operating-system
     attributes:
       label: Operating system
@@ -26,6 +52,29 @@ body:
         - macOS technical build
         - Linux technical build
         - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Test environment
+      description: Include OS version, architecture, app version or commit, display scale, and relevant server/client versions.
+      placeholder: |
+        OS: Windows 11 24H2 x64
+        App: v0.1.0 / commit 1a2b3c4
+        SSH server: OpenSSH 9.x on Ubuntu 24.04
+        Other: 150% display scale, proxy, or special configuration
+    validations:
+      required: true
+  - type: dropdown
+    id: release-impact
+    attributes:
+      label: Release impact
+      description: This is a triage signal; maintainers confirm the final gate decision.
+      options:
+        - Yes - blocks release
+        - No - does not block release
+        - Unknown - needs triage
     validations:
       required: true
   - type: textarea

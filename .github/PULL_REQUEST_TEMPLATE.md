@@ -18,12 +18,39 @@
 
 <!-- List commands, environments, and manual checks. -->
 
+### Test Types
+
+- [ ] Functional
+- [ ] Compatibility
+- [ ] Performance
+- [ ] Security
+- [ ] Installation or upgrade
+- [ ] Recovery or data retention
+- [ ] Not applicable (explain below)
+
+### Environment and Evidence
+
+<!-- Include OS/version/architecture, commands, manual checks, and artifact or report paths. -->
+
+### QA Policy and Release Gate
+
+<!-- See quality/phase-1-test-matrix.json. P0/P1 defects and release-blocking suites must be resolved before release. -->
+
+- [ ] I ran the relevant automated checks from the QA policy.
+- [ ] I completed the relevant manual checks and attached redacted evidence when required.
+- [ ] Any failed or skipped check has an issue, owner, severity, and release decision.
+
 ## Security and Data Impact
 
 - [ ] No security, credential, filesystem, database, update, or migration impact
 - [ ] Impact is described below and received the required review
 
 <!-- Cover host keys, credentials, paths, logs, IPC permissions, schema, and migration when applicable. -->
+
+## Installation, Recovery, and Migration Impact
+
+- [ ] No impact on installation, upgrade, uninstall, backup, recovery, or data retention
+- [ ] Impact is described below, including rollback and user-data implications
 
 ## UI Evidence
 

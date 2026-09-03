@@ -87,7 +87,14 @@ Do not fabricate authorship, use shared Git identities, or remove another contri
 
 ## Quality and Security
 
-Before requesting review, run the formatting, static analysis, unit, integration, and relevant end-to-end checks provided by the workspace. The exact commands will be added when the production scaffold is initialized.
+Before requesting review, run the formatting, static analysis, unit, integration, and relevant end-to-end checks provided by the workspace. The phase-1 test owners, environments, release gates, evidence locations, and manual checks are frozen in [quality/phase-1-test-matrix.json](quality/phase-1-test-matrix.json). Validate the policy itself with `pnpm qa:check` and `pnpm qa:test`.
+
+Defect severity follows the same policy:
+
+- `P0` Emergency: security or data exposure/loss, or the application cannot start or upgrade. Stop release.
+- `P1` Critical: a core SSH, terminal, SFTP, credential, or update flow is unavailable. Stop release.
+- `P2` Major: an important defect with a workaround. Assign a target fix version.
+- `P3` Minor: low-risk copy, usability, visual, or edge-case issue. Prioritize during maintenance.
 
 Changes involving SSH authentication, host keys, credentials, local paths, SQL migrations, updates, or release signing require an explicit security review section in the PR.
 
