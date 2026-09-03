@@ -85,6 +85,12 @@ jobs:
       - name: Check Tauri capabilities and CSP
         run: node scripts/check-tauri-security.mjs
 
+      - name: Check application security controls
+        run: pnpm security:controls
+
+      - name: Test application security controls
+        run: pnpm security:test
+
       - name: Audit npm dependencies
         run: pnpm audit --registry=https://registry.npmjs.org --audit-level high
 

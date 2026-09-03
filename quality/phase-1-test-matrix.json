@@ -293,6 +293,8 @@
         }
       ],
       "commands": [
+        { "run": "pnpm security:controls", "type": "automated" },
+        { "run": "pnpm security:test", "type": "automated" },
         { "run": "pnpm security:tauri", "type": "automated" },
         { "run": "pnpm security:licenses", "type": "automated" },
         { "run": "pnpm security:exceptions", "type": "automated" }
@@ -302,7 +304,11 @@
         "验证未知主机指纹、弱算法和更新签名失败时均会阻断危险操作",
         "按 SECURITY.md 执行一次敏感数据检查"
       ],
-      "artifacts": ["CI security job logs", "artifacts/sbom/bx-ssh.cdx.json"]
+      "artifacts": [
+        "CI security job logs",
+        "artifacts/sbom/bx-ssh.cdx.json",
+        "security control test output"
+      ]
     },
     {
       "id": "QA-INSTALL-01",
