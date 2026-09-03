@@ -1241,8 +1241,11 @@ fn validate_transfer_id(transfer_id: &str) -> Result<&str, CommandError> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{localized_transfer_title, validate_transfer_id, SftpSessionManager};
     use crate::command_error::CommandErrorCode;
+    use tokio::sync::Barrier;
 
     #[tokio::test]
     async fn rejects_unknown_sftp_session_handles() {
@@ -1283,5 +1286,88 @@ mod tests {
         manager.finish_transfer(TRANSFER_ID).await;
         assert!(!manager.cancel_transfer("main", TRANSFER_ID).await);
         assert!(validate_transfer_id("transfer-1").is_err());
+    }
+
+    #[tokio::test]
+    async fn allows_only_one_concurrent_transfer_for_a_shared_identifier() {
+        const TRANSFER_ID: &str = "75e95ca2-bb25-45d8-8ca9-d9a87d67a4fd";
+        let manager = Arc::new(SftpSessionManager::default());
+        let barrier = Arc::new(Barrier::new(2));
+        let first = {
+            let manager = manager.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                manager.begin_transfer("main", "sftp-1", TRANSFER_ID).await
+            })
+        };
+        let second = {
+            let manager = manager.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                manager.begin_transfer("main", "sftp-1", TRANSFER_ID).await
+            })
+        };
+
+        let results = [first.await.unwrap(), second.await.unwrap()];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| {
+                    result
+                        .as_ref()
+                        .is_err_and(|error| error.code == CommandErrorCode::SessionStateInvalid)
+                })
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn cancels_only_transfers_belonging_to_a_session() {
+        const FIRST_ID: &str = "75e95ca2-bb25-45d8-8ca9-d9a87d67a4fd";
+        const SECOND_ID: &str = "83f6f4e4-f0e7-48a7-8c3e-4e4e7a3c4a52";
+        let manager = SftpSessionManager::default();
+        let first = manager
+            .begin_transfer("main", "sftp-1", FIRST_ID)
+            .await
+            .unwrap();
+        let second = manager
+            .begin_transfer("main", "sftp-2", SECOND_ID)
+            .await
+            .unwrap();
+
+        manager.cancel_session_transfers("sftp-1").await;
+
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled());
+        manager.finish_transfer(FIRST_ID).await;
+        manager.finish_transfer(SECOND_ID).await;
+    }
+
+    #[tokio::test]
+    async fn closes_all_active_transfers_idempotently() {
+        const FIRST_ID: &str = "75e95ca2-bb25-45d8-8ca9-d9a87d67a4fd";
+        const SECOND_ID: &str = "83f6f4e4-f0e7-48a7-8c3e-4e4e7a3c4a52";
+        let manager = SftpSessionManager::default();
+        let first = manager
+            .begin_transfer("main", "sftp-1", FIRST_ID)
+            .await
+            .unwrap();
+        let second = manager
+            .begin_transfer("main", "sftp-2", SECOND_ID)
+            .await
+            .unwrap();
+
+        manager.close_all().await;
+        manager.close_all().await;
+
+        assert!(first.is_cancelled());
+        assert!(second.is_cancelled());
+        manager.finish_transfer(FIRST_ID).await;
+        manager.finish_transfer(SECOND_ID).await;
+        assert!(manager.transfers.lock().await.is_empty());
     }
 }

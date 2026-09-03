@@ -1436,6 +1436,8 @@ mod tests {
         worker.await.unwrap();
 
         assert!(manager.sessions.lock().await.is_empty());
+        manager.close_all().await;
+        assert!(manager.sessions.lock().await.is_empty());
     }
 
     #[tokio::test]
