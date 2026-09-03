@@ -11,9 +11,7 @@ import { AppDialog, FeedbackNotice } from "./Feedback";
 import type { CredentialMode } from "./ConnectionEditorDialog";
 
 export type ConnectionLaunchStep =
-  | "fingerprint"
-  | "password"
-  | "keyboardInteractive";
+  "fingerprint" | "password" | "keyboardInteractive";
 
 interface ConnectionLaunchDialogProps {
   connectionName: string;

@@ -225,6 +225,28 @@ describe("App", { timeout: 30_000 }, () => {
     );
   });
 
+  it("supports new-connection, sidebar, and workspace keyboard shortcuts", async () => {
+    renderApp();
+
+    fireEvent.keyDown(window, { ctrlKey: true, key: "n" });
+    const dialog = await screen.findByRole("dialog", { name: "新建连接" });
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    const sidebar = screen.getByRole("complementary", {
+      name: "SSH 连接验证",
+    });
+    fireEvent.keyDown(window, { ctrlKey: true, key: "b" });
+    expect(sidebar).toHaveClass("is-collapsed");
+    fireEvent.keyDown(window, { ctrlKey: true, key: "b" });
+    expect(sidebar).not.toHaveClass("is-collapsed");
+
+    fireEvent.keyDown(window, { ctrlKey: true, key: "2" });
+    expect(screen.getByText("SFTP v3")).toBeInTheDocument();
+    fireEvent.keyDown(window, { ctrlKey: true, key: "1" });
+    expect(screen.getByText("SSH / PTY")).toBeInTheDocument();
+  });
+
   it("opens and closes the prototype-aligned settings workspace", async () => {
     renderApp();
 

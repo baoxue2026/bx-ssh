@@ -18,8 +18,8 @@ export function ThemedApplication() {
             ? theme.darkAlgorithm
             : theme.defaultAlgorithm,
         token: {
-          colorPrimary: resolvedTheme === "dark" ? "#14b8a6" : "#0d9488",
-          colorInfo: resolvedTheme === "dark" ? "#14b8a6" : "#0d9488",
+          colorPrimary: resolvedTheme === "dark" ? "#14b8a6" : "#08766e",
+          colorInfo: resolvedTheme === "dark" ? "#14b8a6" : "#08766e",
           colorLink: resolvedTheme === "dark" ? "#5eead4" : "#0f766e",
           borderRadius: 5,
           fontFamily: UI_FONT_STACK,

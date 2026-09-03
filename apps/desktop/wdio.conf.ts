@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { TauriCapabilities } from "@wdio/tauri-service";
+import { e2eProfile } from "./tests/e2e/profile";
 
 const executable =
   process.platform === "win32" ? "bx-ssh-desktop.exe" : "bx-ssh-desktop";
@@ -52,7 +53,7 @@ export const config: WebdriverIO.Config = {
       "junit",
       {
         outputDir: reportDirectory,
-        outputFileFormat: () => `e2e-${process.platform}.xml`,
+        outputFileFormat: () => `e2e-${e2eProfile.id}.xml`,
       },
     ],
   ],

@@ -20,8 +20,8 @@
         "title": "BX SSH",
         "width": 1180,
         "height": 760,
-        "minWidth": 800,
-        "minHeight": 560,
+        "minWidth": 640,
+        "minHeight": 360,
         "center": true,
         "decorations": false,
         "resizable": true

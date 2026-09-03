@@ -29,6 +29,14 @@
       "scope": "development",
       "reason": "WebdriverIO transitive test-only dependency; it is not packaged into the desktop release.",
       "reviewBy": "2026-09-03"
+    },
+    {
+      "name": "axe-core",
+      "versions": ["4.13.0"],
+      "license": "MPL-2.0",
+      "scope": "development",
+      "reason": "WCAG regression engine used only by WebdriverIO tests; it is not packaged into the desktop release.",
+      "reviewBy": "2027-09-03"
     }
   ]
 }

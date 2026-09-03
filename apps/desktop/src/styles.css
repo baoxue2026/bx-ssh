@@ -14,9 +14,9 @@
   --border-subtle: #dedede;
   --text: #141414;
   --text-secondary: #5c5c5c;
-  --text-muted: #777777;
+  --text-muted: #626262;
   --hover: #e3f5f2;
-  --accent: #0d9488;
+  --accent: #08766e;
   --accent-bg: #d1faf5;
   --accent-soft: rgba(13, 148, 136, 0.14);
   --accent-text: #ffffff;
@@ -27,8 +27,8 @@
   --fingerprint-bg: #eefbf9;
   --fingerprint-border: #9bd9d1;
   --fingerprint-text: #176b64;
-  --status-bg: #0d9488;
-  --status-border: #08766e;
+  --status-bg: #08766e;
+  --status-border: #065f58;
   --status-divider: rgba(255, 255, 255, 0.35);
   --status-text: #effffc;
   --topbar-bg: #d8d8d8;
@@ -59,7 +59,7 @@
   --border-subtle: #252525;
   --text: #e2e2e2;
   --text-secondary: #858585;
-  --text-muted: #666666;
+  --text-muted: #a0a0a0;
   --hover: rgba(20, 184, 166, 0.14);
   --accent: #14b8a6;
   --accent-bg: rgba(20, 184, 166, 0.14);
@@ -121,8 +121,8 @@ select {
   grid-template-rows: 38px minmax(0, 1fr) 22px;
   width: 100%;
   height: 100%;
-  min-width: 800px;
-  min-height: 560px;
+  min-width: 0;
+  min-height: 0;
   background: var(--app-bg);
 }
 
@@ -2900,11 +2900,51 @@ select {
   }
 }
 
-@media (max-width: 700px) {
-  .app-shell {
-    min-width: 0;
+@media (max-width: 800px) {
+  .titlebar-search.ant-input-affix-wrapper {
+    width: auto;
+    min-width: 96px;
+    flex: 1 1 auto;
   }
 
+  .titlebar-drag-region {
+    display: none;
+  }
+
+  .titlebar-new-connection.ant-btn {
+    width: 28px;
+    min-width: 28px;
+    padding: 0;
+  }
+
+  .titlebar-new-connection .ant-btn-icon + span {
+    display: none;
+  }
+
+  .settings-view {
+    left: 0 !important;
+  }
+
+  .settings-nav {
+    width: 132px;
+    flex-basis: 132px;
+  }
+
+  .settings-footer {
+    padding-left: 146px;
+  }
+
+  .settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .settings-row-control {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 700px) {
   .connection-editor-dialog .ant-tabs-tab {
     min-width: 0;
   }
@@ -2918,5 +2958,13 @@ select {
   .connection-workspace-recent {
     grid-template-columns: minmax(0, 1fr);
     width: min(420px, 88vw);
+  }
+}
+
+@media (max-height: 560px) {
+  .connection-editor-dialog .ant-modal-body {
+    min-height: 0;
+    max-height: calc(100vh - 150px);
+    overflow-y: auto;
   }
 }

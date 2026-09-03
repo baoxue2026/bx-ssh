@@ -11,10 +11,7 @@ import {
   DEFAULT_APPLICATION_SETTINGS,
   DEFAULT_GLOBAL_CONNECTION_SETTINGS,
 } from "../ui/applicationSettings";
-import type {
-  ApplicationSettings,
-  ConnectionSettings,
-} from "../ipc/bindings";
+import type { ApplicationSettings, ConnectionSettings } from "../ipc/bindings";
 import { SettingsView } from "./SettingsView";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -88,9 +85,15 @@ describe("SettingsView", () => {
     renderSettings({ onExportDiagnostics, onOpenLogDirectory });
     const settings = screen.getByRole("region", { name: "设置" });
 
-    fireEvent.click(within(settings).getByRole("button", { name: "日志与诊断" }));
-    fireEvent.click(within(settings).getByRole("button", { name: "打开日志目录" }));
-    fireEvent.click(within(settings).getByRole("button", { name: "导出脱敏诊断包" }));
+    fireEvent.click(
+      within(settings).getByRole("button", { name: "日志与诊断" }),
+    );
+    fireEvent.click(
+      within(settings).getByRole("button", { name: "打开日志目录" }),
+    );
+    fireEvent.click(
+      within(settings).getByRole("button", { name: "导出脱敏诊断包" }),
+    );
 
     expect(onOpenLogDirectory).toHaveBeenCalledOnce();
     expect(onExportDiagnostics).toHaveBeenCalledOnce();

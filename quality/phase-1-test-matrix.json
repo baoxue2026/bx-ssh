@@ -60,8 +60,30 @@
           "os": "Ubuntu 24.04",
           "architecture": "x64",
           "purpose": "前端、Rust 单元与集成测试"
+        },
+        {
+          "id": "windows-2025-e2e",
+          "platform": "Windows",
+          "os": "Windows Server 2025 + WebView2",
+          "architecture": "x64",
+          "purpose": "Tauri 主流程、键盘、窗口尺寸、缩放和可访问性自动回归"
         }
       ],
+      "matrixDimensions": {
+        "windowsDisplayProfiles": [
+          "1280x720@100%",
+          "1366x768@125%",
+          "1440x900@150%",
+          "1440x900@200%"
+        ],
+        "keyboardFlows": [
+          "new-connection",
+          "workspace-switch",
+          "sidebar-toggle",
+          "settings-navigation"
+        ],
+        "accessibilityStandards": ["WCAG 2.1 A", "WCAG 2.1 AA"]
+      },
       "commands": [
         { "run": "pnpm test", "type": "automated" },
         { "run": "pnpm cargo:test", "type": "automated" },
@@ -73,7 +95,12 @@
         "验证 SFTP 浏览、上传、下载、取消与失败提示",
         "验证设置、主题、语言和诊断信息脱敏"
       ],
-      "artifacts": ["artifacts/test-reports/e2e/", "CI job logs"]
+      "artifacts": [
+        "artifacts/test-reports/e2e/e2e-*.xml",
+        "artifacts/test-reports/e2e/accessibility-*.json",
+        "artifacts/test-reports/e2e/logs/",
+        "CI job logs"
+      ]
     },
     {
       "id": "QA-COMP-01",

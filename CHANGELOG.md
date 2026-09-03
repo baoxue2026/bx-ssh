@@ -21,5 +21,5 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 - Unsigned Windows, macOS, and Linux prototype packaging with installation-bundle size reports and enforced desktop size budgets.
 - Signed full-package update checks and installation with tamper and wrong-key rejection validation.
 - OpenSSH compatibility testing across Ubuntu 22.04, Ubuntu 24.04, Debian 12, Rocky Linux 9, and Windows Server 2025, covering Ed25519, ECDSA P-256, RSA-SHA2, password, public-key, and keyboard-interactive authentication.
-- Debug-only Tauri end-to-end testing on Windows, macOS, and Linux with WebdriverIO reports and isolated test permissions.
+- Debug-only Tauri end-to-end testing on Windows, macOS, and Linux with keyboard workflows, Windows viewport/DPI profiles, WCAG 2.1 A/AA reports, and isolated test permissions.
 - G0-09 security and supply-chain gates with Rust/npm vulnerability and license checks, full-history secret scanning, CycloneDX SBOM archival, automated dependency updates, and a threat model.

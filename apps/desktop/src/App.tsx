@@ -734,6 +734,23 @@ export function App() {
       if (shouldSkipApplicationShortcut(event)) return;
       if (!event.ctrlKey || event.altKey || event.metaKey) return;
 
+      const key = event.key.toLowerCase();
+
+      if (!event.shiftKey && key === "n") {
+        event.preventDefault();
+        setConnectionEditorInitialValue(undefined);
+        setConnectionEditorError(null);
+        setConnectionEditorNotice(undefined);
+        setConnectionEditorOpen(true);
+        return;
+      }
+
+      if (!event.shiftKey && key === "b") {
+        event.preventDefault();
+        setSidebarCollapsed((current) => !current);
+        return;
+      }
+
       if (!event.shiftKey && (event.key === "1" || event.key === "2")) {
         event.preventDefault();
         selectWorkspaceMode(event.key === "1" ? "terminal" : "sftp");
@@ -741,14 +758,14 @@ export function App() {
       }
 
       if (!event.shiftKey) return;
-      if (event.key.toLowerCase() === "f") {
+      if (key === "f") {
         if (workspaceMode !== "terminal" || !activeSessionTab) return;
         event.preventDefault();
         terminalRef.current?.openSearch();
-      } else if (event.key.toLowerCase() === "u") {
+      } else if (key === "u") {
         event.preventDefault();
         setUpdateRequestId((current) => current + 1);
-      } else if (event.key.toLowerCase() === "q") {
+      } else if (key === "q") {
         event.preventDefault();
         void getCurrentWindow()
           .close()
