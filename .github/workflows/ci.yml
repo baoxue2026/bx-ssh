@@ -68,6 +68,12 @@ jobs:
       - name: Build frontend
         run: pnpm build:web
 
+      - name: Check performance controls
+        run: pnpm performance:controls
+
+      - name: Test performance report validator
+        run: pnpm performance:test
+
   rust:
     name: Rust checks (${{ matrix.os }})
     strategy:

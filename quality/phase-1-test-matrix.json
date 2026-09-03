@@ -256,16 +256,21 @@
       ],
       "commands": [
         { "run": "pnpm build:web", "type": "automated" },
+        { "run": "pnpm performance:controls", "type": "automated" },
+        { "run": "pnpm performance:test", "type": "automated" },
         { "run": "pnpm bundle:report", "type": "automated" }
       ],
       "manualChecks": [
         "记录冷启动和从托盘恢复的耗时",
-        "保持 5 个 SSH 会话 30 分钟，记录内存、CPU 与终端输出延迟",
+        "保持 10 个 SSH 会话 30 分钟，记录内存、CPU 与终端输出延迟",
         "验证大目录 SFTP 列表和大文件传输期间界面仍可操作",
-        "将结果与上一个发布版本对比，异常增长需登记 P1 或 P2 缺陷"
+        "按 quality/phase-1-performance-budget.json 执行固定采样协议",
+        "使用 pnpm performance:report 校验 performance-report.json，并与上一个发布版本对比，异常增长需登记 P1 或 P2 缺陷"
       ],
       "artifacts": [
-        "artifacts/bundle-sizes.json",
+        "artifacts/bundle-size/*",
+        "artifacts/performance/performance-report.json",
+        "quality/phase-1-performance-budget.json",
         "CI job summary",
         "手工性能记录（发布附件）"
       ]

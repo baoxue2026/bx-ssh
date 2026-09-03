@@ -35,9 +35,12 @@
     "security:test": "node --test scripts/check-security-controls.test.mjs",
     "security:tauri": "node scripts/check-tauri-security.mjs",
     "check:windows-packaging": "node scripts/check-windows-packaging.mjs",
+    "performance:controls": "node scripts/check-performance-controls.mjs",
+    "performance:test": "node --test scripts/check-performance-controls.test.mjs",
+    "performance:report": "node scripts/check-performance-controls.mjs --report artifacts/performance/performance-report.json",
     "qa:check": "node scripts/check-qa-policy.mjs",
     "qa:test": "node --test scripts/check-qa-policy.test.mjs",
-    "check": "pnpm qa:check && pnpm qa:test && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm security:controls && pnpm security:test && pnpm security:tauri && pnpm check:windows-packaging && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test && pnpm ipc:check"
+    "check": "pnpm qa:check && pnpm qa:test && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm security:controls && pnpm security:test && pnpm performance:controls && pnpm performance:test && pnpm security:tauri && pnpm check:windows-packaging && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test && pnpm ipc:check"
   },
   "devDependencies": {
     "prettier": "3.9.6"
