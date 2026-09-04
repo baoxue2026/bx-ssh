@@ -6,7 +6,15 @@ param(
     [ValidateSet("ed25519", "ecdsa-p256", "rsa-sha2")]
     [string]$HostKeyAlgorithm = "ed25519",
 
-    [string]$Target = ""
+    [string]$Target = "",
+
+    [switch]$IncludeSftp,
+
+    [UInt64]$SftpBytes = 8388608,
+
+    [UInt64]$SftpBaselineBps = 0,
+
+    [switch]$RequireOneGiB
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +23,7 @@ $reportDirectory = Join-Path (Get-Location) "artifacts/test-reports"
 $reportPath = Join-Path $reportDirectory "openssh-$MatrixId.md"
 $reportLogPath = Join-Path $reportDirectory "openssh-$MatrixId.log"
 $serverLogPath = Join-Path $testRoot "sshd.stderr.log"
+$testOutputPath = Join-Path $testRoot "test-output.log"
 $serverVersion = "unavailable"
 $targetName = $Target
 $result = "FAIL"
@@ -203,18 +212,29 @@ LogLevel VERBOSE
     $env:BX_SSH_TEST_HOST_KEY_ALGORITHM = $HostKeyAlgorithm
     $env:BX_SSH_TEST_EXPECTED_HOST_KEY_ALGORITHM = $expectedHostKeyAlgorithm
     $env:BX_SSH_TEST_EXPECTED_EXIT_STATUS = "0"
+    $env:BX_SSH_TEST_WINDOWS_SERVER = "1"
     $env:BX_SSH_TEST_AUTH_METHODS = "password,public-key"
     $env:BX_SSH_TEST_SHELL_KIND = "windows-cmd"
-    Invoke-NativeCommand -FilePath "cargo.exe" -ArgumentList @(
-        "test",
-        "-p",
-        "bx-ssh-core",
-        "--test",
-        "openssh",
-        "--",
-        "--ignored",
-        "--nocapture"
-    )
+    if ($IncludeSftp) {
+        if ($RequireOneGiB) {
+            $SftpBytes = 1GB
+        }
+        $env:BX_SSH_TEST_SFTP_BYTES = $SftpBytes.ToString()
+        if ($SftpBaselineBps -gt 0) {
+            $env:BX_SSH_TEST_SFTP_BASELINE_BPS = $SftpBaselineBps.ToString()
+        }
+        if ($RequireOneGiB) {
+            $env:BX_SSH_TEST_SFTP_REQUIRE_ONE_GIB = "1"
+        }
+    }
+    $cargoArguments = @("test", "-p", "bx-ssh-core", "--test", "openssh")
+    if ($IncludeSftp) { $cargoArguments += @("--test", "sftp") }
+    $cargoArguments += @("--", "--ignored", "--nocapture")
+    $cargoOutput = (& cargo.exe @cargoArguments 2>&1 | Out-String)
+    $cargoOutput | Set-Content -LiteralPath $testOutputPath -Encoding utf8
+    if ($LASTEXITCODE -ne 0) {
+        throw "OpenSSH integration tests failed with exit code $LASTEXITCODE"
+    }
     $result = "PASS"
 }
 finally {
@@ -247,6 +267,10 @@ finally {
     }
     else {
         New-Item -ItemType File -Path $reportLogPath -Force | Out-Null
+    }
+    if (Test-Path -LiteralPath $testOutputPath) {
+        Add-Content -LiteralPath $reportLogPath -Value "`r`n--- cargo test output ---`r`n"
+        Get-Content -LiteralPath $testOutputPath | Add-Content -LiteralPath $reportLogPath
     }
     if ($userCreated) {
         Remove-LocalUser -Name $testUser -ErrorAction SilentlyContinue

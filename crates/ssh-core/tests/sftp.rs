@@ -27,6 +27,8 @@ async fn validates_sftp_directory_transfer_and_sha256() {
         .unwrap_or(DEFAULT_TEST_BYTES);
     let require_one_gib = env::var("BX_SSH_TEST_SFTP_REQUIRE_ONE_GIB")
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
+    let windows_server = env::var("BX_SSH_TEST_WINDOWS_SERVER")
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
     if require_one_gib {
         assert_eq!(
             test_bytes, ONE_GIB_BYTES,
@@ -81,14 +83,25 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     let source_path = test_root.join("source.bin");
     let download_path = test_root.join("download.bin");
     let remote_name = format!(".bx-ssh-sftp-test-{}.bin", std::process::id());
-    let remote_path = format!("./{remote_name}");
+    let remote_path = if remote_home == "/" {
+        format!("/{remote_name}")
+    } else {
+        format!("{}/{remote_name}", remote_home.trim_end_matches('/'))
+    };
     let source_directory = test_root.join("source-directory");
     let source_deep_directory = source_directory.join("deep").join("a").join("b");
     let source_empty_directory = source_directory.join("empty");
     let source_directory_file = source_deep_directory.join("source.bin");
     let download_directory = test_root.join("download-directory");
     let remote_directory_name = format!(".bx-ssh-sftp-test-{}.dir", std::process::id());
-    let remote_directory = format!("./{remote_directory_name}");
+    let remote_directory = if remote_home == "/" {
+        format!("/{remote_directory_name}")
+    } else {
+        format!(
+            "{}/{remote_directory_name}",
+            remote_home.trim_end_matches('/')
+        )
+    };
     let remote_operations_name = format!(".bx-ssh-sftp-test-{}.ops", std::process::id());
     let remote_operations = if remote_home == "/" {
         format!("/{remote_operations_name}")
@@ -153,7 +166,9 @@ async fn validates_sftp_directory_transfer_and_sha256() {
             sftp.stat_path(&remote_path),
         )
         .await?;
-        assert_eq!(chmod_file.permissions, Some(0o640));
+        if !windows_server {
+            assert_eq!(chmod_file.permissions, Some(0o640));
+        }
 
         let download = run_phase(
             "download_and_verify",
@@ -220,7 +235,9 @@ async fn validates_sftp_directory_transfer_and_sha256() {
             sftp.stat_path(&format!("{remote_operations}/child")),
         )
         .await?;
-        assert_eq!(chmod_entry.permissions, Some(0o700));
+        if !windows_server {
+            assert_eq!(chmod_entry.permissions, Some(0o700));
+        }
         run_phase(
             "rename_operations_child",
             phase_timeout,

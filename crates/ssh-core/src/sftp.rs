@@ -52,7 +52,9 @@ impl SftpClient {
     pub async fn canonicalize(&self, path: &str) -> Result<String, SshError> {
         let path = validate_remote_path(path)?;
         self.reject_remote_symlink_components(path, true).await?;
-        Ok(self.session.canonicalize(path).await?)
+        Ok(normalize_remote_path(
+            self.session.canonicalize(path).await?,
+        ))
     }
 
     pub async fn list_directory(&self, path: &str) -> Result<RemoteDirectoryListing, SshError> {
@@ -94,7 +96,7 @@ impl SftpClient {
         let canonical_path = if metadata.file_type() == FileType::Symlink {
             self.canonicalize_remote_leaf(path).await?
         } else {
-            self.session.canonicalize(path).await?
+            normalize_remote_path(self.session.canonicalize(path).await?)
         };
         let name = Path::new(&canonical_path)
             .file_name()
@@ -997,7 +999,12 @@ impl SftpClient {
         let (parent, name) = path.rsplit_once('/').unwrap_or((".", path));
         let parent = if parent.is_empty() { "/" } else { parent };
         if name.is_empty() {
-            return self.session.canonicalize(path).await.map_err(Into::into);
+            return self
+                .session
+                .canonicalize(path)
+                .await
+                .map(normalize_remote_path)
+                .map_err(Into::into);
         }
         let canonical_parent = self.canonicalize(parent).await?;
         Ok(join_remote_path(&canonical_parent, name))
@@ -1387,6 +1394,10 @@ fn validate_mutation_path(path: &str) -> Result<&str, SshError> {
     } else {
         Ok(path)
     }
+}
+
+fn normalize_remote_path(path: String) -> String {
+    path.replace('\\', "/")
 }
 
 fn is_remote_descendant(parent: &str, path: &str) -> bool {
