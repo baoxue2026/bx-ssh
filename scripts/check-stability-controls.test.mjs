@@ -88,6 +88,13 @@ describe("phase-1 stability controls", () => {
     assert.deepEqual(validateStabilityControls(loadReviewedFiles()), []);
   });
 
+  it("requires the Windows raw evidence collector", () => {
+    const files = loadReviewedFiles();
+    files["scripts/collect-windows-stability.ps1"] = "";
+    const violations = validateStabilityControls(files).join("\n");
+    assert.match(violations, /raw evidence collector is missing/);
+  });
+
   it("rejects a lifecycle implementation without terminal transport observation", () => {
     const files = loadReviewedFiles();
     files["apps/desktop/src-tauri/src/terminal.rs"] = files[

@@ -48,6 +48,7 @@
       "evidence": [
         "commit:a133f3a",
         "commit:fdbb9bf",
+        "scripts/collect-windows-stability.ps1（已完成短时采集冒烟）",
         "本机十会话：BX_SESSION_RESULT sessions=10 elapsed_ms=410",
         "本机 1GiB 上传/下载及 SHA-256 一致性通过"
       ],

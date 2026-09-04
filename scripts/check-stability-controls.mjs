@@ -16,6 +16,7 @@ const reviewedPaths = [
   "apps/desktop/src-tauri/src/sftp.rs",
   "apps/desktop/src-tauri/src/terminal.rs",
   "crates/ssh-core/src/session.rs",
+  "scripts/collect-windows-stability.ps1",
   "package.json",
   STABILITY_BUDGET_PATH,
   "quality/phase-1-test-matrix.json",
@@ -207,6 +208,7 @@ export function validateStabilityControls(files) {
       [/休眠\/唤醒/, "a sleep/wake check"],
       [/网络中断/, "a network interruption check"],
       [/stability:report/, "a stability report validation command"],
+      [/collect-windows-stability\.ps1/, "a Windows raw evidence collector"],
     ]) {
       if (!suite.manualChecks?.some((check) => pattern.test(check))) {
         violations.push(`QA-STAB-01 must document ${description}`);
@@ -226,6 +228,10 @@ export function validateStabilityControls(files) {
         "QA-STAB-01 must reference the versioned stability budget",
       );
     }
+  }
+
+  if (!nonEmptyString(source("scripts/collect-windows-stability.ps1"))) {
+    violations.push("Windows stability raw evidence collector is missing");
   }
 
   return violations;
