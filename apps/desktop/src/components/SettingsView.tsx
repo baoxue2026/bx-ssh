@@ -178,7 +178,7 @@ export function SettingsView({
               <FeedbackNotice
                 type="error"
                 showIcon
-                message={t("settings.feedback.saveFailed")}
+                message={t("settings.feedback.operationFailed")}
                 description={errorMessage ?? browseError}
               />
             )}

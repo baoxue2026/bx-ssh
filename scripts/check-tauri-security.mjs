@@ -10,6 +10,8 @@ const defaultCapability = readJson(
 );
 const e2eConfig = readJson("apps/desktop/tests/e2e/tauri.e2e.conf.json");
 const mainPermission = readText("apps/desktop/src-tauri/permissions/main.toml");
+const generatedIpcBindings = readText("apps/desktop/src/ipc/bindings.ts");
+const ipcClient = readText("apps/desktop/src/ipc/client.ts");
 const desktopHtml = readText("apps/desktop/index.html");
 const desktopStyles = readText("apps/desktop/src/styles.css");
 const preferenceInitializer = readText(
@@ -22,19 +24,40 @@ const reviewedApplicationCommands = [
   "read_clipboard_text",
   "write_clipboard_text",
   "open_external_url",
+  "open_log_directory",
+  "export_diagnostics",
   "probe_ssh_host",
+  "get_known_host",
+  "trust_host_fingerprint",
   "start_password_shell",
+  "start_private_key_shell",
+  "start_keyboard_interactive_shell",
+  "respond_keyboard_interactive",
   "write_terminal",
   "resize_terminal",
   "acknowledge_terminal_output",
   "close_terminal_session",
   "start_password_sftp",
+  "start_private_key_sftp",
   "list_sftp_directory",
   "stat_sftp_path",
+  "create_sftp_directory",
+  "delete_sftp_entry",
+  "move_sftp_entry",
+  "rename_sftp_entry",
+  "chmod_sftp_entry",
   "upload_sftp_file",
+  "upload_sftp_file_with_conflict",
   "download_sftp_file",
+  "download_sftp_file_with_conflict",
+  "upload_sftp_directory",
+  "upload_sftp_directory_with_conflict",
+  "download_sftp_directory",
+  "download_sftp_directory_with_conflict",
+  "cancel_sftp_transfer",
   "hash_remote_sftp_file",
   "close_sftp_session",
+  "cancel_ssh_connection",
   "list_local_directory",
   "stat_local_path",
   "set_webview_memory_usage",
@@ -44,8 +67,26 @@ const reviewedApplicationCommands = [
   "confirm_app_exit",
   "list_connections",
   "get_connection",
+  "save_connection",
+  "get_password_credential",
+  "save_password_credential",
+  "delete_password_credential",
+  "delete_connection",
+  "record_successful_connection",
+  "save_connection_group",
+  "delete_connection_group",
+  "set_connection_group_collapsed",
+  "reorder_connection_groups",
+  "set_connection_favorite",
+  "reorder_connections",
+  "get_global_settings",
+  "save_global_settings",
   "preview_openssh_config",
   "import_openssh_connections",
+  "list_private_keys",
+  "inspect_private_key_file",
+  "save_private_key_reference",
+  "delete_private_key_reference",
 ];
 const productionPermissions = new Set([
   "allow-main-commands",
@@ -76,6 +117,11 @@ const e2ePermissions = new Set([
 
 checkCapability(defaultCapability, "production", productionPermissions);
 checkMainPermission(mainPermission, reviewedApplicationCommands);
+checkFrontendCommandSurface(
+  generatedIpcBindings,
+  ipcClient,
+  reviewedApplicationCommands,
+);
 const e2eCapabilities = e2eConfig.app?.security?.capabilities ?? [];
 if (e2eCapabilities.length !== 1) {
   violations.push("E2E configuration must define exactly one capability");
@@ -273,6 +319,51 @@ function checkMainPermission(value, expectedCommands) {
   if (/commands\.deny\s*=/.test(value)) {
     violations.push("Main permission must not contain a separate deny list");
   }
+}
+
+function checkFrontendCommandSurface(
+  generatedBindings,
+  client,
+  expectedCommands,
+) {
+  const invokedCommands = new Set([
+    ...extractCommandNames(
+      generatedBindings,
+      /\bTAURI_INVOKE\(\s*"([a-z0-9_]+)"/g,
+    ),
+    ...extractCommandNames(
+      client,
+      /\binvoke(?:<[^>\r\n]*>)?\s*\(\s*"([a-z0-9_]+)"/g,
+    ),
+  ]);
+  const reviewedCommands = new Set(expectedCommands);
+  const unreviewed = [...invokedCommands].filter(
+    (command) => !reviewedCommands.has(command),
+  );
+  const unused = expectedCommands.filter(
+    (command) => !invokedCommands.has(command),
+  );
+
+  if (invokedCommands.size === 0) {
+    violations.push("Frontend IPC command surface could not be detected");
+  }
+  if (reviewedCommands.size !== expectedCommands.length) {
+    violations.push("Reviewed application command list contains duplicates");
+  }
+  if (unreviewed.length > 0) {
+    violations.push(
+      `Frontend IPC invokes commands missing from the reviewed ACL: ${unreviewed.join(", ")}`,
+    );
+  }
+  if (unused.length > 0) {
+    violations.push(
+      `Reviewed ACL contains commands not invoked by the frontend: ${unused.join(", ")}`,
+    );
+  }
+}
+
+function extractCommandNames(value, pattern) {
+  return [...value.matchAll(pattern)].map((match) => match[1]);
 }
 
 function checkCsp(value, label, expectedDirectives) {

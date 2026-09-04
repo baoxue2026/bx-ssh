@@ -98,10 +98,19 @@ describe("SettingsView", () => {
     expect(onOpenLogDirectory).toHaveBeenCalledOnce();
     expect(onExportDiagnostics).toHaveBeenCalledOnce();
   });
+
+  it("uses an operation-level title for loading and action errors", () => {
+    renderSettings({ errorMessage: "Command rejected" });
+    const settings = screen.getByRole("region", { name: "设置" });
+
+    expect(within(settings).getByText("设置操作失败")).toBeVisible();
+    expect(within(settings).getByText("Command rejected")).toBeVisible();
+  });
 });
 
 function renderSettings({
   connectTimeoutSecs = DEFAULT_GLOBAL_CONNECTION_SETTINGS.connectTimeoutSecs,
+  errorMessage,
   onExportDiagnostics = vi.fn(),
   onOpenLogDirectory = vi.fn(),
   onSave = vi.fn() as (
@@ -111,6 +120,7 @@ function renderSettings({
   terminalFontSize = DEFAULT_APPLICATION_SETTINGS.terminalFontSize,
 }: {
   connectTimeoutSecs?: number;
+  errorMessage?: string;
   onExportDiagnostics?: () => void;
   onOpenLogDirectory?: () => void;
   onSave?: (
@@ -122,6 +132,7 @@ function renderSettings({
   return render(
     <SettingsView
       appName="BX SSH"
+      errorMessage={errorMessage}
       groups={[]}
       left={228}
       settings={{
