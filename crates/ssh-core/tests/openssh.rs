@@ -200,6 +200,50 @@ async fn validates_host_key_authentication_and_interactive_shell() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires the isolated OpenSSH test server"]
+async fn validates_ten_concurrent_sessions() {
+    if !env::var("BX_SSH_TEST_TEN_SESSIONS")
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"))
+    {
+        return;
+    }
+    let host = required_env("BX_SSH_TEST_HOST");
+    let port = required_env("BX_SSH_TEST_PORT").parse().unwrap();
+    let username = required_env("BX_SSH_TEST_USERNAME");
+    let password = required_env("BX_SSH_TEST_PASSWORD");
+    let endpoint = SshEndpoint::new(host, port)
+        .unwrap()
+        .with_connect_timeout(Duration::from_secs(5))
+        .with_operation_timeout(Duration::from_secs(30));
+    let host_key = probe_host_key(&endpoint).await.unwrap();
+    let started_at = std::time::Instant::now();
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..10 {
+        let endpoint = endpoint.clone();
+        let username = username.clone();
+        let password = password.clone();
+        let fingerprint = host_key.fingerprint_sha256.clone();
+        tasks.spawn(async move {
+            let session = authenticate_password(&endpoint, &username, &fingerprint, &password)
+                .await
+                .unwrap();
+            session.disconnect().await.unwrap();
+        });
+    }
+    let mut completed = 0_u32;
+    while let Some(result) = tasks.join_next().await {
+        result.unwrap();
+        completed += 1;
+    }
+    assert_eq!(completed, 10);
+    println!(
+        "BX_SESSION_RESULT sessions={} elapsed_ms={}",
+        completed,
+        started_at.elapsed().as_millis()
+    );
+}
+
 fn required_env(name: &str) -> String {
     env::var(name).unwrap_or_else(|_| panic!("missing required environment variable {name}"))
 }

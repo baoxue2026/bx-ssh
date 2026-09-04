@@ -10,6 +10,8 @@ param(
 
     [switch]$IncludeSftp,
 
+    [switch]$IncludeTenSessions,
+
     [UInt64]$SftpBytes = 8388608,
 
     [UInt64]$SftpBaselineBps = 0,
@@ -27,6 +29,9 @@ $testOutputPath = Join-Path $testRoot "test-output.log"
 $serverVersion = "unavailable"
 $targetName = $Target
 $result = "FAIL"
+$sftpResult = "not-run"
+$sftpSummary = ""
+$sftpSpeed = ""
 $testUser = "bxsshci" + ([guid]::NewGuid().ToString("N").Substring(0, 8))
 $testPassword = "BxSsh-CI-9!Password"
 $userCreated = $false
@@ -67,8 +72,9 @@ try {
 
     $ssh = Join-Path $openSshDirectory "ssh.exe"
     $sshKeygen = Join-Path $openSshDirectory "ssh-keygen.exe"
+    $sftp = Join-Path $openSshDirectory "sftp.exe"
     $sftpServer = Join-Path $openSshDirectory "sftp-server.exe"
-    foreach ($requiredTool in @($ssh, $sshKeygen, $sftpServer)) {
+    foreach ($requiredTool in @($ssh, $sshKeygen, $sftp, $sftpServer)) {
         if (-not (Test-Path -LiteralPath $requiredTool)) {
             throw "Required OpenSSH tool is missing: $requiredTool"
         }
@@ -220,19 +226,69 @@ LogLevel VERBOSE
             $SftpBytes = 1GB
         }
         $env:BX_SSH_TEST_SFTP_BYTES = $SftpBytes.ToString()
-        if ($SftpBaselineBps -gt 0) {
+        if ($SftpBaselineBps -eq 0) {
+            $baselinePath = Join-Path $testRoot "openssh-sftp-baseline.bin"
+            Invoke-NativeCommand -FilePath "fsutil.exe" -ArgumentList @(
+                "file", "createnew", $baselinePath, $SftpBytes.ToString()
+            )
+            $remoteBaselineName = ".bx-ssh-sftp-baseline-$([guid]::NewGuid().ToString('N')).bin"
+            $uploadBatch = Join-Path $testRoot "sftp-upload.txt"
+            $downloadBatch = Join-Path $testRoot "sftp-download.txt"
+            @(
+                "put `"$($baselinePath.Replace('\', '/'))`" $remoteBaselineName"
+            ) | Set-Content -LiteralPath $uploadBatch -Encoding utf8
+            @(
+                "get $remoteBaselineName `"$($baselinePath.Replace('\', '/')).download`""
+            ) | Set-Content -LiteralPath $downloadBatch -Encoding utf8
+            $sftpArguments = @(
+                "-q", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=NUL", "-i", $clientKey, "-P", $port.ToString(),
+                "-b", $uploadBatch, "$testUser@127.0.0.1"
+            )
+            $watch = [System.Diagnostics.Stopwatch]::StartNew()
+            Invoke-NativeCommand -FilePath $sftp -ArgumentList $sftpArguments
+            $watch.Stop()
+            $uploadBaselineBps = [UInt64]([Math]::Max(1, [Math]::Round($SftpBytes / $watch.Elapsed.TotalSeconds)))
+            $sftpArguments = @(
+                "-q", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=NUL", "-i", $clientKey, "-P", $port.ToString(),
+                "-b", $downloadBatch, "$testUser@127.0.0.1"
+            )
+            $watch = [System.Diagnostics.Stopwatch]::StartNew()
+            Invoke-NativeCommand -FilePath $sftp -ArgumentList $sftpArguments
+            $watch.Stop()
+            $downloadBaselineBps = [UInt64]([Math]::Max(1, [Math]::Round($SftpBytes / $watch.Elapsed.TotalSeconds)))
+            $SftpBaselineBps = [UInt64][Math]::Min($uploadBaselineBps, $downloadBaselineBps)
+            $env:BX_SSH_TEST_SFTP_BASELINE_BPS = $SftpBaselineBps.ToString()
+            $env:BX_SSH_TEST_SFTP_BASELINE_UPLOAD_BPS = $uploadBaselineBps.ToString()
+            $env:BX_SSH_TEST_SFTP_BASELINE_DOWNLOAD_BPS = $downloadBaselineBps.ToString()
+            $cleanupBatch = Join-Path $testRoot "sftp-cleanup.txt"
+            @("rm $remoteBaselineName") | Set-Content -LiteralPath $cleanupBatch -Encoding utf8
+            & $sftp -q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -i $clientKey -P $port.ToString() -b $cleanupBatch "$testUser@127.0.0.1" | Out-Null
+        }
+        else {
             $env:BX_SSH_TEST_SFTP_BASELINE_BPS = $SftpBaselineBps.ToString()
         }
         if ($RequireOneGiB) {
             $env:BX_SSH_TEST_SFTP_REQUIRE_ONE_GIB = "1"
+            $env:BX_SSH_TEST_SFTP_PHASE_TIMEOUT_SECS = "900"
         }
+    }
+    if ($IncludeTenSessions) {
+        $env:BX_SSH_TEST_TEN_SESSIONS = "1"
     }
     $cargoArguments = @("test", "-p", "bx-ssh-core", "--test", "openssh")
     if ($IncludeSftp) { $cargoArguments += @("--test", "sftp") }
     $cargoArguments += @("--", "--ignored", "--nocapture")
     $cargoOutput = (& cargo.exe @cargoArguments 2>&1 | Out-String)
     $cargoOutput | Set-Content -LiteralPath $testOutputPath -Encoding utf8
+    $sftpResult = if ($IncludeSftp) { "PASS" } else { "not-run" }
+    $sftpSummary = [regex]::Match($cargoOutput, "BX_SFTP_RESULT[^\r\n]*").Value
+    $sftpSpeed = [regex]::Match($cargoOutput, "BX_SFTP_SPEED[^\r\n]*").Value
     if ($LASTEXITCODE -ne 0) {
+        if ($IncludeSftp -and $cargoOutput -match "SFTP upload speed .* below") {
+            $sftpResult = "FAIL_SPEED"
+        }
         throw "OpenSSH integration tests failed with exit code $LASTEXITCODE"
     }
     $result = "PASS"
@@ -285,6 +341,9 @@ finally {
 - Authentication methods: password, public-key
 - Server: $serverVersion
 - Result: $result
+- SFTP result: $sftpResult
+- SFTP summary: $sftpSummary
+- SFTP speed comparison: $sftpSpeed
 "@ | Set-Content -LiteralPath $reportPath -Encoding utf8
 
     $resolvedRoot = [System.IO.Path]::GetFullPath($testRoot)
