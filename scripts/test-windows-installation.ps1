@@ -28,7 +28,8 @@ function Invoke-ProcessChecked {
     [Parameter(Mandatory = $true)][string]$FilePath,
     [string[]]$ArgumentList = @(),
     [int[]]$AllowedExitCodes = @(0),
-    [string]$WorkingDirectory = ""
+    [string]$WorkingDirectory = "",
+    [int]$TimeoutSeconds = 120
   )
 
   $start = @{
@@ -40,6 +41,10 @@ function Invoke-ProcessChecked {
   }
   if ($WorkingDirectory) { $start.WorkingDirectory = $WorkingDirectory }
   $process = Start-Process @start
+  if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+    try { $process.Kill() } catch { }
+    throw "命令超时（${TimeoutSeconds} 秒）：$FilePath $($ArgumentList -join ' ')"
+  }
   if ($process.ExitCode -notin $AllowedExitCodes) {
     throw "命令失败（退出码 $($process.ExitCode)）：$FilePath $($ArgumentList -join ' ')"
   }
@@ -214,6 +219,19 @@ try {
     upgrade = $upgrade
   } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedReportPath -Encoding utf8NoBOM
   Write-Output "Windows 安装、卸载和签名验收通过：$resolvedReportPath"
+}
+catch {
+  New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
+  [ordered]@{
+    schemaVersion = 1
+    generatedAt = [DateTime]::UtcNow.ToString("o")
+    passed = $false
+    authenticodeRequired = [bool]$RequireAuthenticodeSignature
+    installers = $results
+    upgrade = $upgrade
+    error = $_.Exception.Message
+  } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedReportPath -Encoding utf8NoBOM
+  throw
 }
 finally {
   if (Test-Path -LiteralPath $runRoot) {

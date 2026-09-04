@@ -25,14 +25,15 @@
     {
       "id": "QA-INSTALL-01",
       "title": "Windows 安装、卸载、升级和签名验证",
-      "state": "ready_for_ci",
+      "state": "partially_verified",
       "blocking": true,
       "evidence": [
         "commit:0f1ba67",
         "scripts/test-windows-installation.ps1",
         ".github/workflows/package.yml",
         ".github/workflows/release.yml",
-        "pnpm check:windows-packaging 已通过"
+        "pnpm check:windows-packaging 已通过",
+        "本机 release NSIS 安装包静默安装和卸载通过"
       ],
       "pendingEvidence": [
         "CI 构建出的 MSI/NSIS 安装包真实安装、升级和卸载报告",
