@@ -94,7 +94,8 @@
         "创建、编辑、删除并启动 SSH 连接",
         "验证终端输入输出、会话切换、断开与重连",
         "验证 SFTP 浏览、上传、下载、取消与失败提示",
-        "验证设置、主题、语言和诊断信息脱敏"
+        "验证设置、主题、语言和诊断信息脱敏",
+        "在 Windows 11 24H2 执行 scripts/test-windows-manual-smoke.ps1，并人工完成安装包、真实 SSH、终端、SFTP、高 DPI、输入法、系统代理和托盘恢复验收"
       ],
       "artifacts": [
         "artifacts/test-reports/e2e/e2e-*.xml",

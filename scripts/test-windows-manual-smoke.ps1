@@ -76,12 +76,21 @@ try {
       architecture = $env:PROCESSOR_ARCHITECTURE
     }
     checks = $checks
+    manualAcceptance = [ordered]@{
+      signedInstallerLifecycle = "pending"
+      realSshConnection = "pending"
+      terminalAndSftp = "pending"
+      highDpi = "pending"
+      ime = "pending"
+      systemProxy = "pending"
+      trayRestore = "pending"
+    }
     manualChecksRequired = @(
       "使用已签名安装包完成首次安装、覆盖升级和卸载",
       "连接真实 SSH 服务器并验证终端、SFTP、指纹和凭据流程",
       "在 Windows 11 24H2 验证高 DPI、输入法、系统代理和托盘恢复"
     )
-    result = "pass"
+    result = "smoke_pass_manual_pending"
   } | ConvertTo-Json -Depth 8 | ForEach-Object {
     New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
     $_ | Set-Content -LiteralPath $resolvedReportPath -Encoding utf8NoBOM
