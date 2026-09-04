@@ -95,13 +95,17 @@
       "evidence": [
         "quality/phase-1-release-gate.json",
         ".github/workflows/release.yml",
+        "scripts/check-main-branch-protection.mjs",
+        "scripts/check-main-branch-protection.test.mjs",
         "scripts/check-release-gate.mjs",
+        "pnpm main-protection:test 已通过",
         "pnpm release:controls 已通过",
         "pnpm release:test 已通过"
       ],
       "pendingEvidence": [
         "GitHub main 分支保护 API 实际返回 required checks、审批、线性历史和禁止强制推送",
         "GitHub release 环境中的 Windows Authenticode 和 Tauri updater 密钥",
+        "GitHub release 环境中的 RELEASE_TAG_SIGNING_PUBLIC_KEY 公钥",
         "首个 annotated、signed、immutable v1.0.0-rc.1 标签及完整发布清单"
       ]
     }

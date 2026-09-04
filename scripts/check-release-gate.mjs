@@ -26,6 +26,7 @@ const reviewedPaths = [
   "scripts/prepare-release-updater.mjs",
   "scripts/create-release-manifest.mjs",
   "scripts/sign-windows-bundles.ps1",
+  "scripts/check-main-branch-protection.mjs",
   "Cargo.lock",
   "pnpm-lock.yaml",
 ];
@@ -35,6 +36,8 @@ const EXPECTED_SCRIPTS = {
   "release:test": "node --test scripts/check-release-gate.test.mjs",
   "release:report":
     "node scripts/check-release-gate.mjs --report artifacts/release/release-manifest.json",
+  "main-protection:test":
+    "node --test scripts/check-main-branch-protection.test.mjs",
 };
 
 const REQUIRED_REPORT_FIELDS = [
@@ -433,7 +436,11 @@ export function validateReleaseGateControls(files) {
     }
   }
   const workspaceCheck = packageJson?.scripts?.check ?? "";
-  for (const command of ["pnpm release:controls", "pnpm release:test"]) {
+  for (const command of [
+    "pnpm release:controls",
+    "pnpm release:test",
+    "pnpm main-protection:test",
+  ]) {
     if (!workspaceCheck.includes(command)) {
       violations.push(`package.json check must include ${command}`);
     }
@@ -461,7 +468,11 @@ export function validateReleaseGateControls(files) {
       if (releaseSuite.blocking !== "release") {
         violations.push("QA-REL-01 must be release-blocking");
       }
-      for (const command of ["pnpm release:controls", "pnpm release:test"]) {
+      for (const command of [
+        "pnpm release:controls",
+        "pnpm release:test",
+        "pnpm main-protection:test",
+      ]) {
         if (!releaseSuite.commands?.some((entry) => entry?.run === command)) {
           violations.push(`QA-REL-01 is missing ${command}`);
         }
@@ -601,11 +612,16 @@ export function validateReleaseGateControls(files) {
     [/environment:\s*release/, "protected release environment"],
     [/pnpm release:controls/, "release control preflight"],
     [/pnpm release:test/, "release control tests"],
+    [/pnpm main-protection:test/, "main branch protection validator tests"],
     [/Verify main branch protection/, "main branch protection verification"],
     [/branches\/main\/protection/, "GitHub branch protection API check"],
     [/BRANCH_PROTECTION_TOKEN/, "protected branch-protection read token"],
-    [/required_status_checks/, "required status checks"],
-    [/required_pull_request_reviews/, "pull-request review requirement"],
+    [
+      /RELEASE_TAG_SIGNING_PUBLIC_KEY/,
+      "protected release-tag verification key",
+    ],
+    [/gpg --batch[^\n]*--import/, "release-tag public-key import"],
+    [/check-main-branch-protection\.mjs/, "main branch protection validator"],
     [/pnpm release:report/, "release manifest validation"],
     [/create-release-manifest\.mjs/, "release manifest generation"],
     [/RELEASE_METADATA_JSON/, "protected QA acceptance metadata"],
@@ -652,6 +668,23 @@ export function validateReleaseGateControls(files) {
     violations.push(
       ".github/workflows/release.yml must build the manifest from the verified tag commit",
     );
+  }
+
+  const branchProtection = source("scripts/check-main-branch-protection.mjs");
+  for (const [pattern, description] of [
+    [/required_status_checks/, "required status checks"],
+    [/required_pull_request_reviews/, "pull-request review requirement"],
+    [/enforce_admins/, "administrator protection"],
+    [/required_linear_history/, "linear history requirement"],
+    [/required_conversation_resolution/, "conversation resolution requirement"],
+    [/allow_force_pushes/, "force-push prohibition"],
+    [/allow_deletions/, "branch deletion prohibition"],
+  ]) {
+    if (!pattern.test(branchProtection)) {
+      violations.push(
+        `scripts/check-main-branch-protection.mjs is missing ${description}`,
+      );
+    }
   }
   if (
     /path:[\s\S]*TAURI_SIGNING_PRIVATE_KEY/.test(release) ||

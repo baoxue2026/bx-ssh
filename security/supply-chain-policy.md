@@ -33,6 +33,8 @@ Release evidence is retained for at least 90 days. A release manifest must ident
 
 The protected `release` environment also provides a read-only `BRANCH_PROTECTION_TOKEN` so the RC workflow can verify `main` branch protection through the GitHub API. This token is never included in release artifacts or metadata.
 
+The same environment provides the maintainer's `RELEASE_TAG_SIGNING_PUBLIC_KEY`. The RC workflow imports this public key into an ephemeral GPG keyring only to verify the annotated release tag; no tag-signing private key is stored in CI or the repository.
+
 ## Updates and exceptions
 
 Security updates are upgraded directly where possible, followed by frontend, Rust, OpenSSH, and Tauri E2E verification. When an upgrade is impossible, the maintainer must record the dependency path, exploit conditions, mitigation, owner, review date, and closure condition in `security/risk-acceptance.md`. A matching minimal `deny.toml` exception is required. An expired exception restores blocking status.

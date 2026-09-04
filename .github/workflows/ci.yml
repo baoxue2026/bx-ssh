@@ -41,6 +41,9 @@ jobs:
       - name: Test phase-1 acceptance status validator
         run: pnpm acceptance:test
 
+      - name: Test main branch protection validator
+        run: pnpm main-protection:test
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-24.04
