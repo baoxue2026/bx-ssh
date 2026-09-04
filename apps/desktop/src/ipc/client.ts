@@ -10,6 +10,9 @@ import {
   type ConnectionSettingsOverride,
   type GlobalSettingsSnapshot,
   type HostKeyInfo,
+  type PrivateKeyMetadata,
+  type PrivateKeyReferenceRequest,
+  type PrivateKeySummary,
   type KeyboardInteractiveEvent,
   type LocalDirectoryListing,
   type LocalFileEntry,
@@ -217,6 +220,20 @@ export const ipc = {
     ),
   listSftpDirectory: (sessionId: string, path: string) =>
     unwrap(() => commands.listSftpDirectory(sessionId, path)),
+  listPrivateKeys: (): Promise<PrivateKeySummary[]> =>
+    unwrap(() => commands.listPrivateKeys()),
+  inspectPrivateKeyFile: (
+    path: string,
+    passphrase: string | null,
+  ): Promise<PrivateKeyMetadata> =>
+    unwrap(() => commands.inspectPrivateKeyFile(path, passphrase)),
+  savePrivateKeyReference: (
+    request: PrivateKeyReferenceRequest,
+    passphrase: string | null,
+  ): Promise<PrivateKeySummary> =>
+    unwrap(() => commands.savePrivateKeyReference(request, passphrase)),
+  deletePrivateKeyReference: (id: string): Promise<boolean> =>
+    unwrap(() => commands.deletePrivateKeyReference(id)),
   statSftpPath: (sessionId: string, path: string) =>
     unwrap(() => commands.statSftpPath(sessionId, path)),
   createSftpDirectory: (sessionId: string, remotePath: string) =>

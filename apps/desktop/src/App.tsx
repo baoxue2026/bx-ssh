@@ -71,6 +71,7 @@ import {
   type ConnectionLaunchStep,
 } from "./components/ConnectionLaunchDialog";
 import { ConnectionWorkspaceEmptyState } from "./components/ConnectionWorkspaceEmptyState";
+import { KeyManagerDialog } from "./components/KeyManagerDialog";
 import { OpenSshImportDialog } from "./components/OpenSshImportDialog";
 import {
   SessionTabBar,
@@ -272,6 +273,7 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] =
     useState(readSidebarCollapsed);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [keyManagerOpen, setKeyManagerOpen] = useState(false);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [sftpSessionId, setSftpSessionId] = useState<string | null>(null);
   const [sftpDirectory, setSftpDirectory] =
@@ -4007,12 +4009,17 @@ export function App() {
             }
             onExportDiagnostics={() => void exportDiagnostics()}
             onOpenLogDirectory={() => void openLogDirectory()}
+            onManageSshKeys={() => setKeyManagerOpen(true)}
             onClose={() => setSettingsOpen(false)}
             onSave={(application, connection) =>
               void saveApplicationSettings(application, connection)
             }
           />
         )}
+        <KeyManagerDialog
+          open={keyManagerOpen}
+          onClose={() => setKeyManagerOpen(false)}
+        />
       </div>
 
       <footer className={`statusbar${connected ? " is-connected" : ""}`}>

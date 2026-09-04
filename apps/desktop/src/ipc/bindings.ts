@@ -441,6 +441,38 @@ async importOpensshConnections(request: OpenSshImportRequest) : Promise<Result<O
     else return { status: "error", error: e  as any };
 }
 },
+async listPrivateKeys() : Promise<Result<PrivateKeySummary[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_private_keys") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async inspectPrivateKeyFile(path: string, passphrase: SensitiveString | null) : Promise<Result<PrivateKeyMetadata, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("inspect_private_key_file", { path, passphrase }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async savePrivateKeyReference(request: PrivateKeyReferenceRequest, passphrase: SensitiveString | null) : Promise<Result<PrivateKeySummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_private_key_reference", { request, passphrase }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deletePrivateKeyReference(id: string) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_private_key_reference", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cancelSshConnection(attemptId: string) : Promise<Result<boolean, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cancel_ssh_connection", { attemptId }) };
@@ -495,6 +527,10 @@ export type OpenSshImportPreview = { sourcePath: string; sourceFingerprint: stri
 export type OpenSshImportRequest = { sourcePath: string; sourceFingerprint: string; selectedSourceIds: string[]; duplicateStrategy: OpenSshDuplicateStrategy }
 export type OpenSshImportResult = { imported: number; overwritten: number; skipped: number }
 export type OpenSshImportWarning = "duplicate" | "identityFileRequiresKeySetup"
+export type PrivateKeyMetadata = { publicKeyAlgorithm: string; fingerprintSha256: string; encrypted: boolean }
+export type PrivateKeyReferenceRequest = { name: string; storageKind: PrivateKeyStorageKind; filePath: string | null; comment: string | null }
+export type PrivateKeyStorageKind = "file" | "imported"
+export type PrivateKeySummary = { id: string; name: string; storageKind: PrivateKeyStorageKind; filePath: string | null; publicKeyAlgorithm: string | null; fingerprintSha256: string | null; comment: string | null; createdAt: number; updatedAt: number; referenceCount: number; revision: number }
 export type ProbeHostRequest = { host: string; port: number; settings: ConnectionSettings }
 export type RemoteDirectoryListing = { path: string; entries: RemoteFileEntry[] }
 export type RemoteFileEntry = { name: string; path: string; kind: RemoteFileKind; size: number; modifiedAt: number | null; permissions: number | null }

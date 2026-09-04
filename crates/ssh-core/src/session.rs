@@ -4,7 +4,7 @@ use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 
-use bx_contracts::{HostKeyInfo, SshConnectionStage};
+use bx_contracts::{HostKeyInfo, PrivateKeyMetadata, SshConnectionStage};
 use russh::client;
 use russh::keys::{self, ssh_key, HashAlg, PrivateKeyWithHashAlg};
 use tokio::net::{lookup_host, TcpStream};
@@ -395,6 +395,23 @@ pub async fn authenticate_private_key(
     .await
 }
 
+/// Parse a private key without authenticating to a server and return only the
+/// public metadata that is safe to display in the desktop UI.
+///
+/// The private key contents and passphrase are consumed entirely in this
+/// function and are never included in the returned value or debug output.
+pub fn inspect_private_key(
+    private_key_contents: &str,
+    passphrase: Option<&str>,
+) -> Result<PrivateKeyMetadata, SshError> {
+    let private_key = keys::decode_secret_key(private_key_contents, passphrase)?;
+    Ok(PrivateKeyMetadata {
+        public_key_algorithm: private_key.algorithm().to_string(),
+        fingerprint_sha256: private_key.fingerprint(HashAlg::Sha256).to_string(),
+        encrypted: passphrase.is_some(),
+    })
+}
+
 pub async fn authenticate_private_key_with_progress<F>(
     endpoint: &SshEndpoint,
     username: &str,
@@ -516,6 +533,18 @@ async fn authenticate_loaded_private_key(
         host_key,
         negotiated_algorithms,
     })
+}
+
+#[cfg(test)]
+mod private_key_tests {
+    use super::inspect_private_key;
+
+    #[test]
+    fn rejects_invalid_private_key_contents_without_exposing_them() {
+        let error = inspect_private_key("not a private key", None).unwrap_err();
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("not a private key"));
+    }
 }
 
 async fn connect(

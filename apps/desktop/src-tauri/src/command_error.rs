@@ -200,6 +200,7 @@ impl From<PersistenceError> for CommandError {
             | PersistenceError::DatabaseBackupFailed(_)
             | PersistenceError::DatabaseBackupIoFailed(_) => CommandErrorCode::DatabaseQueryFailed,
             PersistenceError::InvalidCredential => CommandErrorCode::InvalidCredential,
+            PersistenceError::PrivateKeyInUse => CommandErrorCode::PrivateKeyError,
             PersistenceError::CredentialStoreLocked => CommandErrorCode::CredentialStoreLocked,
             PersistenceError::CredentialStoreUnavailable => {
                 CommandErrorCode::CredentialStoreUnavailable

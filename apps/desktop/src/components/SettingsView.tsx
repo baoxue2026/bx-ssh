@@ -57,6 +57,7 @@ interface SettingsViewProps {
   onCheckForUpdates(): void;
   onExportDiagnostics(): void;
   onOpenLogDirectory(): void;
+  onManageSshKeys?(): void;
   onClose(): void;
   onSave(
     application: ApplicationSettings,
@@ -89,6 +90,7 @@ export function SettingsView({
   onCheckForUpdates,
   onExportDiagnostics,
   onOpenLogDirectory,
+  onManageSshKeys = () => {},
   onClose,
   onSave,
 }: SettingsViewProps) {
@@ -194,6 +196,7 @@ export function SettingsView({
               onCheckForUpdates={onCheckForUpdates}
               onExportDiagnostics={onExportDiagnostics}
               onOpenLogDirectory={onOpenLogDirectory}
+              onManageSshKeys={onManageSshKeys}
               onConnectionChange={(connection) =>
                 setDraft((current) => ({ ...current, connection }))
               }
@@ -256,6 +259,7 @@ function SettingsContent({
   onConnectionChange,
   onExportDiagnostics,
   onOpenLogDirectory,
+  onManageSshKeys,
 }: {
   active: SettingsCategory;
   appName: string;
@@ -269,6 +273,7 @@ function SettingsContent({
   onConnectionChange(connection: ConnectionSettings): void;
   onExportDiagnostics(): void;
   onOpenLogDirectory(): void;
+  onManageSshKeys(): void;
 }) {
   const { t } = useTranslation();
   const application = draft.application;
@@ -675,7 +680,11 @@ function SettingsContent({
           </SettingsRow>
         </SettingsSection>
         <SettingsSection title={t("settings.sections.sshKeys")}>
-          <Button disabled icon={<Key size={13} />}>
+          <Button
+            disabled={disabled}
+            icon={<Key size={13} />}
+            onClick={onManageSshKeys}
+          >
             {t("settings.actions.manageSshKeys")}
           </Button>
         </SettingsSection>

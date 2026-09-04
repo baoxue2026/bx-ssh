@@ -14,6 +14,63 @@ pub use connection::{
     OpenSshImportRequest, OpenSshImportResult, OpenSshImportWarning, DEFAULT_CONNECTION_PORT,
     DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS, MIN_CONNECT_TIMEOUT_SECS,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum PrivateKeyStorageKind {
+    File,
+    Imported,
+}
+
+impl PrivateKeyStorageKind {
+    pub const fn database_value(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Imported => "imported",
+        }
+    }
+
+    pub fn from_database_value(value: &str) -> Option<Self> {
+        match value {
+            "file" => Some(Self::File),
+            "imported" => Some(Self::Imported),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateKeySummary {
+    pub id: String,
+    pub name: String,
+    pub storage_kind: PrivateKeyStorageKind,
+    pub file_path: Option<String>,
+    pub public_key_algorithm: Option<String>,
+    pub fingerprint_sha256: Option<String>,
+    pub comment: Option<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub reference_count: u64,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateKeyMetadata {
+    pub public_key_algorithm: String,
+    pub fingerprint_sha256: String,
+    pub encrypted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateKeyReferenceRequest {
+    pub name: String,
+    pub storage_kind: PrivateKeyStorageKind,
+    pub file_path: Option<String>,
+    pub comment: Option<String>,
+}
 pub use sensitive::SensitiveString;
 pub use settings::{
     ApplicationLanguage, ApplicationSettings, ApplicationSettingsValidationError,

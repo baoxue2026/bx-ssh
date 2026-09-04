@@ -70,4 +70,6 @@ pub enum PersistenceError {
     InvalidPrivateKey,
     #[error("the encrypted private-key record is malformed")]
     InvalidPrivateKeyRecord,
+    #[error("the private key is still referenced by one or more connections")]
+    PrivateKeyInUse,
 }

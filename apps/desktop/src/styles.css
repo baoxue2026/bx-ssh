@@ -1015,6 +1015,64 @@ select {
   color: var(--text-secondary);
 }
 
+.key-manager-dialog .ant-modal-body {
+  display: grid;
+  gap: 16px;
+}
+
+.key-manager-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.key-manager-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+}
+
+.key-manager-item-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.key-manager-item-main > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.key-manager-item-main span {
+  overflow: hidden;
+  color: var(--color-text-secondary, #6b7280);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-manager-form {
+  display: grid;
+  gap: 10px;
+}
+
+.key-manager-form h4 {
+  margin: 0;
+}
+
+.key-manager-empty {
+  margin: 0;
+  color: var(--color-text-secondary, #6b7280);
+  text-align: center;
+}
+
 .connection-editor-dialog .ant-modal-body {
   min-height: 420px;
 }

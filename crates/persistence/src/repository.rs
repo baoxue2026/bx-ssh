@@ -6,7 +6,7 @@ use bx_contracts::{
     ApplicationSettings, AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails,
     ConnectionGroup, ConnectionListItem, ConnectionSettings, ConnectionSettingsLayers,
     ConnectionSettingsOverride, ConnectionSettingsScope, ConnectionSettingsSnapshot,
-    GlobalSettingsSnapshot, HostKeyInfo,
+    GlobalSettingsSnapshot, HostKeyInfo, PrivateKeyStorageKind, PrivateKeySummary,
 };
 use rusqlite::{params, OptionalExtension, Row, Transaction};
 
@@ -181,6 +181,169 @@ impl ConnectionRepository {
             })
             .optional()
             .map_err(|source| database_operation("query a private key", source))
+    }
+
+    pub fn list_private_key_summaries(&self) -> Result<Vec<PrivateKeySummary>> {
+        let mut statement = self
+            .database
+            .connection()
+            .prepare(
+                "SELECT k.id, k.name, k.storage_kind, k.file_path,
+                        k.public_key_algorithm, k.fingerprint_sha256, k.comment,
+                        k.created_at, k.updated_at, k.revision,
+                        COUNT(c.id)
+                 FROM key_references k
+                 LEFT JOIN connections c
+                   ON c.key_reference_id = k.id
+                 GROUP BY k.id
+                 ORDER BY k.name COLLATE NOCASE, k.id",
+            )
+            .map_err(|source| database_operation("prepare private key list", source))?;
+        let rows = statement
+            .query_map([], |row| {
+                let storage = row.get::<_, String>(2)?;
+                let storage_kind = PrivateKeyStorageKind::from_database_value(&storage)
+                    .ok_or_else(|| {
+                        rusqlite::Error::InvalidColumnType(
+                            2,
+                            "storage_kind".to_owned(),
+                            rusqlite::types::Type::Text,
+                        )
+                    })?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    storage_kind,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, i64>(10)?,
+                ))
+            })
+            .map_err(|source| database_operation("query private key list", source))?;
+        rows.map(|row| {
+            let (
+                id,
+                name,
+                storage_kind,
+                file_path,
+                public_key_algorithm,
+                fingerprint_sha256,
+                comment,
+                created_at,
+                updated_at,
+                revision,
+                reference_count,
+            ) = row.map_err(|source| database_operation("read private key summary", source))?;
+            Ok(PrivateKeySummary {
+                id,
+                name,
+                storage_kind,
+                file_path,
+                public_key_algorithm,
+                fingerprint_sha256,
+                comment,
+                created_at: stored_u64(created_at, "private key")?,
+                updated_at: stored_u64(updated_at, "private key")?,
+                revision: stored_u64(revision, "private key")?,
+                reference_count: stored_u64(reference_count, "private key reference count")?,
+            })
+        })
+        .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_private_key_reference(
+        &mut self,
+        id: &str,
+        name: &str,
+        storage_kind: PrivateKeyStorageKind,
+        file_path: Option<&str>,
+        encrypted_material: Option<&[u8]>,
+        material_key_ref: Option<&str>,
+        passphrase_credential_ref: Option<&str>,
+        public_key_algorithm: &str,
+        fingerprint_sha256: &str,
+        comment: Option<&str>,
+        now_ms: u64,
+    ) -> Result<()> {
+        validate_id(id)?;
+        if name.trim().is_empty()
+            || public_key_algorithm.trim().is_empty()
+            || !is_sha256_fingerprint(fingerprint_sha256)
+        {
+            return Err(PersistenceError::InvalidStoredRecord {
+                entity: "private key",
+            });
+        }
+        let now = timestamp_to_i64(now_ms)?;
+        let valid_storage = match storage_kind {
+            PrivateKeyStorageKind::File => {
+                file_path.is_some_and(|path| !path.trim().is_empty())
+                    && encrypted_material.is_none()
+                    && material_key_ref.is_none()
+            }
+            PrivateKeyStorageKind::Imported => {
+                file_path.is_none()
+                    && encrypted_material.is_some_and(|value| !value.is_empty())
+                    && material_key_ref.is_some_and(|value| !value.trim().is_empty())
+            }
+        };
+        if !valid_storage {
+            return Err(PersistenceError::InvalidStoredRecord {
+                entity: "private key",
+            });
+        }
+        self.database
+            .connection()
+            .execute(
+                "INSERT INTO key_references
+                 (id, name, storage_kind, file_path, encrypted_material, material_key_ref,
+                  passphrase_credential_ref, public_key_algorithm, fingerprint_sha256,
+                  comment, created_at, updated_at, revision)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, 1)",
+                params![
+                    id,
+                    name.trim(),
+                    storage_kind.database_value(),
+                    file_path.map(str::trim),
+                    encrypted_material,
+                    material_key_ref.map(str::trim),
+                    passphrase_credential_ref.map(str::trim),
+                    public_key_algorithm.trim(),
+                    fingerprint_sha256,
+                    comment.map(str::trim),
+                    now,
+                ],
+            )
+            .map_err(|source| database_operation("insert private key reference", source))?;
+        Ok(())
+    }
+
+    pub fn delete_private_key_reference(&mut self, id: &str) -> Result<bool> {
+        validate_id(id)?;
+        let connection_count: i64 = self
+            .database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM connections WHERE key_reference_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(|source| database_operation("check private key references", source))?;
+        if connection_count > 0 {
+            return Err(PersistenceError::PrivateKeyInUse);
+        }
+        let changed = self
+            .database
+            .connection()
+            .execute("DELETE FROM key_references WHERE id = ?1", [id])
+            .map_err(|source| database_operation("delete private key reference", source))?;
+        Ok(changed > 0)
     }
 
     pub fn trust_host_fingerprint(
@@ -1169,6 +1332,15 @@ fn validate_host_key(host_key: &HostKeyInfo) -> Result<()> {
     }
 }
 
+fn is_sha256_fingerprint(value: &str) -> bool {
+    value.strip_prefix("SHA256:").is_some_and(|encoded| {
+        encoded.len() == 43
+            && encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::{Deref, DerefMut};
@@ -1266,6 +1438,52 @@ mod tests {
             .get_private_key_reference("missing")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn manages_private_key_summaries_and_prevents_deleting_referenced_keys() {
+        let mut repository = test_repository();
+        repository
+            .insert_private_key_reference(
+                "key-1",
+                "Deploy key",
+                PrivateKeyStorageKind::File,
+                Some("/keys/deploy"),
+                None,
+                None,
+                None,
+                "ssh-ed25519",
+                "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                Some("production"),
+                1_000,
+            )
+            .unwrap();
+        let summaries = repository.list_private_key_summaries().unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].reference_count, 0);
+        assert_eq!(summaries[0].storage_kind, PrivateKeyStorageKind::File);
+
+        let mut connection =
+            ConnectionConfig::new("connection-1", "Production", "example.com", "alice");
+        connection.auth_method = AuthMethod::PrivateKey;
+        connection.key_reference_id = Some("key-1".to_owned());
+        repository
+            .save_connection(&connection, ConnectionSettingsOverride::default(), 2_000)
+            .unwrap();
+        assert!(matches!(
+            repository.delete_private_key_reference("key-1"),
+            Err(PersistenceError::PrivateKeyInUse)
+        ));
+        assert_eq!(
+            repository.list_private_key_summaries().unwrap()[0].reference_count,
+            1
+        );
+
+        repository.delete_connection("connection-1", 3_000).unwrap();
+        assert!(matches!(
+            repository.delete_private_key_reference("key-1"),
+            Err(PersistenceError::PrivateKeyInUse)
+        ));
     }
 
     #[test]

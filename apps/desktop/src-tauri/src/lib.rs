@@ -44,6 +44,10 @@ use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT
 use local_files::{list_local_directory, stat_local_path};
 use openssh_import::{import_openssh_connections, preview_openssh_config};
 use platform::set_webview_memory_usage;
+use private_keys::{
+    delete_private_key_reference, inspect_private_key_file, list_private_keys,
+    save_private_key_reference,
+};
 use session_manager::{cancel_ssh_connection, SshSessionManager};
 use sftp::{
     cancel_sftp_transfer, chmod_sftp_entry, close_sftp_session, create_sftp_directory,
@@ -130,6 +134,10 @@ fn command_builder() -> Builder<tauri::Wry> {
             settings::save_global_settings,
             openssh_import::preview_openssh_config,
             openssh_import::import_openssh_connections,
+            private_keys::list_private_keys,
+            private_keys::inspect_private_key_file,
+            private_keys::save_private_key_reference,
+            private_keys::delete_private_key_reference,
             session_manager::cancel_ssh_connection
         ])
         .typ::<terminal::StartShellRequest>()
@@ -153,6 +161,10 @@ fn command_builder() -> Builder<tauri::Wry> {
         .typ::<ConnectionSettings>()
         .typ::<ConnectionSettingsLayers>()
         .typ::<ConnectionSettingsScope>()
+        .typ::<bx_contracts::PrivateKeyStorageKind>()
+        .typ::<bx_contracts::PrivateKeySummary>()
+        .typ::<bx_contracts::PrivateKeyMetadata>()
+        .typ::<bx_contracts::PrivateKeyReferenceRequest>()
 }
 
 fn window_state_flags() -> StateFlags {
@@ -308,7 +320,11 @@ pub fn run() {
             settings::get_global_settings,
             settings::save_global_settings,
             preview_openssh_config,
-            import_openssh_connections
+            import_openssh_connections,
+            list_private_keys,
+            inspect_private_key_file,
+            save_private_key_reference,
+            delete_private_key_reference
         ])
         .build(tauri::generate_context!())
         .expect("failed to build BX SSH")
