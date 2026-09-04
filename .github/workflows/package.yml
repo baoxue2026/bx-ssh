@@ -121,6 +121,14 @@ jobs:
           --version "0.1.1"
           --base-url "https://github.com/baoxue2026/bx-ssh/releases/download/v0.1.1/"
 
+      - name: Validate Windows installer lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          ./scripts/test-windows-installation.ps1
+          -BundleRoot "target/release/bundle"
+          -ReportPath "artifacts/installation/windows-installation-report.json"
+
       - name: Prepare versioned release evidence fragment
         run: >-
           node scripts/prepare-release-evidence.mjs
@@ -153,4 +161,5 @@ jobs:
             target/release/**/*.sym
             artifacts/bundle-size/*
             artifacts/updater/reports/*
+            artifacts/installation/*
             artifacts/release/**

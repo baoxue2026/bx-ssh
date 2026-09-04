@@ -239,6 +239,7 @@ async function main() {
     for (const candidate of [
       path.join(reportsRoot, "bundle-size"),
       path.join(reportsRoot, "updater", "reports"),
+      path.join(reportsRoot, "installation"),
     ]) {
       try {
         const reportFiles = (await listFiles(candidate)).filter(

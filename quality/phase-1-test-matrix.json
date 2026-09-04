@@ -391,7 +391,11 @@
       ],
       "commands": [
         { "run": "pnpm check:windows-packaging", "type": "automated" },
-        { "run": "pnpm build", "type": "automated" }
+        { "run": "pnpm build", "type": "automated" },
+        {
+          "run": "pwsh scripts/test-windows-installation.ps1 -BundleRoot target/release/bundle -ReportPath artifacts/installation/windows-installation-report.json",
+          "type": "automated"
+        }
       ],
       "manualChecks": [
         "首次安装、同版本重复安装和从旧版本升级均能完成",

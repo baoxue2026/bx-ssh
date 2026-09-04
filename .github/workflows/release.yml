@@ -194,6 +194,15 @@ jobs:
           -BundleRoot "target\release\bundle"
           -ReportPath "artifacts\release\windows-signature-report.json"
 
+      - name: Validate signed Windows installer lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          ./scripts/test-windows-installation.ps1
+          -BundleRoot "target/release/bundle"
+          -ReportPath "artifacts/installation/windows-installation-report.json"
+          -RequireAuthenticodeSignature
+
       - name: Re-sign final updater artifacts
         shell: bash
         env:
@@ -271,6 +280,7 @@ jobs:
             target/release/**/*.sym
             artifacts/bundle-size/*
             artifacts/updater/reports/*
+            artifacts/installation/*
             artifacts/release/**
 
   release-metadata:
