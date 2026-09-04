@@ -9,7 +9,7 @@ use specta::Type;
 /// string while the Rust value is cleared when it is dropped. Callers should
 /// use `into_inner` only at the final hand-off to a library that requires an
 /// owned `String`.
-#[derive(Clone, Deserialize, Serialize, Type)]
+#[derive(Deserialize, Serialize, Type)]
 #[serde(transparent)]
 pub struct SensitiveString(String);
 
@@ -20,6 +20,10 @@ impl SensitiveString {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn into_inner(mut self) -> String {
@@ -75,7 +79,13 @@ mod tests {
         let secret: SensitiveString = serde_json::from_str("\"secret\"").unwrap();
 
         assert_eq!(secret.as_str(), "secret");
+        assert!(!secret.is_empty());
         assert_eq!(serde_json::to_string(&secret).unwrap(), "\"secret\"");
         assert_eq!(secret.into_inner(), "secret");
+    }
+
+    #[test]
+    fn reports_empty_sensitive_values_without_exposing_them() {
+        assert!(SensitiveString::from("").is_empty());
     }
 }
