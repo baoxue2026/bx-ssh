@@ -35,6 +35,12 @@ jobs:
       - name: Test QA policy validator
         run: pnpm qa:test
 
+      - name: Validate phase-1 acceptance status
+        run: pnpm acceptance:check
+
+      - name: Test phase-1 acceptance status validator
+        run: pnpm acceptance:test
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-24.04

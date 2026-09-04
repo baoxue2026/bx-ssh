@@ -55,6 +55,12 @@ jobs:
       - name: Test release report validator
         run: pnpm release:test
 
+      - name: Validate phase-1 acceptance status
+        run: pnpm acceptance:check
+
+      - name: Test phase-1 acceptance status validator
+        run: pnpm acceptance:test
+
       - name: Verify release tag and source commit
         id: verify_release_tag
         shell: bash

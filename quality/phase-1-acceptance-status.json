@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "phase": "P1",
+  "updatedAt": "2026-09-04T00:00:00.000Z",
+  "releaseReadiness": "blocked",
+  "releaseReadinessReason": "完整 OpenSSH 矩阵、Windows 11 24H2 人工验收、24 小时稳定性、正式签名和 GitHub main 保护尚未取得外部证据。",
+  "items": [
+    {
+      "id": "QA-COMP-01",
+      "title": "OpenSSH 服务端兼容矩阵",
+      "state": "partially_verified",
+      "blocking": true,
+      "evidence": [
+        "commit:ca157ee",
+        "scripts/test-openssh-windows.ps1",
+        "crates/ssh-core/tests/openssh.rs",
+        "本机 Windows 10 OpenSSH 8.1p1：Ed25519、ECDSA P-256、RSA-SHA2 已通过"
+      ],
+      "pendingEvidence": [
+        "CI：Ubuntu 22.04/24.04、Debian 12、Rocky Linux 9 三种主机密钥矩阵",
+        "CI：Windows Server 2025 OpenSSH 三种主机密钥矩阵",
+        "Windows 11 24H2 系统代理、输入法和高 DPI 人工验收"
+      ]
+    },
+    {
+      "id": "QA-INSTALL-01",
+      "title": "Windows 安装、卸载、升级和签名验证",
+      "state": "ready_for_ci",
+      "blocking": true,
+      "evidence": [
+        "commit:0f1ba67",
+        "scripts/test-windows-installation.ps1",
+        ".github/workflows/package.yml",
+        ".github/workflows/release.yml",
+        "pnpm check:windows-packaging 已通过"
+      ],
+      "pendingEvidence": [
+        "CI 构建出的 MSI/NSIS 安装包真实安装、升级和卸载报告",
+        "正式 Windows Authenticode 签名证书验证"
+      ]
+    },
+    {
+      "id": "QA-PERF-STAB-01",
+      "title": "1GB SFTP、10 会话和 24 小时稳定性",
+      "state": "blocked",
+      "blocking": true,
+      "evidence": [
+        "commit:a133f3a",
+        "commit:fdbb9bf",
+        "本机十会话：BX_SESSION_RESULT sessions=10 elapsed_ms=410",
+        "本机 1GiB 上传/下载及 SHA-256 一致性通过"
+      ],
+      "pendingEvidence": [
+        "同机同网 OpenSSH sftp 速度达到 80% 的性能报告（当前本机结果低于门槛）",
+        "Windows 11 24H2 参考设备连续 24 小时 soak 报告",
+        "休眠/唤醒、断网重连、SFTP 取消和句柄泄漏报告"
+      ]
+    },
+    {
+      "id": "QA-MANUAL-WINDOWS-01",
+      "title": "真实 Windows 环境人工验收",
+      "state": "pending_external",
+      "blocking": true,
+      "evidence": [
+        "commit:fdbb9bf",
+        "scripts/test-windows-manual-smoke.ps1",
+        "artifacts/test-reports/windows-manual-smoke.json（本机 Windows 10 Debug 冒烟）"
+      ],
+      "pendingEvidence": [
+        "签名安装包首次安装、覆盖升级和卸载",
+        "真实 SSH 服务器连接、终端和 SFTP 主流程",
+        "Windows 11 24H2 高 DPI、输入法、系统代理和托盘恢复"
+      ]
+    },
+    {
+      "id": "QA-TRACEABILITY-01",
+      "title": "一期完成状态和验收追踪",
+      "state": "implemented_pending_external",
+      "blocking": true,
+      "evidence": [
+        "quality/phase-1-test-matrix.json",
+        "quality/phase-1-release-gate.json",
+        "scripts/check-release-gate.mjs",
+        "scripts/prepare-release-evidence.mjs"
+      ],
+      "pendingEvidence": ["每个 blocking 套件的版本化测试报告和发布附件"]
+    },
+    {
+      "id": "RELEASE-PROTECTION-01",
+      "title": "main 分支保护、正式签名和 RC 发布门禁",
+      "state": "implemented_pending_external",
+      "blocking": true,
+      "evidence": [
+        "quality/phase-1-release-gate.json",
+        ".github/workflows/release.yml",
+        "scripts/check-release-gate.mjs",
+        "pnpm release:controls 已通过",
+        "pnpm release:test 已通过"
+      ],
+      "pendingEvidence": [
+        "GitHub main 分支保护 API 实际返回 required checks、审批、线性历史和禁止强制推送",
+        "GitHub release 环境中的 Windows Authenticode 和 Tauri updater 密钥",
+        "首个 annotated、signed、immutable v1.0.0-rc.1 标签及完整发布清单"
+      ]
+    }
+  ]
+}
