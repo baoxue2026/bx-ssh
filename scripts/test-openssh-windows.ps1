@@ -4,7 +4,9 @@ param(
     [string]$MatrixId,
 
     [ValidateSet("ed25519", "ecdsa-p256", "rsa-sha2")]
-    [string]$HostKeyAlgorithm = "ed25519"
+    [string]$HostKeyAlgorithm = "ed25519",
+
+    [string]$Target = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,13 +15,14 @@ $reportDirectory = Join-Path (Get-Location) "artifacts/test-reports"
 $reportPath = Join-Path $reportDirectory "openssh-$MatrixId.md"
 $reportLogPath = Join-Path $reportDirectory "openssh-$MatrixId.log"
 $serverLogPath = Join-Path $testRoot "sshd.stderr.log"
-$serverOutputPath = Join-Path $testRoot "sshd.stdout.log"
 $serverVersion = "unavailable"
+$targetName = $Target
 $result = "FAIL"
 $testUser = "bxsshci" + ([guid]::NewGuid().ToString("N").Substring(0, 8))
 $testPassword = "BxSsh-CI-9!Password"
 $userCreated = $false
-$sshdProcess = $null
+$sshdServiceName = "BxSshCompat-" + ([guid]::NewGuid().ToString("N").Substring(0, 12))
+$sshdServiceCreated = $false
 
 function Invoke-NativeCommand {
     param(
@@ -62,15 +65,19 @@ try {
         }
     }
     $serverVersion = ((& $ssh -V 2>&1) | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($targetName)) {
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem
+        $targetName = "{0} (Build {1})" -f $os.Caption, $os.BuildNumber
+    }
 
-    Invoke-NativeCommand -FilePath "net.exe" -ArgumentList @(
-        "user",
-        $testUser,
-        $testPassword,
-        "/add",
-        "/expires:never",
-        "/passwordchg:no"
-    )
+    $securePassword = ConvertTo-SecureString $testPassword -AsPlainText -Force
+    New-LocalUser `
+        -Name $testUser `
+        -Password $securePassword `
+        -AccountNeverExpires `
+        -PasswordNeverExpires `
+        -UserMayNotChangePassword `
+        -Description "Temporary BX SSH compatibility test account" | Out-Null
     $userCreated = $true
 
     $clientKey = Join-Path $testRoot "client_ed25519"
@@ -105,10 +112,18 @@ try {
     Invoke-NativeCommand -FilePath "icacls.exe" -ArgumentList @(
         $hostKey,
         "/inheritance:r",
+        "/remove:g",
+        "$env:USERDOMAIN\$env:USERNAME",
+        "Users",
+        "Authenticated Users",
         "/grant:r",
-        "${env:USERNAME}:(F)",
         "SYSTEM:(F)",
         "Administrators:(F)"
+    )
+    Invoke-NativeCommand -FilePath "icacls.exe" -ArgumentList @(
+        $hostKey,
+        "/setowner",
+        "SYSTEM"
     )
 
     $authorizedKeys = Join-Path $testRoot "authorized_keys"
@@ -142,18 +157,23 @@ LogLevel VERBOSE
 "@ | Set-Content -LiteralPath $sshdConfig -Encoding utf8
 
     Invoke-NativeCommand -FilePath $sshd -ArgumentList @("-t", "-f", $sshdConfig)
-    $sshdProcess = Start-Process `
-        -FilePath $sshd `
-        -ArgumentList @("-D", "-e", "-f", $sshdConfig) `
-        -RedirectStandardError $serverLogPath `
-        -RedirectStandardOutput $serverOutputPath `
-        -WindowStyle Hidden `
-        -PassThru
+    $serviceBinaryPath = '"{0}" -D -e -E "{1}" -f "{2}"' -f $sshd, $serverLogPath, $sshdConfig
+    # New-Service preserves the complete binary path (including arguments) and
+    # runs under LocalSystem by default, which is required for sshd to create
+    # the unprivileged child process on Windows.
+    New-Service `
+        -Name $sshdServiceName `
+        -BinaryPathName $serviceBinaryPath `
+        -DisplayName "BX SSH OpenSSH compatibility ($MatrixId)" `
+        -StartupType Manual | Out-Null
+    $sshdServiceCreated = $true
+    Start-Service -Name $sshdServiceName
 
     $ready = $false
     foreach ($attempt in 1..30) {
-        if ($sshdProcess.HasExited) {
-            throw "Windows OpenSSH Server exited before accepting connections"
+        $service = Get-Service -Name $sshdServiceName -ErrorAction SilentlyContinue
+        if ($null -eq $service -or $service.Status -eq "Stopped") {
+            throw "Windows OpenSSH Server service exited before accepting connections"
         }
         $client = [System.Net.Sockets.TcpClient]::new()
         try {
@@ -182,6 +202,7 @@ LogLevel VERBOSE
     $env:BX_SSH_TEST_PRIVATE_KEY = $clientKey
     $env:BX_SSH_TEST_HOST_KEY_ALGORITHM = $HostKeyAlgorithm
     $env:BX_SSH_TEST_EXPECTED_HOST_KEY_ALGORITHM = $expectedHostKeyAlgorithm
+    $env:BX_SSH_TEST_EXPECTED_EXIT_STATUS = "0"
     $env:BX_SSH_TEST_AUTH_METHODS = "password,public-key"
     $env:BX_SSH_TEST_SHELL_KIND = "windows-cmd"
     Invoke-NativeCommand -FilePath "cargo.exe" -ArgumentList @(
@@ -197,25 +218,45 @@ LogLevel VERBOSE
     $result = "PASS"
 }
 finally {
-    if ($null -ne $sshdProcess -and -not $sshdProcess.HasExited) {
-        Stop-Process -Id $sshdProcess.Id -Force -ErrorAction SilentlyContinue
-        Wait-Process -Id $sshdProcess.Id -ErrorAction SilentlyContinue
+    if ($sshdServiceCreated) {
+        Stop-Service -Name $sshdServiceName -Force -ErrorAction SilentlyContinue
+        for ($attempt = 1; $attempt -le 20; $attempt++) {
+            $service = Get-Service -Name $sshdServiceName -ErrorAction SilentlyContinue
+            if ($null -eq $service -or $service.Status -eq "Stopped") {
+                break
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        & sc.exe delete $sshdServiceName | Out-Null
     }
     if (Test-Path -LiteralPath $serverLogPath) {
-        Copy-Item -LiteralPath $serverLogPath -Destination $reportLogPath -Force
+        $copied = $false
+        for ($attempt = 1; $attempt -le 20; $attempt++) {
+            try {
+                Copy-Item -LiteralPath $serverLogPath -Destination $reportLogPath -Force -ErrorAction Stop
+                $copied = $true
+                break
+            }
+            catch {
+                Start-Sleep -Milliseconds 250
+            }
+        }
+        if (-not $copied) {
+            "Unable to copy sshd log before cleanup completed." | Set-Content -LiteralPath $reportLogPath -Encoding utf8
+        }
     }
     else {
         New-Item -ItemType File -Path $reportLogPath -Force | Out-Null
     }
     if ($userCreated) {
-        & net.exe user $testUser /delete | Out-Null
+        Remove-LocalUser -Name $testUser -ErrorAction SilentlyContinue
     }
 
     @"
 # BX SSH OpenSSH integration test
 
 - Matrix: $MatrixId
-- Target: Windows Server 2025
+- Target: $targetName
 - Host key algorithm: $HostKeyAlgorithm
 - Authentication methods: password, public-key
 - Server: $serverVersion
