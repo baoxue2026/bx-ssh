@@ -66,7 +66,27 @@ function policyWith(overrides = {}) {
     ],
     testSuites: [
       validSuite,
-      { ...validSuite, id: "QA-COMP-01", category: "compatibility" },
+      {
+        ...validSuite,
+        id: "QA-COMP-01",
+        category: "compatibility",
+        matrixDimensions: {
+          authenticationMethods: [
+            "password",
+            "public-key-ed25519",
+            "keyboard-interactive",
+          ],
+          authenticationMethodsByTarget: {
+            "linux-openssh": [
+              "password",
+              "public-key-ed25519",
+              "keyboard-interactive",
+            ],
+            "windows-server-2025": ["password", "public-key-ed25519"],
+          },
+          compatibilityNotes: ["Windows OpenSSH Server limitation"],
+        },
+      },
       { ...validSuite, id: "QA-PERF-01", category: "performance" },
       { ...validSuite, id: "QA-STAB-01", category: "stability" },
       { ...validSuite, id: "QA-SEC-01", category: "security" },
@@ -146,5 +166,54 @@ describe("phase-1 QA policy", () => {
     });
 
     assert.deepEqual(validatePolicy(policy), []);
+  });
+
+  it("requires target-specific OpenSSH authentication capabilities", () => {
+    const policy = policyWith({
+      testSuites: policyWith().testSuites.map((suite) =>
+        suite.category === "compatibility"
+          ? {
+              ...suite,
+              matrixDimensions: { authenticationMethods: ["password"] },
+            }
+          : suite,
+      ),
+    });
+    const violations = validatePolicy(policy).join("\n");
+    assert.match(violations, /authenticationMethodsByTarget/);
+  });
+
+  it("does not allow Windows OpenSSH to claim PAM authentication", () => {
+    const policy = policyWith({
+      testSuites: policyWith().testSuites.map((suite) =>
+        suite.category === "compatibility"
+          ? {
+              ...suite,
+              matrixDimensions: {
+                authenticationMethods: [
+                  "password",
+                  "public-key-ed25519",
+                  "keyboard-interactive",
+                ],
+                authenticationMethodsByTarget: {
+                  "linux-openssh": [
+                    "password",
+                    "public-key-ed25519",
+                    "keyboard-interactive",
+                  ],
+                  "windows-server-2025": [
+                    "password",
+                    "public-key-ed25519",
+                    "keyboard-interactive",
+                  ],
+                },
+                compatibilityNotes: ["Windows OpenSSH Server limitation"],
+              },
+            }
+          : suite,
+      ),
+    });
+    const violations = validatePolicy(policy).join("\n");
+    assert.match(violations, /must not claim keyboard-interactive/);
   });
 });

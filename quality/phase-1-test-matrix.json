@@ -166,6 +166,18 @@
           "password",
           "public-key-ed25519",
           "keyboard-interactive"
+        ],
+        "authenticationMethodsByTarget": {
+          "linux-openssh": [
+            "password",
+            "public-key-ed25519",
+            "keyboard-interactive"
+          ],
+          "windows-server-2025": ["password", "public-key-ed25519"]
+        },
+        "compatibilityNotes": [
+          "Linux OpenSSH 使用 PAM 启用 Keyboard Interactive 多轮认证。",
+          "Windows OpenSSH Server 一期不承诺 Keyboard Interactive/PAM；脚本显式关闭该能力，避免把平台限制误报为通过。"
         ]
       },
       "commands": [

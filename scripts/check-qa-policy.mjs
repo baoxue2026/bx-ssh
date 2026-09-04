@@ -230,9 +230,66 @@ export function validatePolicy(policy, { workspaceRoot = workspace } = {}) {
         `Release-blocking suite ${suite.id ?? "<unknown>"} must have an environment`,
       );
     }
+    if (suite.id === "QA-COMP-01") {
+      validateOpenSshMatrix(suite, violations);
+    }
   }
 
   return violations;
+}
+
+function validateOpenSshMatrix(suite, violations) {
+  const dimensions = suite.matrixDimensions;
+  if (!isObject(dimensions)) {
+    violations.push("QA-COMP-01 must define matrixDimensions");
+    return;
+  }
+  const methods = dimensions.authenticationMethods;
+  if (!stringArray(methods) || methods.length === 0) {
+    violations.push(
+      "QA-COMP-01 matrixDimensions.authenticationMethods must be a non-empty string array",
+    );
+    return;
+  }
+  const byTarget = dimensions.authenticationMethodsByTarget;
+  if (!isObject(byTarget)) {
+    violations.push(
+      "QA-COMP-01 must define authenticationMethodsByTarget to document platform differences",
+    );
+    return;
+  }
+  for (const target of ["linux-openssh", "windows-server-2025"]) {
+    if (!stringArray(byTarget[target]) || byTarget[target].length === 0) {
+      violations.push(
+        `QA-COMP-01 authenticationMethodsByTarget.${target} must be a non-empty string array`,
+      );
+    } else if (byTarget[target].some((method) => !methods.includes(method))) {
+      violations.push(
+        `QA-COMP-01 authenticationMethodsByTarget.${target} contains an undeclared method`,
+      );
+    }
+  }
+  if (!byTarget["linux-openssh"]?.includes("keyboard-interactive")) {
+    violations.push(
+      "QA-COMP-01 Linux OpenSSH target must cover keyboard-interactive",
+    );
+  }
+  if (byTarget["windows-server-2025"]?.includes("keyboard-interactive")) {
+    violations.push(
+      "QA-COMP-01 Windows Server target must not claim keyboard-interactive without a PAM test",
+    );
+  }
+  if (
+    !Array.isArray(dimensions.compatibilityNotes) ||
+    !dimensions.compatibilityNotes.some(
+      (note) =>
+        typeof note === "string" && note.includes("Windows OpenSSH Server"),
+    )
+  ) {
+    violations.push(
+      "QA-COMP-01 must document the Windows OpenSSH Server authentication limitation",
+    );
+  }
 }
 
 function validateCommand(command, workspaceRoot, violations) {
@@ -277,6 +334,10 @@ function isObject(value) {
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function stringArray(value) {
+  return Array.isArray(value) && value.every(nonEmptyString);
 }
 
 export function loadPolicy() {
