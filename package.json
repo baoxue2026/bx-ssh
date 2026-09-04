@@ -41,9 +41,12 @@
     "stability:controls": "node scripts/check-stability-controls.mjs",
     "stability:test": "node --test scripts/check-stability-controls.test.mjs",
     "stability:report": "node scripts/check-stability-controls.mjs --report artifacts/stability/stability-report.json",
+    "release:controls": "node scripts/check-release-gate.mjs",
+    "release:test": "node --test scripts/check-release-gate.test.mjs",
+    "release:report": "node scripts/check-release-gate.mjs --report artifacts/release/release-manifest.json",
     "qa:check": "node scripts/check-qa-policy.mjs",
     "qa:test": "node --test scripts/check-qa-policy.test.mjs",
-    "check": "pnpm qa:check && pnpm qa:test && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm security:controls && pnpm security:test && pnpm performance:controls && pnpm performance:test && pnpm stability:controls && pnpm stability:test && pnpm security:tauri && pnpm check:windows-packaging && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test && pnpm ipc:check"
+    "check": "pnpm qa:check && pnpm qa:test && pnpm release:controls && pnpm release:test && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm security:controls && pnpm security:test && pnpm performance:controls && pnpm performance:test && pnpm stability:controls && pnpm stability:test && pnpm security:tauri && pnpm check:windows-packaging && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test && pnpm ipc:check"
   },
   "devDependencies": {
     "prettier": "3.9.6"

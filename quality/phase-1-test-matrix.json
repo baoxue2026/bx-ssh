@@ -7,7 +7,8 @@
   "releaseGate": {
     "rule": "所有 blocking 为 release 的测试套件必须通过；失败时不得发布",
     "evidenceRequired": true,
-    "defectLevelsBlockingRelease": ["P0", "P1"]
+    "defectLevelsBlockingRelease": ["P0", "P1"],
+    "releasePolicy": "quality/phase-1-release-gate.json"
   },
   "defectSeverity": [
     {
@@ -426,6 +427,42 @@
         "应用崩溃或强制结束后重新打开，确认会话状态和临时文件清理符合预期"
       ],
       "artifacts": ["CI test logs", "备份与恢复验证记录（发布附件）"]
+    },
+    {
+      "id": "QA-REL-01",
+      "category": "release",
+      "name": "RC 发布与归档验收",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "github-release-ci",
+          "platform": "GitHub Actions",
+          "os": "Ubuntu 24.04 / Windows Server 2025",
+          "architecture": "x64",
+          "purpose": "RC 全门禁、签名、证据清单和版本归档"
+        }
+      ],
+      "commands": [
+        { "run": "pnpm release:controls", "type": "automated" },
+        { "run": "pnpm release:test", "type": "automated" },
+        { "run": "pnpm release:report", "type": "manual" }
+      ],
+      "manualChecks": [
+        "确认 RC 只从 main 上通过全部 blocking 套件的提交创建，并使用 annotated、signed、immutable tag",
+        "确认 Windows x64 MSI/NSIS 安装包、更新包签名、篡改/错误公钥/降级拒绝测试均通过",
+        "确认 CycloneDX JSON SBOM 同时包含 Cargo 与 npm 组件，许可证和漏洞检查均通过",
+        "确认安装包、符号、SHA-256、SBOM、测试报告和风险/缺陷处置按版本归档",
+        "使用 pnpm release:report 校验 release-manifest.json，P0/P1 为 0 且 P2/P3 有处置记录"
+      ],
+      "artifacts": [
+        "artifacts/release/<version>/release-manifest.json",
+        "artifacts/release/<version>/checksums-sha256.txt",
+        "artifacts/release/<version>/symbols/",
+        "artifacts/sbom/<version>/bx-ssh.cdx.json",
+        "artifacts/test-reports/<version>/",
+        "CI release job summary"
+      ]
     }
   ]
 }

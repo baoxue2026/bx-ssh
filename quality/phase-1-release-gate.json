@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "phase": "P1",
+  "releaseName": "一期 RC 发布门禁",
+  "channel": "rc",
+  "owner": "仓库维护者（当前开发者）",
+  "source": {
+    "branch": "main",
+    "tagRequired": true,
+    "tagPattern": "^v\\d+\\.\\d+\\.\\d+(?:-(?:alpha|beta|rc)\\.\\d+)?$",
+    "rcPattern": "^v\\d+\\.\\d+\\.\\d+-rc\\.\\d+$",
+    "annotatedTagRequired": true,
+    "signedTagRequired": true,
+    "immutableTagRequired": true
+  },
+  "requiredSuites": [
+    "QA-FUNC-01",
+    "QA-COMP-01",
+    "QA-PERF-01",
+    "QA-STAB-01",
+    "QA-SEC-01",
+    "QA-INSTALL-01",
+    "QA-RECOVERY-01",
+    "QA-REL-01"
+  ],
+  "defects": {
+    "blockingLevels": ["P0", "P1"],
+    "maximumOpenBlocking": 0,
+    "dispositionRequiredFor": ["P2", "P3"]
+  },
+  "supplyChain": {
+    "sbom": {
+      "format": "CycloneDX",
+      "fileFormat": "json",
+      "requiredComponentPurlPrefixes": ["pkg:cargo/", "pkg:npm/"],
+      "minimumRetentionDays": 14,
+      "pathPrefix": "artifacts/sbom/"
+    },
+    "licenseCommands": [
+      "cargo deny check advisories licenses sources",
+      "pnpm security:licenses",
+      "pnpm audit --registry=https://registry.npmjs.org --audit-level high"
+    ],
+    "secretScan": {
+      "tool": "gitleaks",
+      "fullHistoryRequired": true
+    },
+    "lockfiles": ["Cargo.lock", "pnpm-lock.yaml"]
+  },
+  "artifacts": {
+    "retentionDays": 90,
+    "hashAlgorithm": "SHA-256",
+    "requiredEvidencePrefixes": [
+      "artifacts/release/",
+      "artifacts/sbom/",
+      "artifacts/test-reports/"
+    ],
+    "releasePlatforms": [
+      {
+        "id": "windows-x64",
+        "runner": "windows-2025",
+        "required": true,
+        "bundleTypes": ["msi", "nsis"],
+        "signatureExtensions": [".sig"],
+        "symbolExtensions": [".pdb", ".zip", ".7z"],
+        "installerSigning": "authenticode",
+        "updaterSigning": "tauri-minisign"
+      }
+    ],
+    "validationPlatforms": ["windows-x64", "macos-x64", "linux-x64"]
+  },
+  "signing": {
+    "privateKeySources": ["github-environment", "offline-release-host"],
+    "privateKeyMustNotBeArchived": true,
+    "requiredChecks": [
+      "installer-signature",
+      "updater-signature",
+      "tamper-rejection",
+      "wrong-key-rejection",
+      "downgrade-rejection"
+    ]
+  },
+  "traceability": {
+    "manifestSchemaVersion": 1,
+    "requiredReleaseFields": [
+      "version",
+      "channel",
+      "tag",
+      "commit",
+      "sourceBranch",
+      "generatedAt"
+    ],
+    "requiredReportFields": [
+      "suites",
+      "defects",
+      "artifacts",
+      "sbom",
+      "licenses",
+      "signatures",
+      "reports",
+      "provenance"
+    ]
+  },
+  "requiredEvidence": [
+    "all release-blocking QA suites with pass status and archived evidence",
+    "CycloneDX JSON SBOM containing Cargo and npm components",
+    "Rust and npm vulnerability/license checks plus full-history secret scan",
+    "Windows x64 MSI and NSIS installers with Authenticode and updater signatures",
+    "symbols, SHA-256 checksums, update validation and test reports archived by version",
+    "annotated signed immutable tag, source commit and RC defect disposition"
+  ]
+}

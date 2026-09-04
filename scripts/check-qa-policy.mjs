@@ -18,6 +18,7 @@ export function validatePolicy(policy, { workspaceRoot = workspace } = {}) {
     "security",
     "installation",
     "recovery",
+    "release",
   ];
   const allowedBlocking = new Set(["release", "non-blocking"]);
   const allowedCommandTypes = new Set(["automated", "manual"]);
@@ -136,7 +137,7 @@ export function validatePolicy(policy, { workspaceRoot = workspace } = {}) {
   }
   if (suites.length !== requiredCategories.length) {
     violations.push(
-      "QA policy testSuites must contain exactly seven phase-1 categories",
+      "QA policy testSuites must contain exactly eight phase-1 categories",
     );
   }
 
@@ -291,7 +292,7 @@ function main() {
     return;
   }
   console.log(
-    "QA policy check passed (seven phase-1 test categories, owners, environments, gates, and commands).",
+    "QA policy check passed (eight phase-1 test categories, owners, environments, gates, and commands).",
   );
 }
 

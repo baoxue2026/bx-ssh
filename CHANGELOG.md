@@ -26,3 +26,4 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 - Startup, multi-session, terminal-output, memory, and SFTP performance budgets are captured by a dedicated regression gate and report schema.
 - A 24-hour stability, sleep/wake, network interruption, reconnect, and resource-leak protocol is enforced through a versioned budget and report validator.
 - G0-09 security and supply-chain gates with Rust/npm vulnerability and license checks, full-history secret scanning, CycloneDX SBOM archival, automated dependency updates, and a threat model.
+- P1-QA-09 release-candidate gate with versioned SBOM, license, signed installer/update, symbol, checksum, defect-disposition, and provenance evidence validation.

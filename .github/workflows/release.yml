@@ -1,0 +1,514 @@
+name: Release candidate
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要验收的 RC 版本（例如 v1.0.0-rc.1）"
+        required: true
+        type: string
+      acceptance_metadata:
+        description: "QA 验收元数据 JSON；未填写时读取 release 环境的 RELEASE_METADATA_JSON"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+
+jobs:
+  release-gate:
+    name: RC release gate
+    outputs:
+      source_commit: ${{ steps.verify_release_tag.outputs.commit }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.2
+
+      - name: Install pnpm
+        run: npm install --global pnpm@10.30.3
+
+      - name: Validate release controls
+        run: pnpm release:controls
+
+      - name: Test release report validator
+        run: pnpm release:test
+
+      - name: Verify release tag and source commit
+        id: verify_release_tag
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+            echo "Unsupported release version: $RELEASE_VERSION" >&2
+            exit 1
+          fi
+          git fetch origin main --tags --force
+          git cat-file -e "refs/tags/$RELEASE_VERSION^{tag}"
+          tag_commit="$(git rev-list -n 1 "$RELEASE_VERSION")"
+          git merge-base --is-ancestor "$tag_commit" origin/main
+          git verify-tag "$RELEASE_VERSION"
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "Tag commit does not match the workflow commit" >&2
+            exit 1
+          fi
+          echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Verify main branch protection
+        env:
+          GH_TOKEN: ${{ secrets.BRANCH_PROTECTION_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          gh api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$RUNNER_TEMP/main-protection.json"
+          jq -e '
+            (.required_status_checks.strict == true) and
+            ((.required_status_checks.checks // .required_status_checks.contexts // []) | length > 0) and
+            any((.required_status_checks.checks // .required_status_checks.contexts // [])[];
+              ((.context // .) == "Release gate")) and
+            (.required_pull_request_reviews.required_approving_review_count >= 1) and
+            (.required_linear_history.enabled == true) and
+            (.required_conversation_resolution.enabled == true) and
+            (.allow_force_pushes.enabled == false) and
+            (.allow_deletions.enabled == false)
+          ' "$RUNNER_TEMP/main-protection.json" > /dev/null
+
+  package:
+    name: Signed package (${{ matrix.platform }})
+    needs: release-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-24.04
+            bundles: appimage,deb,rpm
+          - platform: macos
+            os: macos-14
+            bundles: app,dmg
+          - platform: windows
+            os: windows-2025
+            bundles: msi,nsis
+    runs-on: ${{ matrix.os }}
+    environment: release
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+          libfuse2 patchelf rpm
+
+      - name: Install Windows SQLCipher build dependency
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
+            choco install strawberryperl --no-progress --yes
+          }
+          "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.2
+
+      - name: Install pnpm
+        run: npm install --global pnpm@10.30.3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Validate Windows packaging policy
+        run: node scripts/check-windows-packaging.mjs
+
+      - name: Require protected signing inputs
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          test -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+
+      - name: Prepare signed updater configuration
+        shell: bash
+        run: |
+          mkdir -p artifacts/updater
+          node scripts/prepare-release-updater.mjs \
+            --version "$RELEASE_VERSION" \
+            --output artifacts/updater/tauri.release.conf.json
+
+      - name: Build signed bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: >-
+          pnpm --filter @bx-ssh/desktop tauri build
+          --ci
+          --ignore-version-mismatches
+          --bundles "${{ matrix.bundles }}"
+          --config artifacts/updater/tauri.release.conf.json
+
+      - name: Sign Windows installers with Authenticode
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CODESIGN_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CODESIGN_CERTIFICATE_BASE64 }}
+          WINDOWS_CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_CERTIFICATE_PASSWORD }}
+        run: >-
+          ./scripts/sign-windows-bundles.ps1
+          -BundleRoot "target\release\bundle"
+          -ReportPath "artifacts\release\windows-signature-report.json"
+
+      - name: Re-sign final updater artifacts
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          temporary_key=""
+          if [[ -f "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            key_path="$TAURI_SIGNING_PRIVATE_KEY"
+          else
+            temporary_key="$RUNNER_TEMP/bx-ssh-updater-$(uuidgen 2>/dev/null || date +%s).key"
+            umask 077
+            printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > "$temporary_key"
+            key_path="$temporary_key"
+          fi
+          cleanup() {
+            if [[ -n "$temporary_key" && -f "$temporary_key" ]]; then
+              rm -f -- "$temporary_key"
+            fi
+          }
+          trap cleanup EXIT
+          while IFS= read -r -d '' bundle; do
+            pnpm --filter @bx-ssh/desktop tauri signer sign \
+              --private-key-path "$key_path" \
+              "$bundle"
+          done < <(find target/release/bundle -type f \( \
+            -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.exe' \
+            -o -name '*.msi' -o -name '*.rpm' -o -name '*.tar.gz' -o -name '*.zip' \
+          \) -print0 | sort -z)
+
+      - name: Generate bundle report and release evidence
+        shell: bash
+        run: |
+          node scripts/report-bundle-sizes.mjs --platform "${{ matrix.platform }}"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            node scripts/prepare-release-evidence.mjs \
+              --platform "${{ matrix.platform }}" \
+              --version "$RELEASE_VERSION" \
+              --bundle-dir target/release/bundle \
+              --symbol-root target/release \
+              --output-dir artifacts/release \
+              --reports-dir artifacts \
+              --installer-signature-report artifacts/release/windows-signature-report.json
+          else
+            node scripts/prepare-release-evidence.mjs \
+              --platform "${{ matrix.platform }}" \
+              --version "$RELEASE_VERSION" \
+              --bundle-dir target/release/bundle \
+              --symbol-root target/release \
+              --output-dir artifacts/release \
+              --reports-dir artifacts
+          fi
+
+      - name: Upload signed bundles, symbols, and evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bx-ssh-release-${{ matrix.platform }}-${{ env.RELEASE_VERSION }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            target/release/bundle/**/*.AppImage
+            target/release/bundle/**/*.deb
+            target/release/bundle/**/*.dmg
+            target/release/bundle/**/*.exe
+            target/release/bundle/**/*.msi
+            target/release/bundle/**/*.rpm
+            target/release/bundle/**/*.sig
+            target/release/bundle/**/*.tar.gz
+            target/release/bundle/**/*.zip
+            target/release/**/*.pdb
+            target/release/**/*.dSYM/**
+            target/release/**/*.debug
+            target/release/**/*.sym
+            artifacts/bundle-size/*
+            artifacts/updater/reports/*
+            artifacts/release/**
+
+  release-metadata:
+    name: Collect protected RC acceptance metadata
+    needs: release-gate
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Write protected acceptance metadata
+        shell: bash
+        env:
+          RELEASE_METADATA_JSON: ${{ inputs.acceptance_metadata || secrets.RELEASE_METADATA_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_METADATA_JSON"
+          mkdir -p artifacts/release-input
+          node <<'NODE'
+          const fs = require('node:fs');
+          const value = process.env.RELEASE_METADATA_JSON;
+          const metadata = JSON.parse(value);
+          if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+            throw new Error('RELEASE_METADATA_JSON must be a JSON object');
+          }
+          if (/-----BEGIN [^-]*PRIVATE KEY-----|\"(?:password|privateKey|token|secret)\"\s*:/i.test(JSON.stringify(metadata))) {
+            throw new Error('Release metadata must not contain credentials or signing material');
+          }
+          fs.writeFileSync('artifacts/release-input/release-metadata.json', `${JSON.stringify(metadata, null, 2)}\n`);
+          NODE
+
+      - name: Upload protected acceptance metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bx-ssh-release-metadata-${{ env.RELEASE_VERSION }}-${{ github.sha }}
+          path: artifacts/release-input/release-metadata.json
+          if-no-files-found: error
+          retention-days: 90
+
+  supply-chain:
+    name: Release supply-chain checks
+    needs: release-gate
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.2
+
+      - name: Install pnpm
+        run: npm install --global pnpm@10.30.3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: Check Rust advisories, licenses, and sources
+        run: cargo deny check advisories licenses sources
+
+      - name: Check npm audit and licenses
+        run: |
+          pnpm audit --registry=https://registry.npmjs.org --audit-level high
+          pnpm security:licenses
+
+      - name: Check application security controls
+        run: |
+          pnpm security:controls
+          pnpm security:test
+          pnpm security:tauri
+
+      - name: Check security exception expiry
+        run: pnpm security:exceptions
+
+      - name: Install Gitleaks 8.30.1
+        shell: bash
+        env:
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          bin_dir="$RUNNER_TEMP/gitleaks-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+          echo "$GITLEAKS_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$bin_dir"
+          tar --extract --gzip --file "$archive" --directory "$bin_dir" gitleaks
+          chmod 0755 "$bin_dir/gitleaks"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Scan complete Git history for secrets
+        run: gitleaks git . --redact --exit-code 1
+
+  sbom:
+    name: Release CycloneDX SBOM
+    needs: release-gate
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Install Syft 1.50.0
+        shell: bash
+        env:
+          SYFT_SHA256: bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/syft.tar.gz"
+          bin_dir="$RUNNER_TEMP/syft-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$archive" \
+            "https://github.com/anchore/syft/releases/download/v1.50.0/syft_1.50.0_linux_amd64.tar.gz"
+          echo "$SYFT_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$bin_dir"
+          tar --extract --gzip --file "$archive" --directory "$bin_dir" syft
+          chmod 0755 "$bin_dir/syft"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Generate versioned CycloneDX JSON SBOM
+        env:
+          SYFT_CHECK_FOR_APP_UPDATE: "false"
+        run: |
+          mkdir -p "artifacts/sbom/$RELEASE_VERSION"
+          syft dir:. --output "cyclonedx-json=artifacts/sbom/$RELEASE_VERSION/bx-ssh.cdx.json"
+
+      - name: Validate Cargo and npm SBOM components
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = `artifacts/sbom/${process.env.RELEASE_VERSION}/bx-ssh.cdx.json`;
+          const sbom = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const purls = (sbom.components ?? []).map((component) => component.purl ?? '');
+          if (sbom.bomFormat !== 'CycloneDX') throw new Error('SBOM format is not CycloneDX');
+          if (!purls.some((purl) => purl.startsWith('pkg:cargo/'))) throw new Error('SBOM has no Cargo components');
+          if (!purls.some((purl) => purl.startsWith('pkg:npm/'))) throw new Error('SBOM has no npm components');
+          console.log(`Validated ${purls.length} SBOM components.`);
+          NODE
+
+      - name: Upload versioned SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bx-ssh-release-sbom-${{ env.RELEASE_VERSION }}-${{ github.sha }}
+          path: artifacts/sbom/${{ env.RELEASE_VERSION }}/bx-ssh.cdx.json
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish RC release
+    needs: [release-gate, package, release-metadata, supply-chain, sbom]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.2
+
+      - name: Install pnpm
+        run: npm install --global pnpm@10.30.3
+
+      - name: Download signed platform artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: bx-ssh-release-*
+          path: artifacts/release-input
+          merge-multiple: true
+
+      - name: Generate and validate release manifest
+        run: |
+          node scripts/create-release-manifest.mjs \
+            --version "$RELEASE_VERSION" \
+            --commit "${{ needs.release-gate.outputs.source_commit }}" \
+            --input-dir artifacts/release-input \
+            --output artifacts/release/release-manifest.json
+          pnpm release:report
+          mkdir -p "artifacts/release/$RELEASE_VERSION"
+          cp artifacts/release/release-manifest.json "artifacts/release/$RELEASE_VERSION/release-manifest.json"
+
+      - name: Stage uniquely named release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d artifacts/publish-assets ]]; then
+            find artifacts/publish-assets -type f -delete
+          else
+            mkdir -p artifacts/publish-assets
+          fi
+          while IFS= read -r -d '' file; do
+            relative="${file#artifacts/}"
+            asset_name="${relative//\//--}"
+            cp -- "$file" "artifacts/publish-assets/$asset_name"
+          done < <(find artifacts/release artifacts/sbom -type f -print0 | sort -z)
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' release_files < <(find artifacts/publish-assets -type f -print0 | sort -z)
+          if (( ${#release_files[@]} == 0 )); then
+            echo "No release files were generated" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_VERSION" \
+            --verify-tag \
+            --title "BX SSH $RELEASE_VERSION" \
+            --notes-file CHANGELOG.md \
+            "${release_files[@]}"
+
+      - name: Publish release evidence summary
+        if: always()
+        run: |
+          if test -f artifacts/release/release-manifest.json; then
+            cat artifacts/release/release-manifest.json >> "$GITHUB_STEP_SUMMARY"
+          fi

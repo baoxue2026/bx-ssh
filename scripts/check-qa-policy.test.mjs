@@ -72,6 +72,7 @@ function policyWith(overrides = {}) {
       { ...validSuite, id: "QA-SEC-01", category: "security" },
       { ...validSuite, id: "QA-INSTALL-01", category: "installation" },
       { ...validSuite, id: "QA-RECOVERY-01", category: "recovery" },
+      { ...validSuite, id: "QA-REL-01", category: "release" },
     ],
     ...overrides,
   };

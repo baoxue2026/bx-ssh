@@ -13,6 +13,7 @@ Every pull request and push to `main` must pass these checks:
 5. Gitleaks scans the complete Git history and fails on a detected secret.
 6. Syft 1.50.0 creates a CycloneDX JSON SBOM, verifies Cargo and npm components, and archives it for 14 days.
 7. Pull requests also run GitHub Dependency Review, which blocks high-severity vulnerabilities and prohibited licenses.
+8. RC publication additionally runs `pnpm release:controls`, validates `quality/phase-1-release-gate.json`, and archives a self-contained release manifest with checksums, symbols, SBOM, signatures, test reports, and provenance.
 
 Every GitHub Action uses a full commit SHA with a readable version comment. `Cargo.lock` and `pnpm-lock.yaml` are committed, and CI uses frozen/locked installation. Dependabot checks Cargo, npm, and Actions weekly.
 
@@ -27,6 +28,10 @@ Production npm dependencies are limited to MIT, ISC, Apache-2.0, and `Apache-2.0
 Release signing private keys may only come from a GitHub Environment secret or an offline release host. They must not be written to the repository, artifacts, caches, or ordinary logs. Update-signing tests use ephemeral CI keys whose artifacts expire with the job retention period.
 
 SBOMs, test reports, and bundle-size reports may be archived. They must not contain databases, credentials, private keys, logs, or runtime data. `artifacts/` remains excluded by `.gitignore`.
+
+Release evidence is retained for at least 90 days. A release manifest must identify the immutable signed tag, source commit, every release-blocking QA suite, open defect disposition, artifact SHA-256 values, and the exact archive paths for SBOMs, signatures, symbols, and reports.
+
+The protected `release` environment also provides a read-only `BRANCH_PROTECTION_TOKEN` so the RC workflow can verify `main` branch protection through the GitHub API. This token is never included in release artifacts or metadata.
 
 ## Updates and exceptions
 
