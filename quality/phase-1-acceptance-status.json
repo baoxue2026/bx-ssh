@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "phase": "P1",
-  "updatedAt": "2026-09-04T00:00:00.000Z",
+  "updatedAt": "2026-09-08T11:07:22.634Z",
   "releaseReadiness": "blocked",
-  "releaseReadinessReason": "完整 OpenSSH 矩阵、Windows 11 24H2 人工验收、24 小时稳定性、正式签名和 GitHub main 保护尚未取得外部证据。",
+  "releaseReadinessReason": "代码与本地回归已修复，完整当前提交 CI、Win11 参考设备性能/人工/24h 稳定性、独立审批者和正式签名环境仍待验收。",
   "items": [
     {
       "id": "QA-COMP-01",
@@ -14,7 +14,9 @@
         "commit:ca157ee",
         "scripts/test-openssh-windows.ps1",
         "crates/ssh-core/tests/openssh.rs",
-        "本机 Windows 10 OpenSSH 8.1p1：Ed25519、ECDSA P-256、RSA-SHA2 已通过"
+        "本机 Windows 10 OpenSSH 8.1p1：Ed25519、ECDSA P-256、RSA-SHA2 已通过",
+        "2026-09-08：Windows Release SFTP、上传/下载取消、单 subsystem 兼容路径和十会话已通过",
+        "apps/desktop/tests/e2e/ssh-workflows.spec.ts（真实 OpenSSH 的三项桌面流程已通过）"
       ],
       "pendingEvidence": [
         "CI：Ubuntu 22.04/24.04、Debian 12、Rocky Linux 9 三种主机密钥矩阵",
@@ -50,12 +52,16 @@
         "commit:fdbb9bf",
         "scripts/collect-windows-stability.ps1（已完成短时采集冒烟）",
         "本机十会话：BX_SESSION_RESULT sessions=10 elapsed_ms=410",
-        "本机 1GiB 上传/下载及 SHA-256 一致性通过"
+        "本机 1GiB 上传/下载及 SHA-256 一致性通过",
+        "crates/ssh-core/src/sftp_read.rs（有界预读、顺序校验、短读与取消测试）",
+        "artifacts/test-reports/openssh-phase1-release-read-ahead.json（1GiB 下载 75.7 MB/s，原顺序路径 34.6 MB/s）",
+        "本机为 Windows 10 + SATA SSD；传输后持久化增加约 9 秒，总速率仍未达到 OpenSSH 的 80%"
       ],
       "pendingEvidence": [
-        "同机同网 OpenSSH sftp 速度达到 80% 的性能报告（当前本机结果低于门槛）",
+        "Windows 11 24H2 / NVMe 参考设备同文件、双向独立 OpenSSH 基线，含持久化的传输速度达到 80%",
+        "冷启动、空闲/十会话内存、标签切换与 5 分钟大输出完整性能报告",
         "Windows 11 24H2 参考设备连续 24 小时 soak 报告",
-        "休眠/唤醒、断网重连、SFTP 取消和句柄泄漏报告"
+        "休眠/唤醒、断网重连与句柄泄漏报告（SFTP 中途取消已通过自动化）"
       ]
     },
     {
@@ -66,11 +72,12 @@
       "evidence": [
         "commit:fdbb9bf",
         "scripts/test-windows-manual-smoke.ps1",
-        "artifacts/test-reports/windows-manual-smoke.json（本机 Windows 10 Debug 冒烟）"
+        "artifacts/test-reports/windows-manual-smoke.json（本机 Windows 10 Debug 冒烟）",
+        "2026-09-08：本机真实 SSH 连接、密码重试、终端回显、SFTP 文件/目录和冲突跳过 E2E 已通过"
       ],
       "pendingEvidence": [
         "签名安装包首次安装、覆盖升级和卸载",
-        "真实 SSH 服务器连接、终端和 SFTP 主流程",
+        "Windows 11 24H2 真实 SSH/终端/SFTP 人工验收",
         "Windows 11 24H2 高 DPI、输入法、系统代理和托盘恢复"
       ]
     },
@@ -83,7 +90,9 @@
         "quality/phase-1-test-matrix.json",
         "quality/phase-1-release-gate.json",
         "scripts/check-release-gate.mjs",
-        "scripts/prepare-release-evidence.mjs"
+        "scripts/prepare-release-evidence.mjs",
+        "quality/phase-1-acceptance-progress.md",
+        "quality/phase-1-release-setup.md"
       ],
       "pendingEvidence": ["每个 blocking 套件的版本化测试报告和发布附件"]
     },
@@ -100,12 +109,14 @@
         "scripts/check-release-gate.mjs",
         "pnpm main-protection:test 已通过",
         "pnpm release:controls 已通过",
-        "pnpm release:test 已通过"
+        "pnpm release:test 已通过",
+        "2026-09-08 GitHub API 实查：main 未保护；仓库仅有所有者；environment 与 repository secrets 均为 0",
+        "quality/phase-1-main-branch-protection.json（可审阅的请求模板，尚未应用）"
       ],
       "pendingEvidence": [
-        "GitHub main 分支保护 API 实际返回 required checks、审批、线性历史和禁止强制推送",
-        "GitHub release 环境中的 Windows Authenticode 和 Tauri updater 密钥",
-        "GitHub release 环境中的 RELEASE_TAG_SIGNING_PUBLIC_KEY 公钥",
+        "确定独立 PR 审批者后应用 main 保护，并通过实际 API 响应校验",
+        "创建受保护的 release 环境并配置正式 Authenticode、Tauri updater 和分支保护查询凭据",
+        "配置 RELEASE_TAG_SIGNING_PUBLIC_KEY 核验公钥",
         "首个 annotated、signed、immutable v1.0.0-rc.1 标签及完整发布清单"
       ]
     }

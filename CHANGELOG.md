@@ -6,6 +6,12 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 
 ## [Unreleased]
 
+### Fixed
+
+- Isolate desktop E2E application data and credential services from normal installations.
+- Improve SFTP download throughput with bounded read-ahead and buffered local writes while preserving integrity checks, cancellation, and atomic publication.
+- Fix vulnerable development dependency paths and enforce reviewed security exception expiry in local checks.
+
 ### Added
 
 - Initial open-source repository governance, contribution, security, and conduct policies.
