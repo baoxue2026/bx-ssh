@@ -17,6 +17,13 @@ Every pull request and push to `main` must pass these checks:
 
 Every GitHub Action uses a full commit SHA with a readable version comment. `Cargo.lock` and `pnpm-lock.yaml` are committed, and CI uses frozen/locked installation. Dependabot checks Cargo, npm, and Actions weekly.
 
+`.gitleaksignore` records one reviewed historical false positive: the redaction
+test in `private_keys.rs` contained PEM header text without private-key bytes.
+The exception identifies only commit `848fbe01a973590f37ef82e80f1dbd3176b879b3`,
+the file, the `private-key` rule and its original line. The test now uses plain
+marker text; no file, rule or later finding is excluded. CI archives a redacted
+JSON scan report so a future finding can be traced without exposing its value.
+
 `pnpm check` runs Rust/npm exception expiry and both npm license inventories
 before the other local checks. `pnpm security:test` covers expired and malformed
 exception records and the compatibility of security dependency overrides.

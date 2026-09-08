@@ -165,22 +165,26 @@ async fn validates_host_key_authentication_and_interactive_shell() {
 
     if supports_auth("keyboard-interactive") {
         let keyboard_password = password.clone();
+        let mut prompted_fields = 0;
         let keyboard_session = authenticate_keyboard_interactive_with_progress(
             &endpoint,
             &username,
             &host_key.fingerprint_sha256,
             &ConnectionCancellation::default(),
-            move |prompt| {
+            |prompt| {
+                // RFC 4256 permits empty acknowledgement rounds, as sent by PAM.
+                prompted_fields += prompt.prompts.len();
                 let password = keyboard_password.clone();
-                async move {
-                    assert!(!prompt.prompts.is_empty());
-                    Ok(prompt.prompts.iter().map(|_| password.clone()).collect())
-                }
+                async move { Ok(prompt.prompts.iter().map(|_| password.clone()).collect()) }
             },
             |_| {},
         )
         .await
         .unwrap();
+        assert!(
+            prompted_fields > 0,
+            "PAM must request at least one credential"
+        );
         assert_eq!(keyboard_session.host_key(), &host_key);
         keyboard_session.disconnect().await.unwrap();
     }

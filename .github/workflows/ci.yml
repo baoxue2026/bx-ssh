@@ -337,6 +337,8 @@ jobs:
           libwebkit2gtk-4.1-dev
           libayatana-appindicator3-dev
           librsvg2-dev
+          gnome-keyring
+          libsecret-tools
           openbox
           xvfb
           perl
@@ -386,10 +388,17 @@ jobs:
           BX_SSH_E2E_VIEWPORT_HEIGHT: ${{ matrix.viewport_height }}
           BX_SSH_E2E_VIEWPORT_WIDTH: ${{ matrix.viewport_width }}
         run: |
-          dbus-run-session -- xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bash -c '
+          export XDG_DATA_HOME="$(mktemp -d "$RUNNER_TEMP/bx-ssh-e2e-data.XXXXXX")"
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" dbus-run-session -- bash -euo pipefail -c '
             openbox --sm-disable >/tmp/bx-ssh-openbox.log 2>&1 &
             wm_pid=$!
             trap "kill $wm_pid 2>/dev/null || true" EXIT
+            keyring_password="$(openssl rand -hex 32)"
+            printf "%s" "$keyring_password" | timeout 15s gnome-keyring-daemon --unlock --components=secrets
+            unset keyring_password
+            printf "%s" "e2e-probe" | timeout 15s secret-tool store --label="BX SSH E2E probe" application bx-ssh-e2e purpose preflight
+            test "$(timeout 15s secret-tool lookup application bx-ssh-e2e purpose preflight)" = "e2e-probe"
+            timeout 15s secret-tool clear application bx-ssh-e2e purpose preflight
             pnpm --filter @bx-ssh/desktop test:e2e
           '
 

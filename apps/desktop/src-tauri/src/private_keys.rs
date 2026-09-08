@@ -293,16 +293,11 @@ mod tests {
 
     #[test]
     fn converts_private_key_bytes_into_a_redacted_secret() {
-        let secret = secret_string_from_bytes(Zeroizing::new(
-            b"-----BEGIN OPENSSH PRIVATE KEY-----".to_vec(),
-        ))
-        .unwrap();
+        let marker = "private-key-redaction-test-marker";
+        let secret = secret_string_from_bytes(Zeroizing::new(marker.as_bytes().to_vec())).unwrap();
 
-        assert_eq!(
-            secret.expose_secret(),
-            "-----BEGIN OPENSSH PRIVATE KEY-----"
-        );
-        assert!(!format!("{secret:?}").contains("BEGIN OPENSSH"));
+        assert_eq!(secret.expose_secret(), marker);
+        assert!(!format!("{secret:?}").contains(marker));
     }
 
     #[test]
