@@ -1,6 +1,6 @@
 # BX SSH Supply-chain Security Policy
 
-Version: G0-09 (2026-08-03)
+Version: P1 security review (2026-09-08)
 
 ## Required gates
 
@@ -16,6 +16,22 @@ Every pull request and push to `main` must pass these checks:
 8. RC publication additionally runs `pnpm release:controls`, validates `quality/phase-1-release-gate.json`, and archives a self-contained release manifest with checksums, symbols, SBOM, signatures, test reports, and provenance.
 
 Every GitHub Action uses a full commit SHA with a readable version comment. `Cargo.lock` and `pnpm-lock.yaml` are committed, and CI uses frozen/locked installation. Dependabot checks Cargo, npm, and Actions weekly.
+
+`pnpm check` runs Rust/npm exception expiry and both npm license inventories
+before the other local checks. `pnpm security:test` covers expired and malformed
+exception records and the compatibility of security dependency overrides.
+
+The September 8 dependency review pins three development dependency fixes:
+
+- `nanoid` 3.x uses 3.3.18 for GHSA-2v37-7h3g-55p8.
+- `deepmerge-ts` 7.x consumers use 8.0.2 for GHSA-ggr8-5vv4-36mx.
+- `@wdio/utils` uses `@puppeteer/browsers` 3.2.2 to remove the unpatched
+  `extract-zip` dependency (GHSA-jmr9-qjv8-65gv). Its Node requirement is covered
+  by this workspace's Node 22.20 minimum. WebdriverIO module loading and browser
+  path resolution are regression-tested, followed by the desktop E2E suite.
+
+These pins do not suppress npm audit findings. Keep the overrides until upstream
+WebdriverIO/PostCSS requirements select the fixed dependency paths themselves.
 
 ## License policy
 

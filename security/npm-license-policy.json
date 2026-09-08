@@ -27,8 +27,8 @@
       "versions": ["0.0.1"],
       "license": "Unknown",
       "scope": "development",
-      "reason": "WebdriverIO transitive test-only dependency; it is not packaged into the desktop release.",
-      "reviewBy": "2026-09-03"
+      "reason": "Reviewed 2026-09-08: css-value 0.0.1 remains the only published version and is required only by WebdriverIO; no production package may use this Unknown-license exception. See RA-005 in security/risk-acceptance.md.",
+      "reviewBy": "2026-09-22"
     },
     {
       "name": "axe-core",
