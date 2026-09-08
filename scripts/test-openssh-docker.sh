@@ -110,6 +110,7 @@ BX_SSH_TEST_PRIVATE_KEY="${client_key}" \
 BX_SSH_TEST_HOST_KEY_ALGORITHM="${host_key_algorithm}" \
 BX_SSH_TEST_EXPECTED_HOST_KEY_ALGORITHM="${expected_host_key_algorithm}" \
 BX_SSH_TEST_AUTH_METHODS="password,public-key,keyboard-interactive" \
+BX_SSH_TEST_TEN_SESSIONS=1 \
   cargo nextest run \
     --profile ci \
     --run-ignored ignored-only \

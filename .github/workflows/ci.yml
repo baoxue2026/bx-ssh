@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+      - dev
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -252,6 +254,19 @@ jobs:
           ./scripts/test-openssh-windows.ps1
           -MatrixId "${{ matrix.id }}"
           -HostKeyAlgorithm "${{ matrix.host_key }}"
+          -IncludeSftp
+          -SkipSftpBenchmark
+          -IncludeTenSessions
+
+      - name: Check SFTP fallback with a single allowed subsystem
+        if: matrix.host_key == 'ed25519'
+        shell: pwsh
+        run: >-
+          ./scripts/test-openssh-windows.ps1
+          -MatrixId windows-server-2025-single-subsystem
+          -IncludeSftp
+          -SkipSftpBenchmark
+          -MaxSessionsPerConnection 1
 
       - name: Publish Windows OpenSSH test summary
         if: always()
@@ -387,6 +402,20 @@ jobs:
           BX_SSH_E2E_VIEWPORT_WIDTH: ${{ matrix.viewport_width }}
         run: pnpm --filter @bx-ssh/desktop test:e2e
 
+      - name: Run real SSH desktop workflows on Windows
+        if: matrix.id == 'windows-1280x720-100'
+        shell: pwsh
+        env:
+          BX_SSH_E2E_MATRIX_ID: windows-real-ssh
+          BX_SSH_E2E_VIEWPORT_HEIGHT: 720
+          BX_SSH_E2E_VIEWPORT_WIDTH: 1280
+          BX_SSH_E2E_EXPECTED_DEVICE_SCALE_FACTOR: "1"
+        run: >-
+          ./scripts/test-openssh-windows.ps1
+          -MatrixId windows-real-ssh
+          -BuildProfile debug
+          -IncludeDesktopE2e
+
       - name: Upload Tauri E2E reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -396,6 +425,7 @@ jobs:
           retention-days: 7
           path: |
             artifacts/test-reports/e2e/*
+            artifacts/test-reports/openssh-windows-real-ssh.*
 
   release-gate:
     name: Release gate

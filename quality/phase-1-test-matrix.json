@@ -88,7 +88,11 @@
       "commands": [
         { "run": "pnpm test", "type": "automated" },
         { "run": "pnpm cargo:test", "type": "automated" },
-        { "run": "pnpm test:e2e", "type": "automated" }
+        { "run": "pnpm test:e2e", "type": "automated" },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-real-ssh -BuildProfile debug -IncludeDesktopE2e",
+          "type": "automated"
+        }
       ],
       "manualChecks": [
         "创建、编辑、删除并启动 SSH 连接",
@@ -231,15 +235,15 @@
           "type": "automated"
         },
         {
-          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-ed25519 -HostKeyAlgorithm ed25519",
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-ed25519 -HostKeyAlgorithm ed25519 -IncludeSftp -SkipSftpBenchmark -IncludeTenSessions",
           "type": "automated"
         },
         {
-          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-ecdsa-p256 -HostKeyAlgorithm ecdsa-p256",
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-ecdsa-p256 -HostKeyAlgorithm ecdsa-p256 -IncludeSftp -SkipSftpBenchmark -IncludeTenSessions",
           "type": "automated"
         },
         {
-          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-rsa-sha2 -HostKeyAlgorithm rsa-sha2",
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-rsa-sha2 -HostKeyAlgorithm rsa-sha2 -IncludeSftp -SkipSftpBenchmark -IncludeTenSessions",
           "type": "automated"
         },
         { "run": "pnpm test:e2e", "type": "automated" }
@@ -250,6 +254,8 @@
       ],
       "artifacts": [
         "artifacts/test-reports/openssh-*.md",
+        "artifacts/test-reports/openssh-*.json",
+        "artifacts/test-reports/openssh-*.log",
         "artifacts/test-reports/e2e/"
       ]
     },
@@ -272,7 +278,11 @@
         { "run": "pnpm build:web", "type": "automated" },
         { "run": "pnpm performance:controls", "type": "automated" },
         { "run": "pnpm performance:test", "type": "automated" },
-        { "run": "pnpm bundle:report", "type": "automated" }
+        { "run": "pnpm bundle:report", "type": "automated" },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-release-1g -IncludeSftp -RequireOneGiB",
+          "type": "automated"
+        }
       ],
       "manualChecks": [
         "记录冷启动和从托盘恢复的耗时",

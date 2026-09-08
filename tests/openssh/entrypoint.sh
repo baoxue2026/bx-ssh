@@ -48,6 +48,7 @@ ListenAddress 0.0.0.0
 HostKey ${host_key_path}
 AuthorizedKeysFile .ssh/authorized_keys
 AcceptEnv BX_SSH_TEST_ENV
+MaxStartups 64
 PasswordAuthentication yes
 PubkeyAuthentication yes
 KbdInteractiveAuthentication yes
