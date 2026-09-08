@@ -1,0 +1,498 @@
+{
+  "schemaVersion": 1,
+  "phase": "P1",
+  "title": "一期质量验证矩阵",
+  "owner": "仓库维护者（当前开发者）",
+  "primaryPlatform": "Windows 11 24H2 x64",
+  "releaseGate": {
+    "rule": "所有 blocking 为 release 的测试套件必须通过；失败时不得发布",
+    "evidenceRequired": true,
+    "defectLevelsBlockingRelease": ["P0", "P1"],
+    "releasePolicy": "quality/phase-1-release-gate.json"
+  },
+  "defectSeverity": [
+    {
+      "id": "P0",
+      "name": "紧急",
+      "description": "安全漏洞、凭据或用户数据泄露、数据不可恢复丢失、应用无法启动或升级",
+      "releaseBlocking": true,
+      "responseTarget": "立即停止发布并在 24 小时内完成处置或缓解"
+    },
+    {
+      "id": "P1",
+      "name": "严重",
+      "description": "核心 SSH 连接、终端、SFTP、凭据或更新流程不可用，且没有可接受的替代路径",
+      "releaseBlocking": true,
+      "responseTarget": "当前迭代必须安排修复或明确回滚方案"
+    },
+    {
+      "id": "P2",
+      "name": "一般",
+      "description": "重要功能缺陷、兼容性问题或可重复的明显体验问题，但存在临时规避方式",
+      "releaseBlocking": false,
+      "responseTarget": "纳入版本计划并指定修复版本"
+    },
+    {
+      "id": "P3",
+      "name": "轻微",
+      "description": "低风险文案、视觉、易用性或非关键边界问题",
+      "releaseBlocking": false,
+      "responseTarget": "按维护优先级处理"
+    }
+  ],
+  "testSuites": [
+    {
+      "id": "QA-FUNC-01",
+      "category": "functional",
+      "name": "功能测试",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "win11-dev",
+          "platform": "Windows",
+          "os": "Windows 11 24H2",
+          "architecture": "x64",
+          "purpose": "一期主开发与手工验收环境"
+        },
+        {
+          "id": "ubuntu-ci",
+          "platform": "Linux",
+          "os": "Ubuntu 24.04",
+          "architecture": "x64",
+          "purpose": "前端、Rust 单元与集成测试"
+        },
+        {
+          "id": "windows-2025-e2e",
+          "platform": "Windows",
+          "os": "Windows Server 2025 + WebView2",
+          "architecture": "x64",
+          "purpose": "Tauri 主流程、键盘、窗口尺寸、缩放和可访问性自动回归"
+        }
+      ],
+      "matrixDimensions": {
+        "windowsDisplayProfiles": [
+          "1280x720@100%",
+          "1366x768@125%",
+          "1440x900@150%",
+          "1440x900@200%"
+        ],
+        "keyboardFlows": [
+          "new-connection",
+          "workspace-switch",
+          "sidebar-toggle",
+          "settings-navigation"
+        ],
+        "accessibilityStandards": ["WCAG 2.1 A", "WCAG 2.1 AA"]
+      },
+      "commands": [
+        { "run": "pnpm test", "type": "automated" },
+        { "run": "pnpm cargo:test", "type": "automated" },
+        { "run": "pnpm test:e2e", "type": "automated" },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-real-ssh -BuildProfile debug -IncludeDesktopE2e",
+          "type": "automated"
+        }
+      ],
+      "manualChecks": [
+        "创建、编辑、删除并启动 SSH 连接",
+        "验证终端输入输出、会话切换、断开与重连",
+        "验证 SFTP 浏览、上传、下载、取消与失败提示",
+        "验证设置、主题、语言和诊断信息脱敏",
+        "在 Windows 11 24H2 执行 scripts/test-windows-manual-smoke.ps1，并人工完成安装包、真实 SSH、终端、SFTP、高 DPI、输入法、系统代理和托盘恢复验收"
+      ],
+      "artifacts": [
+        "artifacts/test-reports/e2e/e2e-*.xml",
+        "artifacts/test-reports/e2e/accessibility-*.json",
+        "artifacts/test-reports/e2e/logs/",
+        "CI job logs"
+      ]
+    },
+    {
+      "id": "QA-COMP-01",
+      "category": "compatibility",
+      "name": "兼容性测试",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "openssh-ubuntu-2204",
+          "platform": "Docker",
+          "os": "Ubuntu 22.04 + OpenSSH",
+          "architecture": "x64",
+          "purpose": "OpenSSH 协议兼容性"
+        },
+        {
+          "id": "openssh-ubuntu-2404",
+          "platform": "Docker",
+          "os": "Ubuntu 24.04 + OpenSSH",
+          "architecture": "x64",
+          "purpose": "OpenSSH 协议兼容性"
+        },
+        {
+          "id": "openssh-debian-12",
+          "platform": "Docker",
+          "os": "Debian 12 + OpenSSH",
+          "architecture": "x64",
+          "purpose": "OpenSSH 协议兼容性"
+        },
+        {
+          "id": "openssh-rocky-9",
+          "platform": "Docker",
+          "os": "Rocky Linux 9 + OpenSSH",
+          "architecture": "x64",
+          "purpose": "RHEL 系 OpenSSH 协议兼容性"
+        },
+        {
+          "id": "openssh-windows-server-2025",
+          "platform": "Windows",
+          "os": "Windows Server 2025 + OpenSSH",
+          "architecture": "x64",
+          "purpose": "Windows OpenSSH 密码、公钥和主机密钥算法兼容性"
+        },
+        {
+          "id": "macos-ci",
+          "platform": "macOS",
+          "os": "macOS 14",
+          "architecture": "arm64",
+          "purpose": "桌面技术验证，不作为一期发布平台"
+        }
+      ],
+      "matrixDimensions": {
+        "serverTargets": [
+          "ubuntu:22.04",
+          "ubuntu:24.04",
+          "debian:12-slim",
+          "rockylinux:9",
+          "windows-server-2025"
+        ],
+        "hostKeyAlgorithms": ["ed25519", "ecdsa-p256", "rsa-sha2"],
+        "authenticationMethods": [
+          "password",
+          "public-key-ed25519",
+          "keyboard-interactive"
+        ],
+        "authenticationMethodsByTarget": {
+          "linux-openssh": [
+            "password",
+            "public-key-ed25519",
+            "keyboard-interactive"
+          ],
+          "windows-server-2025": ["password", "public-key-ed25519"]
+        },
+        "compatibilityNotes": [
+          "Linux OpenSSH 使用 PAM 启用 Keyboard Interactive 多轮认证。",
+          "Windows OpenSSH Server 一期不承诺 Keyboard Interactive/PAM；脚本显式关闭该能力，避免把平台限制误报为通过。"
+        ]
+      },
+      "commands": [
+        {
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:22.04 ubuntu-22-04-ed25519 ed25519",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:22.04 ubuntu-22-04-ecdsa-p256 ecdsa-p256",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:22.04 ubuntu-22-04-rsa-sha2 rsa-sha2",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:24.04 ubuntu-24-04-ed25519 ed25519",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:24.04 ubuntu-24-04-ecdsa-p256 ecdsa-p256",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh ubuntu:24.04 ubuntu-24-04-rsa-sha2 rsa-sha2",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh debian:12-slim debian-12-ed25519 ed25519",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh debian:12-slim debian-12-ecdsa-p256 ecdsa-p256",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh debian:12-slim debian-12-rsa-sha2 rsa-sha2",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh rockylinux:9 rocky-9-ed25519 ed25519",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh rockylinux:9 rocky-9-ecdsa-p256 ecdsa-p256",
+          "type": "automated"
+        },
+        {
+          "run": "bash scripts/test-openssh-docker.sh rockylinux:9 rocky-9-rsa-sha2 rsa-sha2",
+          "type": "automated"
+        },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-ed25519 -HostKeyAlgorithm ed25519 -IncludeSftp -SkipSftpBenchmark -IncludeTenSessions",
+          "type": "automated"
+        },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-ecdsa-p256 -HostKeyAlgorithm ecdsa-p256 -IncludeSftp -SkipSftpBenchmark -IncludeTenSessions",
+          "type": "automated"
+        },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-server-2025-rsa-sha2 -HostKeyAlgorithm rsa-sha2 -IncludeSftp -SkipSftpBenchmark -IncludeTenSessions",
+          "type": "automated"
+        },
+        { "run": "pnpm test:e2e", "type": "automated" }
+      ],
+      "manualChecks": [
+        "在 Windows 10 22H2 x64 进行一次安装与核心连接回归",
+        "在 Windows 11 24H2 x64 验证系统代理、输入法和高 DPI 显示"
+      ],
+      "artifacts": [
+        "artifacts/test-reports/openssh-*.md",
+        "artifacts/test-reports/openssh-*.json",
+        "artifacts/test-reports/openssh-*.log",
+        "artifacts/test-reports/e2e/"
+      ]
+    },
+    {
+      "id": "QA-PERF-01",
+      "category": "performance",
+      "name": "性能与资源测试",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "win11-performance",
+          "platform": "Windows",
+          "os": "Windows 11 24H2",
+          "architecture": "x64",
+          "purpose": "启动、空闲资源和多会话基线"
+        }
+      ],
+      "commands": [
+        { "run": "pnpm build:web", "type": "automated" },
+        { "run": "pnpm performance:controls", "type": "automated" },
+        { "run": "pnpm performance:test", "type": "automated" },
+        { "run": "pnpm bundle:report", "type": "automated" },
+        {
+          "run": "pwsh scripts/test-openssh-windows.ps1 -MatrixId windows-release-1g -IncludeSftp -RequireOneGiB",
+          "type": "automated"
+        }
+      ],
+      "manualChecks": [
+        "记录冷启动和从托盘恢复的耗时",
+        "保持 10 个 SSH 会话 30 分钟，记录内存、CPU 与终端输出延迟",
+        "验证大目录 SFTP 列表和大文件传输期间界面仍可操作",
+        "按 quality/phase-1-performance-budget.json 执行固定采样协议",
+        "使用 pnpm performance:report 校验 performance-report.json，并与上一个发布版本对比，异常增长需登记 P1 或 P2 缺陷"
+      ],
+      "artifacts": [
+        "artifacts/bundle-size/*",
+        "artifacts/performance/performance-report.json",
+        "quality/phase-1-performance-budget.json",
+        "CI job summary",
+        "手工性能记录（发布附件）"
+      ]
+    },
+    {
+      "id": "QA-STAB-01",
+      "category": "stability",
+      "name": "稳定性与资源泄漏测试",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "win11-stability",
+          "platform": "Windows",
+          "os": "Windows 11 24H2",
+          "architecture": "x64",
+          "purpose": "24 小时运行、休眠唤醒、断网恢复和资源释放验证"
+        }
+      ],
+      "matrixDimensions": {
+        "lifecycleScenarios": [
+          "24-hour-soak",
+          "sleep-wake",
+          "network-disconnect",
+          "manual-reconnect",
+          "sftp-transfer-cancel",
+          "full-cleanup"
+        ],
+        "resourceTypes": [
+          "all-related-process-working-set",
+          "terminal-session-handles",
+          "sftp-session-handles",
+          "sftp-transfer-handles"
+        ]
+      },
+      "commands": [
+        { "run": "pnpm stability:controls", "type": "automated" },
+        { "run": "pnpm stability:test", "type": "automated" }
+      ],
+      "manualChecks": [
+        "按 quality/phase-1-stability-budget.json 在参考设备执行连续 24 小时稳定性测试",
+        "执行规定次数的休眠/唤醒、网络中断、手动重连和 SFTP 取消场景",
+        "确认断网或远端关闭后状态不再显示已连接，重连创建新的会话句柄",
+        "测试结束后关闭全部会话和传输，确认旧句柄失效且无终端、SFTP 或传输句柄泄漏",
+        "使用 pnpm stability:report 校验 stability-report.json，内存相对稳定状态增长不得超过 15%",
+        "在 Windows 11 24H2 参考设备运行 pwsh scripts/collect-windows-stability.ps1 -ProcessName bx-ssh-desktop -OutputDir artifacts/stability -DurationHours 24"
+      ],
+      "artifacts": [
+        "artifacts/stability/stability-report.json",
+        "artifacts/stability/process-memory.csv",
+        "artifacts/stability/lifecycle-events.jsonl",
+        "artifacts/stability/fault-timeline.jsonl",
+        "artifacts/stability/handle-snapshots.jsonl",
+        "quality/phase-1-stability-budget.json"
+      ]
+    },
+    {
+      "id": "QA-SEC-01",
+      "category": "security",
+      "name": "安全测试",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "ubuntu-security-ci",
+          "platform": "Linux",
+          "os": "Ubuntu 24.04",
+          "architecture": "x64",
+          "purpose": "依赖、许可证、密钥泄露和 Tauri 安全门禁"
+        },
+        {
+          "id": "win11-security",
+          "platform": "Windows",
+          "os": "Windows 11 24H2",
+          "architecture": "x64",
+          "purpose": "凭据存储、日志脱敏和本地数据访问"
+        }
+      ],
+      "commands": [
+        { "run": "pnpm security:controls", "type": "automated" },
+        { "run": "pnpm security:test", "type": "automated" },
+        { "run": "pnpm security:tauri", "type": "automated" },
+        { "run": "pnpm security:licenses", "type": "automated" },
+        { "run": "pnpm security:exceptions", "type": "automated" }
+      ],
+      "manualChecks": [
+        "验证密码、私钥引用、主机指纹和日志不会出现在诊断包或错误提示中",
+        "验证未知主机指纹、弱算法和更新签名失败时均会阻断危险操作",
+        "按 SECURITY.md 执行一次敏感数据检查"
+      ],
+      "artifacts": [
+        "CI security job logs",
+        "artifacts/sbom/bx-ssh.cdx.json",
+        "security control test output"
+      ]
+    },
+    {
+      "id": "QA-INSTALL-01",
+      "category": "installation",
+      "name": "安装、升级与卸载测试",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "win10-installer",
+          "platform": "Windows",
+          "os": "Windows 10 22H2",
+          "architecture": "x64",
+          "purpose": "一期最低支持系统安装验证"
+        },
+        {
+          "id": "win11-installer",
+          "platform": "Windows",
+          "os": "Windows 11 24H2",
+          "architecture": "x64",
+          "purpose": "主发布系统安装验证"
+        }
+      ],
+      "commands": [
+        { "run": "pnpm check:windows-packaging", "type": "automated" },
+        { "run": "pnpm build", "type": "automated" },
+        {
+          "run": "pwsh scripts/test-windows-installation.ps1 -BundleRoot target/release/bundle -ReportPath artifacts/installation/windows-installation-report.json",
+          "type": "automated"
+        }
+      ],
+      "manualChecks": [
+        "首次安装、同版本重复安装和从旧版本升级均能完成",
+        "验证 Windows 10/11 当前用户安装、开始菜单目录和卸载入口",
+        "验证安装器拒绝降级，更新器使用 passive 模式并正确提示重启",
+        "卸载后确认应用数据和凭据按 README 策略保留"
+      ],
+      "artifacts": ["bundle installer artifacts (CI)", "CI package job logs"]
+    },
+    {
+      "id": "QA-RECOVERY-01",
+      "category": "recovery",
+      "name": "故障恢复与数据保留测试",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "win11-recovery",
+          "platform": "Windows",
+          "os": "Windows 11 24H2",
+          "architecture": "x64",
+          "purpose": "升级中断、数据库备份和恢复验证"
+        }
+      ],
+      "commands": [
+        { "run": "pnpm test", "type": "automated" },
+        { "run": "pnpm cargo:test", "type": "automated" }
+      ],
+      "manualChecks": [
+        "更新下载取消、网络中断和签名校验失败后可重试且不会破坏当前版本",
+        "升级前数据库备份失败时阻断升级并保留原数据",
+        "模拟数据库损坏后按备份恢复，确认连接、设置和主机指纹完整",
+        "应用崩溃或强制结束后重新打开，确认会话状态和临时文件清理符合预期"
+      ],
+      "artifacts": ["CI test logs", "备份与恢复验证记录（发布附件）"]
+    },
+    {
+      "id": "QA-REL-01",
+      "category": "release",
+      "name": "RC 发布与归档验收",
+      "owner": "仓库维护者（当前开发者）",
+      "blocking": "release",
+      "environments": [
+        {
+          "id": "github-release-ci",
+          "platform": "GitHub Actions",
+          "os": "Ubuntu 24.04 / Windows Server 2025",
+          "architecture": "x64",
+          "purpose": "RC 全门禁、签名、证据清单和版本归档"
+        }
+      ],
+      "commands": [
+        { "run": "pnpm release:controls", "type": "automated" },
+        { "run": "pnpm release:test", "type": "automated" },
+        { "run": "pnpm main-protection:test", "type": "automated" },
+        { "run": "pnpm release:report", "type": "manual" }
+      ],
+      "manualChecks": [
+        "确认 RC 只从 main 上通过全部 blocking 套件的提交创建，并使用 annotated、signed、immutable tag",
+        "确认 main 分支保护 API 返回 Release gate 必需检查、至少一个审批、管理员保护、线性历史、会话解决且禁止强推和删分支",
+        "确认 Windows x64 MSI/NSIS 安装包、更新包签名、篡改/错误公钥/降级拒绝测试均通过",
+        "确认 CycloneDX JSON SBOM 同时包含 Cargo 与 npm 组件，许可证和漏洞检查均通过",
+        "确认安装包、符号、SHA-256、SBOM、测试报告和风险/缺陷处置按版本归档",
+        "使用 pnpm release:report 校验 release-manifest.json，P0/P1 为 0 且 P2/P3 有处置记录"
+      ],
+      "artifacts": [
+        "artifacts/release/<version>/release-manifest.json",
+        "artifacts/release/<version>/checksums-sha256.txt",
+        "artifacts/release/<version>/symbols/",
+        "artifacts/sbom/<version>/bx-ssh.cdx.json",
+        "artifacts/test-reports/<version>/",
+        "CI release job summary"
+      ]
+    }
+  ]
+}

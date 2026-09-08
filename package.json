@@ -8,8 +8,11 @@
   },
   "pnpm": {
     "overrides": {
+      "@wdio/utils>@puppeteer/browsers": "3.2.2",
       "@wdio/native-utils": "2.6.0",
+      "deepmerge-ts@7": "8.0.2",
       "glob@10.4.5": "10.5.0",
+      "nanoid@3": "3.3.18",
       "serialize-javascript": "7.0.5"
     }
   },
@@ -31,8 +34,25 @@
     "cargo:test": "cargo test --workspace --all-targets",
     "security:exceptions": "node scripts/check-security-exceptions.mjs",
     "security:licenses": "node scripts/check-npm-licenses.mjs --production && node scripts/check-npm-licenses.mjs",
+    "security:controls": "node scripts/check-security-controls.mjs",
+    "security:test": "node --test scripts/check-security-controls.test.mjs scripts/check-security-exceptions.test.mjs scripts/check-security-dependencies.test.mjs",
     "security:tauri": "node scripts/check-tauri-security.mjs",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm security:tauri && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test && pnpm ipc:check"
+    "check:windows-packaging": "node scripts/check-windows-packaging.mjs",
+    "performance:controls": "node scripts/check-performance-controls.mjs",
+    "performance:test": "node --test scripts/check-performance-controls.test.mjs",
+    "performance:report": "node scripts/check-performance-controls.mjs --report artifacts/performance/performance-report.json",
+    "stability:controls": "node scripts/check-stability-controls.mjs",
+    "stability:test": "node --test scripts/check-stability-controls.test.mjs",
+    "stability:report": "node scripts/check-stability-controls.mjs --report artifacts/stability/stability-report.json",
+    "release:controls": "node scripts/check-release-gate.mjs",
+    "release:test": "node --test scripts/check-release-gate.test.mjs",
+    "release:report": "node scripts/check-release-gate.mjs --report artifacts/release/release-manifest.json",
+    "acceptance:check": "node scripts/check-acceptance-status.mjs",
+    "acceptance:test": "node --test scripts/check-acceptance-status.test.mjs",
+    "main-protection:test": "node --test scripts/check-main-branch-protection.test.mjs",
+    "qa:check": "node scripts/check-qa-policy.mjs",
+    "qa:test": "node --test scripts/check-qa-policy.test.mjs",
+    "check": "pnpm security:exceptions && pnpm security:licenses && pnpm qa:check && pnpm qa:test && pnpm acceptance:check && pnpm acceptance:test && pnpm main-protection:test && pnpm release:controls && pnpm release:test && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm security:controls && pnpm security:test && pnpm performance:controls && pnpm performance:test && pnpm stability:controls && pnpm stability:test && pnpm security:tauri && pnpm check:windows-packaging && pnpm cargo:fmt && pnpm cargo:clippy && pnpm cargo:test && pnpm ipc:check"
   },
   "devDependencies": {
     "prettier": "3.9.6"

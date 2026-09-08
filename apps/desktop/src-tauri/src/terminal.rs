@@ -3,11 +3,12 @@ use std::future::pending;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bx_contracts::{ConnectionSettings, HostKeyInfo, SshConnectionStage};
+use bx_contracts::{ConnectionSettings, HostKeyInfo, SensitiveString, SshConnectionStage};
 use bx_persistence::ExposeSecret;
 use bx_ssh_core::{
-    authenticate_password_with_progress, authenticate_private_key_contents_with_progress,
-    probe_host_key, ClientSession, ShellEvent, SshEndpoint, SshError, SshShell, TerminalSize,
+    authenticate_keyboard_interactive_with_progress, authenticate_password_with_progress,
+    authenticate_private_key_contents_with_progress, probe_host_key, ClientSession,
+    KeyboardInteractivePrompt, ShellEvent, SshEndpoint, SshError, SshShell, TerminalSize,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -28,11 +29,18 @@ const COMMAND_QUEUE_CAPACITY: usize = 128;
 const OUTPUT_BATCH_MAX_BYTES: usize = 64 * 1024;
 const OUTPUT_BATCH_MAX_DELAY: Duration = Duration::from_millis(8);
 const OUTPUT_MAX_IN_FLIGHT_BATCHES: usize = 8;
+const OUTPUT_ACK_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Default)]
 pub(crate) struct TerminalSessionManager {
     sessions: Arc<Mutex<HashMap<String, mpsc::Sender<SessionCommand>>>>,
+    keyboard_prompts: Arc<Mutex<HashMap<String, PendingKeyboardPrompt>>>,
     activity: AppActivity,
+}
+
+struct PendingKeyboardPrompt {
+    owner: String,
+    sender: mpsc::Sender<Vec<SensitiveString>>,
 }
 
 enum SessionCommand {
@@ -45,8 +53,13 @@ enum SessionCommand {
 struct TerminalOutputFlow {
     pending: Vec<u8>,
     pending_since: Option<Instant>,
-    in_flight: VecDeque<u64>,
+    in_flight: VecDeque<InFlightOutput>,
     next_sequence: u64,
+}
+
+struct InFlightOutput {
+    sequence: u64,
+    sent_at: Instant,
 }
 
 #[derive(Deserialize, Type)]
@@ -72,7 +85,7 @@ pub(crate) struct StartShellRequest {
     host: String,
     port: u16,
     username: String,
-    password: String,
+    password: SensitiveString,
     expected_fingerprint: String,
     settings: ConnectionSettings,
     columns: u32,
@@ -88,6 +101,21 @@ pub(crate) struct StartShellResponse {
     host_key: HostKeyInfo,
 }
 
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StartKeyboardInteractiveShellRequest {
+    attempt_id: String,
+    host: String,
+    port: u16,
+    username: String,
+    expected_fingerprint: String,
+    settings: ConnectionSettings,
+    columns: u32,
+    rows: u32,
+    pixel_width: u32,
+    pixel_height: u32,
+}
+
 #[derive(Clone, Serialize, Type)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum TerminalEvent {
@@ -99,6 +127,25 @@ pub(crate) enum TerminalEvent {
         code: CommandErrorCode,
         message: String,
     },
+}
+
+#[derive(Clone, Serialize, Type)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub(crate) enum KeyboardInteractiveEvent {
+    Prompt {
+        #[serde(rename = "attemptId")]
+        attempt_id: String,
+        name: String,
+        instructions: String,
+        prompts: Vec<KeyboardInteractivePromptItem>,
+    },
+}
+
+#[derive(Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct KeyboardInteractivePromptItem {
+    prompt: String,
+    echo: bool,
 }
 
 pub(crate) struct TerminalOutput(Vec<u8>);
@@ -233,7 +280,7 @@ pub(crate) async fn start_password_shell(
         &endpoint,
         &request.username,
         &request.expected_fingerprint,
-        &request.password,
+        request.password.as_str(),
         &cancellation,
         |stage| {
             if let Ok(event) =
@@ -253,6 +300,7 @@ pub(crate) async fn start_password_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::Authenticating,
             );
             return Err(error.into());
         }
@@ -279,6 +327,7 @@ pub(crate) async fn start_password_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::OpeningChannel,
             );
             return Err(error.into());
         }
@@ -333,6 +382,175 @@ pub(crate) async fn start_password_shell(
     })
 }
 
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn start_keyboard_interactive_shell(
+    window: WebviewWindow,
+    manager: State<'_, TerminalSessionManager>,
+    session_manager: State<'_, SshSessionManager>,
+    request: StartKeyboardInteractiveShellRequest,
+    on_auth: Channel<KeyboardInteractiveEvent>,
+    on_state: Channel<SshConnectionEvent>,
+    on_event: Channel<TerminalEvent>,
+    on_output: Channel<TerminalOutput>,
+) -> Result<StartShellResponse, CommandError> {
+    let owner = window.label().to_owned();
+    let endpoint = SshEndpoint::new(request.host.clone(), request.port)?
+        .with_connection_settings(request.settings);
+    let size = TerminalSize::with_pixels(
+        request.columns,
+        request.rows,
+        request.pixel_width,
+        request.pixel_height,
+    )?;
+    let cancellation =
+        session_manager.begin_attempt(&owner, &request.attempt_id, SessionKind::Terminal)?;
+    let (response_tx, response_rx) = mpsc::channel(1);
+    let response_rx = Arc::new(Mutex::new(response_rx));
+    manager
+        .register_keyboard_prompt(&owner, &request.attempt_id, response_tx)
+        .await?;
+    let _ = on_state.send(SshConnectionEvent {
+        attempt_id: request.attempt_id.clone(),
+        stage: SshConnectionStage::Created,
+    });
+
+    let attempt_id = request.attempt_id.clone();
+    let session = authenticate_keyboard_interactive_with_progress(
+        &endpoint,
+        &request.username,
+        &request.expected_fingerprint,
+        &cancellation,
+        |prompt: KeyboardInteractivePrompt| {
+            let _ = on_auth.send(KeyboardInteractiveEvent::Prompt {
+                attempt_id: attempt_id.clone(),
+                name: prompt.name,
+                instructions: prompt.instructions,
+                prompts: prompt
+                    .prompts
+                    .into_iter()
+                    .map(|item| KeyboardInteractivePromptItem {
+                        prompt: item.prompt,
+                        echo: item.echo,
+                    })
+                    .collect(),
+            });
+            let receiver = Arc::clone(&response_rx);
+            let cancellation = cancellation.clone();
+            async move {
+                let mut receiver = receiver.lock().await;
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+                    response = receiver.recv() => response
+                        .map(|answers| answers.into_iter().map(SensitiveString::into_inner).collect())
+                        .ok_or(SshError::ConnectionCancelled),
+                }
+            }
+        },
+        |stage| {
+            if let Ok(event) =
+                session_manager.transition_attempt(&owner, &request.attempt_id, stage)
+            {
+                let _ = on_state.send(event);
+            }
+        },
+    )
+    .await;
+    manager
+        .remove_keyboard_prompt(&owner, &request.attempt_id)
+        .await;
+
+    let session = match session {
+        Ok(session) => session,
+        Err(error) => {
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+                SshConnectionStage::Authenticating,
+            );
+            return Err(error.into());
+        }
+    };
+    let host_key = session.host_key().clone();
+    let opening = session_manager.transition_attempt(
+        &owner,
+        &request.attempt_id,
+        SshConnectionStage::OpeningChannel,
+    )?;
+    let _ = on_state.send(opening);
+    let shell = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(SshError::ConnectionCancelled),
+        result = session.open_shell(size) => result,
+    };
+    let shell = match shell {
+        Ok(shell) => shell,
+        Err(error) => {
+            let _ = session.disconnect().await;
+            finish_connection_attempt(
+                &session_manager,
+                &owner,
+                &request.attempt_id,
+                &on_state,
+                &error,
+                SshConnectionStage::OpeningChannel,
+            );
+            return Err(error.into());
+        }
+    };
+    let (session_id, connected) =
+        match session_manager.complete_attempt(&owner, &request.attempt_id) {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = shell.close().await;
+                let _ = session.disconnect().await;
+                if let Some(event) = session_manager.finish_attempt(
+                    &owner,
+                    &request.attempt_id,
+                    SshConnectionStage::Failed,
+                ) {
+                    let _ = on_state.send(event);
+                }
+                return Err(error);
+            }
+        };
+    let _ = on_state.send(connected);
+    let (command_tx, command_rx) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    let activity_guard = manager.activity.track_session();
+    manager
+        .sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), command_tx);
+    let task_manager = manager.inner().clone();
+    let task_session_manager = session_manager.inner().clone();
+    let task_session_id = session_id.clone();
+    tauri::async_runtime::spawn(async move {
+        let _activity_guard = activity_guard;
+        run_session(
+            task_manager,
+            task_session_manager,
+            task_session_id,
+            session,
+            shell,
+            command_rx,
+            on_event,
+            on_output,
+        )
+        .await;
+    });
+
+    Ok(StartShellResponse {
+        session_id,
+        host_key,
+    })
+}
+
 #[derive(Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StartPrivateKeyShellRequest {
@@ -341,7 +559,7 @@ pub(crate) struct StartPrivateKeyShellRequest {
     port: u16,
     username: String,
     key_reference_id: String,
-    passphrase: Option<String>,
+    passphrase: Option<SensitiveString>,
     expected_fingerprint: String,
     settings: ConnectionSettings,
     columns: u32,
@@ -390,6 +608,7 @@ pub(crate) async fn start_private_key_shell(
     {
         Ok(key) => key,
         Err(error) => {
+            crate::logging::connection_error(SessionKind::Terminal, &request.attempt_id, &error);
             if let Some(event) = session_manager.finish_attempt(
                 &owner,
                 &request.attempt_id,
@@ -426,6 +645,7 @@ pub(crate) async fn start_private_key_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::Authenticating,
             );
             return Err(error.into());
         }
@@ -452,6 +672,7 @@ pub(crate) async fn start_private_key_shell(
                 &request.attempt_id,
                 &on_state,
                 &error,
+                SshConnectionStage::OpeningChannel,
             );
             return Err(error.into());
         }
@@ -569,15 +790,83 @@ pub(crate) async fn close_terminal_session(
     result
 }
 
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn respond_keyboard_interactive(
+    window: WebviewWindow,
+    manager: State<'_, TerminalSessionManager>,
+    attempt_id: String,
+    responses: Vec<SensitiveString>,
+) -> Result<(), CommandError> {
+    manager
+        .respond_keyboard_prompt(window.label(), &attempt_id, responses)
+        .await
+}
+
 impl TerminalSessionManager {
     pub(crate) fn with_activity(activity: AppActivity) -> Self {
         Self {
             sessions: Arc::default(),
+            keyboard_prompts: Arc::default(),
             activity,
         }
     }
 
+    async fn register_keyboard_prompt(
+        &self,
+        owner: &str,
+        attempt_id: &str,
+        sender: mpsc::Sender<Vec<SensitiveString>>,
+    ) -> Result<(), CommandError> {
+        let mut prompts = self.keyboard_prompts.lock().await;
+        if prompts.contains_key(attempt_id) {
+            return Err(CommandError::new(
+                CommandErrorCode::ConnectionAttemptConflict,
+                "SSH keyboard-interactive prompt is already active",
+            ));
+        }
+        prompts.insert(
+            attempt_id.to_owned(),
+            PendingKeyboardPrompt {
+                owner: owner.to_owned(),
+                sender,
+            },
+        );
+        Ok(())
+    }
+
+    async fn remove_keyboard_prompt(&self, owner: &str, attempt_id: &str) {
+        let mut prompts = self.keyboard_prompts.lock().await;
+        if prompts
+            .get(attempt_id)
+            .is_some_and(|pending| pending.owner == owner)
+        {
+            prompts.remove(attempt_id);
+        }
+    }
+
+    async fn respond_keyboard_prompt(
+        &self,
+        owner: &str,
+        attempt_id: &str,
+        responses: Vec<SensitiveString>,
+    ) -> Result<(), CommandError> {
+        let sender = self
+            .keyboard_prompts
+            .lock()
+            .await
+            .get(attempt_id)
+            .filter(|pending| pending.owner == owner)
+            .map(|pending| pending.sender.clone())
+            .ok_or_else(|| CommandError::session_not_found("keyboard-interactive prompt"))?;
+        sender
+            .send(responses)
+            .await
+            .map_err(|_| CommandError::session_closed("keyboard-interactive prompt"))
+    }
+
     pub(crate) async fn close_all(&self) {
+        self.keyboard_prompts.lock().await.clear();
         let senders = self
             .sessions
             .lock()
@@ -590,7 +879,8 @@ impl TerminalSessionManager {
         for sender in senders {
             let (complete, completed) = oneshot::channel();
             if sender
-                .try_send(SessionCommand::Close(Some(complete)))
+                .send(SessionCommand::Close(Some(complete)))
+                .await
                 .is_ok()
             {
                 completions.push(completed);
@@ -650,17 +940,23 @@ async fn run_session(
     let mut close_completion = None;
     let mut output = TerminalOutputFlow::new();
     let mut failed = false;
+    let mut transport_finished = false;
+    let mut discard_pending_output = false;
 
     loop {
         let flush_deadline = output.flush_deadline();
+        let acknowledgement_deadline = output.acknowledgement_deadline();
         tokio::select! {
             biased;
-            transport = session.wait_for_transport() => {
-                if let Err(error) = transport {
-                    send_error(&on_event, error);
-                    failed = true;
+            transport = session.wait_for_transport(), if !transport_finished => {
+                match transport {
+                    Ok(()) => transport_finished = true,
+                    Err(error) => {
+                        send_error(&on_event, error);
+                        failed = true;
+                        break;
+                    }
                 }
-                break;
             }
             command = commands.recv() => {
                 match command {
@@ -683,6 +979,7 @@ async fn run_session(
                     }
                     Some(SessionCommand::Close(completion)) => {
                         close_completion = completion;
+                        discard_pending_output = true;
                         if let Err(error) = shell.close().await {
                             send_error(&on_event, error);
                             failed = true;
@@ -690,6 +987,7 @@ async fn run_session(
                         break;
                     }
                     None => {
+                        discard_pending_output = true;
                         if let Err(error) = shell.close().await {
                             send_error(&on_event, error);
                             failed = true;
@@ -697,6 +995,20 @@ async fn run_session(
                         break;
                     }
                 }
+            }
+            _ = wait_for_flush(flush_deadline), if flush_deadline.is_some() => {
+                if output.flush(&on_output).is_err() {
+                    send_output_channel_error(&on_event);
+                    failed = true;
+                    discard_pending_output = true;
+                    break;
+                }
+            }
+            _ = wait_for_flush(acknowledgement_deadline), if acknowledgement_deadline.is_some() => {
+                send_output_channel_error(&on_event);
+                failed = true;
+                discard_pending_output = true;
+                break;
             }
             event = shell.next_event(), if output.can_read() => {
                 match event {
@@ -706,6 +1018,9 @@ async fn run_session(
                         if output.should_flush()
                             && output.flush(&on_output).is_err()
                         {
+                            send_output_channel_error(&on_event);
+                            failed = true;
+                            discard_pending_output = true;
                             break;
                         }
                     }
@@ -720,21 +1035,20 @@ async fn run_session(
                     }
                 }
             }
-            _ = wait_for_flush(flush_deadline), if flush_deadline.is_some() => {
-                if output.flush(&on_output).is_err() {
-                    break;
-                }
-            }
         }
     }
 
-    let _ = output.flush(&on_output);
-    if !failed {
-        let _ = on_event.send(TerminalEvent::Exited {
-            code: exit_code,
-            signal: exit_signal,
-        });
+    if !discard_pending_output && output.has_pending() {
+        match output.flush(&on_output) {
+            Ok(true) => {}
+            Ok(false) | Err(_) if !failed => {
+                send_output_channel_error(&on_event);
+                failed = true;
+            }
+            Ok(false) | Err(_) => {}
+        }
     }
+    send_terminal_completion(&on_event, failed, exit_code, exit_signal);
     manager.sessions.lock().await.remove(&session_id);
     session_manager.remove_session(&session_id, SessionKind::Terminal);
     drop(shell);
@@ -750,7 +1064,9 @@ fn finish_connection_attempt(
     attempt_id: &str,
     channel: &Channel<SshConnectionEvent>,
     error: &SshError,
+    fallback_stage: SshConnectionStage,
 ) {
+    crate::logging::connection_ssh_error(SessionKind::Terminal, attempt_id, error, fallback_stage);
     let stage = if matches!(error, SshError::ConnectionCancelled) {
         SshConnectionStage::Cancelled
     } else {
@@ -772,7 +1088,15 @@ impl TerminalOutputFlow {
     }
 
     fn can_read(&self) -> bool {
+        self.can_flush() && self.pending.len() < OUTPUT_BATCH_MAX_BYTES
+    }
+
+    fn can_flush(&self) -> bool {
         self.in_flight.len() < OUTPUT_MAX_IN_FLIGHT_BATCHES
+    }
+
+    fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
     }
 
     fn push(&mut self, data: Vec<u8>) {
@@ -790,24 +1114,41 @@ impl TerminalOutputFlow {
     }
 
     fn flush_deadline(&self) -> Option<Instant> {
+        if !self.can_flush() {
+            return None;
+        }
         self.pending_since
             .map(|started| started + OUTPUT_BATCH_MAX_DELAY)
     }
 
-    fn flush(&mut self, channel: &Channel<TerminalOutput>) -> tauri::Result<()> {
-        if self.pending.is_empty() {
-            return Ok(());
+    fn acknowledgement_deadline(&self) -> Option<Instant> {
+        self.in_flight
+            .front()
+            .map(|batch| batch.sent_at + OUTPUT_ACK_TIMEOUT)
+    }
+
+    fn flush(&mut self, channel: &Channel<TerminalOutput>) -> tauri::Result<bool> {
+        if self.pending.is_empty() || !self.can_flush() {
+            return Ok(false);
         }
 
-        let data = std::mem::replace(
+        let mut data = std::mem::replace(
             &mut self.pending,
             Vec::with_capacity(OUTPUT_BATCH_MAX_BYTES),
         );
+        if data.len() > OUTPUT_BATCH_MAX_BYTES {
+            self.pending = data.split_off(OUTPUT_BATCH_MAX_BYTES);
+        }
         channel.send(TerminalOutput(data))?;
-        self.pending_since = None;
-        self.in_flight.push_back(self.next_sequence);
+        if self.pending.is_empty() {
+            self.pending_since = None;
+        }
+        self.in_flight.push_back(InFlightOutput {
+            sequence: self.next_sequence,
+            sent_at: Instant::now(),
+        });
         self.next_sequence += 1;
-        Ok(())
+        Ok(true)
     }
 
     fn acknowledge(&mut self, sequence: u64) {
@@ -818,7 +1159,7 @@ impl TerminalOutputFlow {
         while self
             .in_flight
             .front()
-            .is_some_and(|in_flight| *in_flight <= sequence)
+            .is_some_and(|in_flight| in_flight.sequence <= sequence)
         {
             self.in_flight.pop_front();
         }
@@ -840,12 +1181,31 @@ fn send_error(channel: &Channel<TerminalEvent>, error: SshError) {
     });
 }
 
+fn send_output_channel_error(channel: &Channel<TerminalEvent>) {
+    let _ = channel.send(TerminalEvent::Error {
+        code: CommandErrorCode::TerminalOutputUnavailable,
+        message: "terminal output delivery stopped before it could be acknowledged".to_owned(),
+    });
+}
+
+fn send_terminal_completion(
+    channel: &Channel<TerminalEvent>,
+    failed: bool,
+    code: Option<u32>,
+    signal: Option<String>,
+) {
+    if !failed {
+        let _ = channel.send(TerminalEvent::Exited { code, signal });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex as StdMutex};
 
     use super::{
-        SessionCommand, TerminalOutputFlow, TerminalSessionManager, OUTPUT_BATCH_MAX_BYTES,
+        send_output_channel_error, send_terminal_completion, SensitiveString, SessionCommand,
+        TerminalOutputFlow, TerminalSessionManager, OUTPUT_ACK_TIMEOUT, OUTPUT_BATCH_MAX_BYTES,
         OUTPUT_MAX_IN_FLIGHT_BATCHES,
     };
     use crate::command_error::CommandErrorCode;
@@ -861,6 +1221,37 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.code, CommandErrorCode::SessionNotFound);
+    }
+
+    #[tokio::test]
+    async fn keyboard_prompt_answers_are_scoped_to_the_window_owner() {
+        let manager = TerminalSessionManager::default();
+        let (sender, mut receiver) = mpsc::channel(1);
+        manager
+            .register_keyboard_prompt("main", "attempt-1", sender)
+            .await
+            .unwrap();
+
+        let error = manager
+            .respond_keyboard_prompt("other", "attempt-1", vec![SensitiveString::from("secret")])
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, CommandErrorCode::SessionNotFound);
+
+        manager
+            .respond_keyboard_prompt("main", "attempt-1", vec![SensitiveString::from("secret")])
+            .await
+            .unwrap();
+        let received = receiver.recv().await.unwrap();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].as_str(), "secret");
+        assert_eq!(format!("{:?}", received), "[[REDACTED]]");
+
+        manager.remove_keyboard_prompt("main", "attempt-1").await;
+        assert!(manager
+            .respond_keyboard_prompt("main", "attempt-1", Vec::new())
+            .await
+            .is_err());
     }
 
     #[test]
@@ -903,10 +1294,103 @@ mod tests {
         flow.flush(&channel).unwrap();
 
         flow.acknowledge(2);
-        assert_eq!(flow.in_flight.front(), Some(&1));
+        assert_eq!(flow.in_flight.front().map(|batch| batch.sequence), Some(1));
 
         flow.acknowledge(1);
         assert!(flow.in_flight.is_empty());
+    }
+
+    #[test]
+    fn splits_oversized_output_without_exceeding_the_ack_window() {
+        let delivered = Arc::new(StdMutex::new(Vec::new()));
+        let delivered_for_channel = delivered.clone();
+        let channel = Channel::new(move |body| {
+            if let InvokeResponseBody::Raw(data) = body {
+                delivered_for_channel.lock().unwrap().push(data);
+            }
+            Ok(())
+        });
+        let mut flow = TerminalOutputFlow::new();
+        let total_bytes = OUTPUT_BATCH_MAX_BYTES * (OUTPUT_MAX_IN_FLIGHT_BATCHES + 1) + 17;
+        flow.push(vec![0x5a; total_bytes]);
+
+        for _ in 0..OUTPUT_MAX_IN_FLIGHT_BATCHES {
+            assert!(flow.flush(&channel).unwrap());
+        }
+        assert!(!flow.can_flush());
+        assert!(!flow.can_read());
+        assert!(!flow.flush(&channel).unwrap());
+        assert_eq!(flow.in_flight.len(), OUTPUT_MAX_IN_FLIGHT_BATCHES);
+        assert_eq!(
+            delivered.lock().unwrap().len(),
+            OUTPUT_MAX_IN_FLIGHT_BATCHES
+        );
+
+        flow.acknowledge(1);
+        assert!(flow.flush(&channel).unwrap());
+        assert_eq!(flow.pending.len(), 17);
+        flow.acknowledge(2);
+        assert!(flow.flush(&channel).unwrap());
+        assert!(!flow.has_pending());
+
+        let delivered = delivered.lock().unwrap();
+        assert_eq!(delivered.len(), OUTPUT_MAX_IN_FLIGHT_BATCHES + 2);
+        assert!(delivered
+            .iter()
+            .all(|batch| batch.len() <= OUTPUT_BATCH_MAX_BYTES));
+        assert_eq!(delivered.iter().map(Vec::len).sum::<usize>(), total_bytes);
+    }
+
+    #[test]
+    fn tracks_the_oldest_unacknowledged_batch_deadline() {
+        let channel = Channel::new(|_| Ok(()));
+        let mut flow = TerminalOutputFlow::new();
+        flow.push(b"terminal output".to_vec());
+        assert!(flow.flush(&channel).unwrap());
+
+        let oldest = flow.in_flight.front().unwrap();
+        assert_eq!(
+            flow.acknowledgement_deadline(),
+            Some(oldest.sent_at + OUTPUT_ACK_TIMEOUT)
+        );
+
+        flow.acknowledge(oldest.sequence);
+        assert!(flow.acknowledgement_deadline().is_none());
+    }
+
+    #[test]
+    fn output_channel_failure_suppresses_exit_and_releases_its_capture() {
+        let captured = Arc::new(());
+        let captured_by_channel = captured.clone();
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let events_for_channel = events.clone();
+        let event_channel = Channel::new(move |body| {
+            if let InvokeResponseBody::Json(data) = body {
+                events_for_channel.lock().unwrap().push(data);
+            }
+            Ok(())
+        });
+        let mut flow = TerminalOutputFlow::new();
+        flow.push(b"undeliverable output".to_vec());
+
+        {
+            let output_channel = Channel::new(move |_| {
+                let _ = Arc::strong_count(&captured_by_channel);
+                Err(std::io::Error::other("output channel closed").into())
+            });
+            assert!(flow.flush(&output_channel).is_err());
+            assert!(flow.in_flight.is_empty());
+            assert_eq!(flow.next_sequence, 1);
+            send_output_channel_error(&event_channel);
+            send_terminal_completion(&event_channel, true, Some(0), None);
+            assert_eq!(Arc::strong_count(&captured), 2);
+        }
+
+        assert_eq!(Arc::strong_count(&captured), 1);
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(events[0].contains("terminal_output_unavailable"));
+        assert!(!events[0].contains("exited"));
     }
 
     #[tokio::test]
@@ -952,6 +1436,54 @@ mod tests {
         worker.await.unwrap();
 
         assert!(manager.sessions.lock().await.is_empty());
+        manager.close_all().await;
+        assert!(manager.sessions.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn closes_sessions_even_when_the_command_queue_is_full() {
+        let manager = TerminalSessionManager::default();
+        let (sender, mut commands) = mpsc::channel(1);
+        sender
+            .send(SessionCommand::Write(b"pending".to_vec()))
+            .await
+            .unwrap();
+        manager
+            .sessions
+            .lock()
+            .await
+            .insert("active".to_owned(), sender);
+        let worker = tokio::spawn(async move {
+            assert!(matches!(
+                commands.recv().await,
+                Some(SessionCommand::Write(_))
+            ));
+            let Some(SessionCommand::Close(Some(complete))) = commands.recv().await else {
+                panic!("close command did not reach a full queue");
+            };
+            complete.send(()).unwrap();
+        });
+
+        manager.close_all().await;
+        worker.await.unwrap();
+        assert!(manager.sessions.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn clears_pending_keyboard_answers_during_shutdown() {
+        let manager = TerminalSessionManager::default();
+        let (sender, _receiver) = mpsc::channel(1);
+        manager
+            .register_keyboard_prompt("main", "attempt-1", sender)
+            .await
+            .unwrap();
+
+        manager.close_all().await;
+
+        assert!(manager
+            .respond_keyboard_prompt("main", "attempt-1", vec![SensitiveString::from("secret")])
+            .await
+            .is_err());
     }
 
     #[tokio::test]

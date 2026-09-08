@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - dev
   schedule:
     - cron: "17 1 * * 1"
   workflow_dispatch:
@@ -85,6 +86,12 @@ jobs:
       - name: Check Tauri capabilities and CSP
         run: node scripts/check-tauri-security.mjs
 
+      - name: Check application security controls
+        run: pnpm security:controls
+
+      - name: Test application security controls
+        run: pnpm security:test
+
       - name: Audit npm dependencies
         run: pnpm audit --registry=https://registry.npmjs.org --audit-level high
 
@@ -95,7 +102,18 @@ jobs:
         run: node scripts/check-npm-licenses.mjs
 
       - name: Scan complete Git history for secrets
-        run: gitleaks git . --redact --exit-code 1
+        run: |
+          mkdir -p artifacts/security-reports
+          gitleaks git . --redact --exit-code 1 --report-format json --report-path artifacts/security-reports/gitleaks.json
+
+      - name: Upload redacted secret scan report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bx-ssh-secret-scan-${{ github.sha }}
+          path: artifacts/security-reports/gitleaks.json
+          if-no-files-found: warn
+          retention-days: 7
 
   sbom:
     name: CycloneDX SBOM

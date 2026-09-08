@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bx_contracts::{
     ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionGroup,
-    ConnectionSettingsOverride,
+    ConnectionSettingsOverride, SensitiveString,
 };
 use bx_persistence::{
     ConnectionRepository, EncryptedDatabase, PersistenceError, SecretCredentialStore,
@@ -17,9 +17,17 @@ use tauri::{AppHandle, Manager, State};
 use crate::command_error::{CommandError, CommandErrorCode};
 
 const DATABASE_FILE_NAME: &str = "bx-ssh.db";
-const CREDENTIAL_SERVICE: &str = "io.github.baoxue2026.bx-ssh";
+const CREDENTIAL_SERVICE: &str = if cfg!(feature = "e2e") {
+    "io.github.baoxue2026.bx-ssh.e2e"
+} else {
+    "io.github.baoxue2026.bx-ssh"
+};
 const DATABASE_KEY_ACCOUNT: &str = "database-data-key-v1";
-const PASSWORD_CREDENTIAL_SERVICE: &str = "io.github.baoxue2026.bx-ssh.password";
+const PASSWORD_CREDENTIAL_SERVICE: &str = if cfg!(feature = "e2e") {
+    "io.github.baoxue2026.bx-ssh.e2e.password"
+} else {
+    "io.github.baoxue2026.bx-ssh.password"
+};
 
 #[derive(Clone, Default)]
 pub(crate) struct ConnectionRepositoryState {
@@ -73,24 +81,24 @@ pub(crate) async fn save_connection(
 #[specta::specta]
 pub(crate) async fn get_password_credential(
     credential_ref: String,
-) -> Result<Option<String>, CommandError> {
+) -> Result<Option<SensitiveString>, CommandError> {
     let store = password_store(&credential_ref)?;
     Ok(store
         .load_secret()?
-        .map(|secret| secret.expose_secret().to_owned()))
+        .map(|secret| SensitiveString::from(secret.expose_secret().to_owned())))
 }
 
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn save_password_credential(
     credential_ref: String,
-    password: String,
+    password: SensitiveString,
 ) -> Result<(), CommandError> {
-    if password.is_empty() {
+    if password.as_str().is_empty() {
         return Err(PersistenceError::InvalidCredential.into());
     }
     let store = password_store(&credential_ref)?;
-    store.save_secret(&SecretString::from(password))?;
+    store.save_secret(&SecretString::from(password.into_inner()))?;
     Ok(())
 }
 

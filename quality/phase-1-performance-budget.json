@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "phase": "P1",
+  "referenceEnvironment": {
+    "platform": "Windows",
+    "os": "Windows 11 24H2",
+    "architecture": "x64",
+    "cpuCores": 4,
+    "memoryGb": 16,
+    "storage": "NVMe"
+  },
+  "thresholds": {
+    "coldStartP95Ms": { "max": 2500, "unit": "ms" },
+    "idleWorkingSetMb": { "max": 120, "unit": "MiB" },
+    "tenSessionWorkingSetMb": { "max": 260, "unit": "MiB" },
+    "tabSwitchP95Ms": { "max": 100, "unit": "ms" },
+    "terminalOutputBytesPerSecond": {
+      "min": 2097152,
+      "unit": "bytes/s"
+    },
+    "terminalOutputDurationSeconds": { "min": 300, "unit": "s" },
+    "sftpBytes": { "min": 1073741824, "unit": "bytes" },
+    "sftpSpeedRatio": { "min": 0.8, "unit": "ratio" },
+    "sessionCount": { "min": 10, "unit": "sessions" }
+  },
+  "recordOnlyMetrics": ["trayRestoreP95Ms"],
+  "protocol": {
+    "startupSamples": 10,
+    "workingSetObservationSeconds": 60,
+    "workingSetSampleIntervalSeconds": 5,
+    "tabSwitchSamples": 100,
+    "terminalOutputRuns": 1,
+    "sftpRuns": 1,
+    "terminalOutputPattern": "2 MiB/s for 5 minutes",
+    "sftpComparison": "same host, network, file, and OpenSSH sftp baseline",
+    "baselineCommitRequired": true
+  },
+  "requiredEvidence": [
+    "startup and tray-restore sample timings",
+    "aggregate process working-set samples",
+    "ten-session working-set and tab-switch samples",
+    "terminal output responsiveness and post-run memory observation",
+    "1 GiB SFTP transfer speed and SHA-256 comparison"
+  ]
+}

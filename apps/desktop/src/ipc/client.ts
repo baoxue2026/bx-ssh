@@ -3,10 +3,19 @@ import {
   commands,
   type CommandError,
   type CommandErrorCode,
+  type ApplicationSettings,
   type ConnectionConfig,
   type ConnectionGroup,
+  type ConnectionSettings,
   type ConnectionSettingsOverride,
+  type GlobalSettingsSnapshot,
   type HostKeyInfo,
+  type PrivateKeyMetadata,
+  type PrivateKeyReferenceRequest,
+  type PrivateKeySummary,
+  type KeyboardInteractiveEvent,
+  type LocalDirectoryListing,
+  type LocalFileEntry,
   type OpenSshImportRequest,
   type ProbeHostRequest,
   type Result,
@@ -16,8 +25,10 @@ import {
   type StartSftpResponse,
   type StartPrivateKeySftpRequest,
   type StartPrivateKeyShellRequest,
+  type StartKeyboardInteractiveShellRequest,
   type StartShellRequest,
   type StartShellResponse,
+  type SftpConflictAction,
   type TerminalEvent,
   type UpdateEvent,
 } from "./bindings";
@@ -75,6 +86,13 @@ interface TerminalChannels {
   onOutput(data: ArrayBuffer): void;
 }
 
+interface KeyboardInteractiveChannels {
+  onAuth(event: KeyboardInteractiveEvent): void;
+  onState(event: SshConnectionEvent): void;
+  onEvent(event: TerminalEvent): void;
+  onOutput(data: ArrayBuffer): void;
+}
+
 async function call<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
@@ -107,8 +125,23 @@ function createChannel<T>(onMessage: (message: T) => void): Channel<T> {
 
 export const ipc = {
   appInfo: () => call(() => commands.appInfo()),
+  readClipboardText: () => unwrap(() => commands.readClipboardText()),
+  writeClipboardText: (text: string) =>
+    unwrapVoid(() => commands.writeClipboardText(text)),
+  openExternalUrl: (url: string) =>
+    unwrapVoid(() => commands.openExternalUrl(url)),
+  openLogDirectory: () => unwrapVoid(() => commands.openLogDirectory()),
+  exportDiagnostics: (destination: string) =>
+    unwrapVoid(() => commands.exportDiagnostics(destination)),
   listConnections: () => unwrap(() => commands.listConnections()),
   getConnection: (id: string) => unwrap(() => commands.getConnection(id)),
+  getGlobalSettings: (): Promise<GlobalSettingsSnapshot> =>
+    unwrap(() => commands.getGlobalSettings()),
+  saveGlobalSettings: (
+    application: ApplicationSettings,
+    connection: ConnectionSettings,
+  ): Promise<GlobalSettingsSnapshot> =>
+    unwrap(() => commands.saveGlobalSettings(application, connection)),
   previewOpenSshConfig: (path: string | null) =>
     unwrap(() => commands.previewOpensshConfig(path)),
   importOpenSshConnections: (request: OpenSshImportRequest) =>
@@ -187,6 +220,50 @@ export const ipc = {
     ),
   listSftpDirectory: (sessionId: string, path: string) =>
     unwrap(() => commands.listSftpDirectory(sessionId, path)),
+  listPrivateKeys: (): Promise<PrivateKeySummary[]> =>
+    unwrap(() => commands.listPrivateKeys()),
+  inspectPrivateKeyFile: (
+    path: string,
+    passphrase: string | null,
+  ): Promise<PrivateKeyMetadata> =>
+    unwrap(() => commands.inspectPrivateKeyFile(path, passphrase)),
+  savePrivateKeyReference: (
+    request: PrivateKeyReferenceRequest,
+    passphrase: string | null,
+  ): Promise<PrivateKeySummary> =>
+    unwrap(() => commands.savePrivateKeyReference(request, passphrase)),
+  deletePrivateKeyReference: (id: string): Promise<boolean> =>
+    unwrap(() => commands.deletePrivateKeyReference(id)),
+  statSftpPath: (sessionId: string, path: string) =>
+    unwrap(() => commands.statSftpPath(sessionId, path)),
+  createSftpDirectory: (sessionId: string, remotePath: string) =>
+    unwrapVoid(() => commands.createSftpDirectory(sessionId, remotePath)),
+  deleteSftpEntry: (
+    sessionId: string,
+    remotePath: string,
+    recursive: boolean,
+  ) =>
+    unwrapVoid(() =>
+      commands.deleteSftpEntry(sessionId, remotePath, recursive),
+    ),
+  moveSftpEntry: (sessionId: string, sourcePath: string, targetPath: string) =>
+    unwrapVoid(() => commands.moveSftpEntry(sessionId, sourcePath, targetPath)),
+  renameSftpEntry: (
+    sessionId: string,
+    sourcePath: string,
+    targetPath: string,
+  ) =>
+    unwrapVoid(() =>
+      commands.renameSftpEntry(sessionId, sourcePath, targetPath),
+    ),
+  chmodSftpEntry: (
+    sessionId: string,
+    remotePath: string,
+    permissions: number,
+  ) =>
+    unwrapVoid(() =>
+      commands.chmodSftpEntry(sessionId, remotePath, permissions),
+    ),
   uploadSftpFile: (
     sessionId: string,
     localPath: string,
@@ -195,6 +272,22 @@ export const ipc = {
   ) =>
     unwrap(() =>
       commands.uploadSftpFile(sessionId, localPath, remotePath, language),
+    ),
+  uploadSftpFileWithConflict: (
+    sessionId: string,
+    localPath: string,
+    remotePath: string,
+    language: string,
+    conflictAction: SftpConflictAction,
+  ) =>
+    unwrap(() =>
+      commands.uploadSftpFileWithConflict(
+        sessionId,
+        localPath,
+        remotePath,
+        language,
+        conflictAction,
+      ),
     ),
   downloadSftpFile: (
     sessionId: string,
@@ -205,10 +298,100 @@ export const ipc = {
     unwrap(() =>
       commands.downloadSftpFile(sessionId, remotePath, localPath, language),
     ),
+  downloadSftpFileWithConflict: (
+    sessionId: string,
+    remotePath: string,
+    localPath: string,
+    language: string,
+    conflictAction: SftpConflictAction,
+  ) =>
+    unwrap(() =>
+      commands.downloadSftpFileWithConflict(
+        sessionId,
+        remotePath,
+        localPath,
+        language,
+        conflictAction,
+      ),
+    ),
+  uploadSftpDirectory: (
+    sessionId: string,
+    transferId: string,
+    localPath: string,
+    remotePath: string,
+    language: string,
+  ) =>
+    unwrap(() =>
+      commands.uploadSftpDirectory(
+        sessionId,
+        transferId,
+        localPath,
+        remotePath,
+        language,
+      ),
+    ),
+  uploadSftpDirectoryWithConflict: (
+    sessionId: string,
+    transferId: string,
+    localPath: string,
+    remotePath: string,
+    language: string,
+    conflictAction: SftpConflictAction,
+  ) =>
+    unwrap(() =>
+      commands.uploadSftpDirectoryWithConflict(
+        sessionId,
+        transferId,
+        localPath,
+        remotePath,
+        language,
+        conflictAction,
+      ),
+    ),
+  downloadSftpDirectory: (
+    sessionId: string,
+    transferId: string,
+    remotePath: string,
+    localPath: string,
+    language: string,
+  ) =>
+    unwrap(() =>
+      commands.downloadSftpDirectory(
+        sessionId,
+        transferId,
+        remotePath,
+        localPath,
+        language,
+      ),
+    ),
+  downloadSftpDirectoryWithConflict: (
+    sessionId: string,
+    transferId: string,
+    remotePath: string,
+    localPath: string,
+    language: string,
+    conflictAction: SftpConflictAction,
+  ) =>
+    unwrap(() =>
+      commands.downloadSftpDirectoryWithConflict(
+        sessionId,
+        transferId,
+        remotePath,
+        localPath,
+        language,
+        conflictAction,
+      ),
+    ),
+  cancelSftpTransfer: (transferId: string) =>
+    unwrap(() => commands.cancelSftpTransfer(transferId)),
   hashRemoteSftpFile: (sessionId: string, remotePath: string) =>
     unwrap(() => commands.hashRemoteSftpFile(sessionId, remotePath)),
   closeSftpSession: (sessionId: string) =>
     unwrapVoid(() => commands.closeSftpSession(sessionId)),
+  listLocalDirectory: (path: string): Promise<LocalDirectoryListing> =>
+    unwrap(() => commands.listLocalDirectory({ path })),
+  statLocalPath: (path: string): Promise<LocalFileEntry> =>
+    unwrap(() => commands.statLocalPath({ path })),
   setWebviewMemoryUsage: (low: boolean) =>
     unwrapVoid(() => commands.setWebviewMemoryUsage(low)),
   checkForUpdate: () => unwrap(() => commands.checkForUpdate()),
@@ -237,6 +420,21 @@ export const ipc = {
         onOutput: createChannel(channels.onOutput),
       }),
     ),
+  startKeyboardInteractiveShell: (
+    request: StartKeyboardInteractiveShellRequest,
+    channels: KeyboardInteractiveChannels,
+  ) =>
+    call(() =>
+      invoke<StartShellResponse>("start_keyboard_interactive_shell", {
+        request,
+        onAuth: createChannel(channels.onAuth),
+        onState: createChannel(channels.onState),
+        onEvent: createChannel(channels.onEvent),
+        onOutput: createChannel(channels.onOutput),
+      }),
+    ),
+  respondKeyboardInteractive: (attemptId: string, responses: string[]) =>
+    unwrapVoid(() => commands.respondKeyboardInteractive(attemptId, responses)),
   installUpdate: (
     expectedVersion: string,
     onEvent: (event: UpdateEvent) => void,
@@ -247,6 +445,7 @@ export const ipc = {
         onEvent: createChannel(onEvent),
       }),
     ),
+  cancelUpdate: () => call(() => invoke<void>("cancel_update")),
 };
 
 function isCommandError(error: unknown): error is CommandError {

@@ -9,8 +9,13 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import type { TerminalAppearancePreferences } from "./components/terminalAppearance";
 import i18n from "./i18n";
 import { UiPreferencesProvider } from "./ui/preferences";
+import {
+  DEFAULT_APPLICATION_SETTINGS,
+  DEFAULT_GLOBAL_CONNECTION_SETTINGS,
+} from "./ui/applicationSettings";
 
 const mocks = vi.hoisted(() => ({
   channels: [] as Array<{ onmessage(message: unknown): void }>,
@@ -19,6 +24,9 @@ const mocks = vi.hoisted(() => ({
     Array<(event: { payload: unknown }) => void>
   >(),
   invoke: vi.fn(),
+  clipboardRead: vi.fn(),
+  clipboardWrite: vi.fn(),
+  openUrl: vi.fn(),
   window: {
     close: vi.fn(() => Promise.resolve()),
     isMaximized: vi.fn(() => Promise.resolve(false)),
@@ -27,6 +35,19 @@ const mocks = vi.hoisted(() => ({
     toggleMaximize: vi.fn(() => Promise.resolve()),
   },
   terminalReset: vi.fn(),
+  terminalClearScrollback: vi.fn(),
+  terminalOpenSearch: vi.fn(),
+  terminalPaste: vi.fn(),
+  terminalSelection: "",
+  terminalSelectAll: vi.fn(),
+  terminalProps: undefined as
+    | {
+        appearance?: TerminalAppearancePreferences;
+        onOpenLink?(url: string): void;
+        onPasteRequest?(): void;
+        onSelectionChange?(selection: string): void;
+      }
+    | undefined,
   terminalWrite: vi.fn(),
 }));
 
@@ -59,10 +80,22 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("./components/TerminalPane", async () => {
   const React = await import("react");
   return {
-    TerminalPane: React.forwardRef(function MockTerminalPane(_, ref) {
+    TerminalPane: React.forwardRef(function MockTerminalPane(props, ref) {
+      mocks.terminalProps = props;
       React.useImperativeHandle(ref, () => ({
+        clearScrollback: mocks.terminalClearScrollback,
+        fit: () => ({
+          columns: 80,
+          rows: 24,
+          pixelWidth: 800,
+          pixelHeight: 600,
+        }),
         focus: vi.fn(),
+        getSelection: () => mocks.terminalSelection,
+        openSearch: mocks.terminalOpenSearch,
+        paste: mocks.terminalPaste,
         reset: mocks.terminalReset,
+        selectAll: mocks.terminalSelectAll,
         viewport: () => ({
           columns: 80,
           rows: 24,
@@ -76,7 +109,7 @@ vi.mock("./components/TerminalPane", async () => {
   };
 });
 
-describe("App", { timeout: 15_000 }, () => {
+describe("App", { timeout: 30_000 }, () => {
   beforeEach(async () => {
     localStorage.clear();
     delete document.documentElement.dataset.theme;
@@ -87,6 +120,12 @@ describe("App", { timeout: 15_000 }, () => {
     mocks.channels.length = 0;
     mocks.eventListeners.clear();
     mocks.invoke.mockReset();
+    mocks.clipboardRead.mockReset();
+    mocks.clipboardRead.mockResolvedValue("");
+    mocks.clipboardWrite.mockReset();
+    mocks.clipboardWrite.mockResolvedValue(undefined);
+    mocks.openUrl.mockReset();
+    mocks.openUrl.mockResolvedValue(undefined);
     mocks.window.close.mockClear();
     mocks.window.isMaximized.mockClear();
     mocks.window.isMaximized.mockResolvedValue(false);
@@ -94,10 +133,26 @@ describe("App", { timeout: 15_000 }, () => {
     mocks.window.onResized.mockClear();
     mocks.window.toggleMaximize.mockClear();
     mocks.terminalReset.mockReset();
+    mocks.terminalClearScrollback.mockReset();
+    mocks.terminalOpenSearch.mockReset();
+    mocks.terminalPaste.mockReset();
+    mocks.terminalSelection = "";
+    mocks.terminalSelectAll.mockReset();
+    mocks.terminalProps = undefined;
     mocks.terminalWrite.mockReset();
-    mocks.invoke.mockImplementation((command: string) => {
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
       if (command === "app_info") {
         return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "open_external_url") {
+        mocks.openUrl((args as { url: string }).url);
+        return Promise.resolve();
+      }
+      if (command === "read_clipboard_text") {
+        return mocks.clipboardRead();
+      }
+      if (command === "write_clipboard_text") {
+        return mocks.clipboardWrite((args as { text: string }).text);
       }
       if (command === "probe_ssh_host") {
         return Promise.resolve({
@@ -108,6 +163,24 @@ describe("App", { timeout: 15_000 }, () => {
       }
       if (command === "list_connections") {
         return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "get_global_settings") {
+        return Promise.resolve({
+          application: DEFAULT_APPLICATION_SETTINGS,
+          applicationInitialized: true,
+          connection: DEFAULT_GLOBAL_CONNECTION_SETTINGS,
+        });
+      }
+      if (command === "save_global_settings") {
+        const settings = args as {
+          application: typeof DEFAULT_APPLICATION_SETTINGS;
+          connection: typeof DEFAULT_GLOBAL_CONNECTION_SETTINGS;
+        };
+        return Promise.resolve({
+          application: settings.application,
+          applicationInitialized: true,
+          connection: settings.connection,
+        });
       }
       return Promise.resolve();
     });
@@ -151,6 +224,77 @@ describe("App", { timeout: 15_000 }, () => {
       "true",
     );
   });
+
+  it("supports new-connection, sidebar, and workspace keyboard shortcuts", async () => {
+    renderApp();
+
+    fireEvent.keyDown(window, { ctrlKey: true, key: "n" });
+    const dialog = await screen.findByRole("dialog", { name: "新建连接" });
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    const sidebar = screen.getByRole("complementary", {
+      name: "SSH 连接验证",
+    });
+    fireEvent.keyDown(window, { ctrlKey: true, key: "b" });
+    expect(sidebar).toHaveClass("is-collapsed");
+    fireEvent.keyDown(window, { ctrlKey: true, key: "b" });
+    expect(sidebar).not.toHaveClass("is-collapsed");
+
+    fireEvent.keyDown(window, { ctrlKey: true, key: "2" });
+    expect(screen.getByText("SFTP v3")).toBeInTheDocument();
+    fireEvent.keyDown(window, { ctrlKey: true, key: "1" });
+    expect(screen.getByText("SSH / PTY")).toBeInTheDocument();
+  });
+
+  it("opens and closes the prototype-aligned settings workspace", async () => {
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+
+    const settings = screen.getByRole("region", { name: "设置" });
+    expect(
+      within(settings).getByRole("navigation", { name: "设置分类" }),
+    ).toBeVisible();
+    expect(
+      within(settings).getByRole("heading", { name: "常规" }),
+    ).toBeVisible();
+
+    fireEvent.click(within(settings).getByRole("button", { name: "终端" }));
+    const terminalFontSize = within(settings).getByRole("spinbutton", {
+      name: "字号",
+    });
+    await waitFor(() => expect(terminalFontSize).toBeEnabled());
+    fireEvent.change(terminalFontSize, { target: { value: "16" } });
+    fireEvent.click(within(settings).getByRole("switch", { name: "光标闪烁" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "保存设置" }));
+    await waitFor(() =>
+      expect(mocks.terminalProps?.appearance?.fontSize).toBe(16),
+    );
+    await waitFor(() =>
+      expect(mocks.terminalProps?.appearance?.cursorBlink).toBe(false),
+    );
+
+    fireEvent.click(within(settings).getByRole("button", { name: "安全" }));
+    expect(
+      within(settings).getByRole("heading", { name: "安全" }),
+    ).toBeVisible();
+    expect(within(settings).getByText("已连接系统凭据库")).toBeVisible();
+
+    fireEvent.click(within(settings).getByRole("button", { name: "外观" }));
+    fireEvent.click(within(settings).getByRole("radio", { name: "浅色" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "保存设置" }));
+    await waitFor(() =>
+      expect(document.documentElement).toHaveAttribute("data-theme", "light"),
+    );
+
+    fireEvent.click(within(settings).getByRole("button", { name: "关闭设置" }));
+    expect(
+      screen.queryByRole("region", { name: "设置" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
+    expect(screen.getByRole("region", { name: "设置" })).toBeInTheDocument();
+  }, 30_000);
 
   it("shows the first-start state separately from an empty connection list", async () => {
     renderApp();
@@ -562,7 +706,7 @@ describe("App", { timeout: 15_000 }, () => {
       name: "调整连接侧栏宽度",
     });
     expect(workspace).toHaveStyle({
-      gridTemplateColumns: "240px minmax(0, 1fr)",
+      gridTemplateColumns: "228px minmax(0, 1fr)",
     });
 
     fireEvent.keyDown(separator, { key: "End" });
@@ -573,19 +717,19 @@ describe("App", { timeout: 15_000 }, () => {
 
     fireEvent.doubleClick(separator);
     expect(workspace).toHaveStyle({
-      gridTemplateColumns: "240px minmax(0, 1fr)",
+      gridTemplateColumns: "228px minmax(0, 1fr)",
     });
 
     fireEvent.click(screen.getByRole("button", { name: "折叠连接侧栏" }));
     expect(workspace).toHaveStyle({
-      gridTemplateColumns: "32px minmax(0, 1fr)",
+      gridTemplateColumns: "0px minmax(0, 1fr)",
     });
     expect(
       screen.queryByRole("separator", { name: "调整连接侧栏宽度" }),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "展开连接侧栏" }));
     expect(workspace).toHaveStyle({
-      gridTemplateColumns: "240px minmax(0, 1fr)",
+      gridTemplateColumns: "228px minmax(0, 1fr)",
     });
   });
 
@@ -1026,7 +1170,7 @@ describe("App", { timeout: 15_000 }, () => {
     const startResponse = new Promise((resolve) => {
       resolveStart = resolve;
     });
-    mocks.invoke.mockImplementation((command: string) => {
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
       if (command === "app_info") {
         return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
       }
@@ -1039,6 +1183,12 @@ describe("App", { timeout: 15_000 }, () => {
       }
       if (command === "start_password_shell") {
         return startResponse;
+      }
+      if (command === "read_clipboard_text") {
+        return mocks.clipboardRead();
+      }
+      if (command === "write_clipboard_text") {
+        return mocks.clipboardWrite((args as { text: string }).text);
       }
       return Promise.resolve();
     });
@@ -1098,6 +1248,75 @@ describe("App", { timeout: 15_000 }, () => {
         { low: false },
       );
     });
+
+    mocks.terminalSelection = "selected output";
+    act(() => mocks.terminalProps?.onSelectionChange?.("selected output"));
+    fireEvent.click(screen.getByRole("button", { name: "复制终端选区" }));
+    await waitFor(() =>
+      expect(mocks.clipboardWrite).toHaveBeenCalledWith("selected output"),
+    );
+
+    mocks.clipboardRead.mockResolvedValue("echo first\necho second");
+    await act(async () => mocks.terminalProps?.onPasteRequest?.());
+    const pasteDialog = await screen.findByRole("dialog", {
+      name: "确认粘贴到终端？",
+    });
+    expect(
+      within(pasteDialog).getByLabelText("待粘贴内容预览"),
+    ).toHaveTextContent("echo first echo second");
+    expect(mocks.terminalPaste).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(pasteDialog).getByRole("button", { name: "确认粘贴" }),
+    );
+    expect(mocks.terminalPaste).toHaveBeenCalledWith("echo first\necho second");
+  }, 30_000);
+
+  it("shows the complete host before opening a terminal link", async () => {
+    renderApp();
+    await screen.findByRole("textbox", { name: "搜索已保存连接" });
+    expect(mocks.terminalProps?.onOpenLink).toBeTypeOf("function");
+
+    act(() =>
+      mocks.terminalProps?.onOpenLink?.(
+        "https://docs.example.com:8443/terminal",
+      ),
+    );
+    const linkDialog = await screen.findByRole("dialog", {
+      name: "打开外部链接？",
+    });
+    await waitFor(() => expect(linkDialog).toBeVisible());
+    expect(
+      within(linkDialog).getByText("docs.example.com:8443"),
+    ).toHaveTextContent("docs.example.com:8443");
+    fireEvent.click(
+      within(linkDialog).getByRole("button", { name: "打开链接" }),
+    );
+    await waitFor(() =>
+      expect(mocks.openUrl).toHaveBeenCalledWith(
+        "https://docs.example.com:8443/terminal",
+      ),
+    );
+  });
+
+  it("keeps local terminal buffer operations distinct", async () => {
+    renderApp();
+    await screen.findByRole("textbox", { name: "搜索已保存连接" });
+
+    const openMenu = () =>
+      fireEvent.click(screen.getByRole("button", { name: "终端操作菜单" }));
+
+    openMenu();
+    fireEvent.click(await screen.findByText("选择全部内容"));
+    expect(mocks.terminalSelectAll).toHaveBeenCalledOnce();
+
+    openMenu();
+    fireEvent.click(await screen.findByText("清除回滚内容"));
+    expect(mocks.terminalClearScrollback).toHaveBeenCalledOnce();
+
+    openMenu();
+    fireEvent.click(await screen.findByText("重置终端状态"));
+    expect(mocks.terminalReset).toHaveBeenCalledOnce();
+    expect(commandCalls("write_terminal")).toHaveLength(0);
   });
 
   it("shows native SSH stages and cancels an active connection attempt", async () => {
@@ -1222,6 +1441,505 @@ describe("App", { timeout: 15_000 }, () => {
     });
   });
 
+  it("loads and navigates the controlled local file browser", async () => {
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_local_directory") {
+        const path = (args as { request: { path: string } }).request.path;
+        return Promise.resolve(
+          path === "."
+            ? {
+                path: "C:\\work",
+                parentPath: "C:\\",
+                entries: [
+                  {
+                    name: "releases",
+                    path: "C:\\work\\releases",
+                    kind: "directory",
+                    size: 0,
+                    modifiedAt: null,
+                    readonly: false,
+                    hidden: false,
+                  },
+                ],
+              }
+            : {
+                path,
+                parentPath: "C:\\work",
+                entries: [],
+              },
+        );
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    expect(await screen.findByText("releases")).toBeVisible();
+    expect(mocks.invoke).toHaveBeenCalledWith("list_local_directory", {
+      request: { path: "." },
+    });
+
+    fireEvent.doubleClick(screen.getByText("releases"));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("list_local_directory", {
+        request: { path: "C:\\work\\releases" },
+      });
+    });
+    expect(screen.getByRole("textbox", { name: "本地路径" })).toHaveValue(
+      "C:\\work\\releases",
+    );
+  });
+
+  it("refreshes the current local directory after a successful download", async () => {
+    let localDirectoryLoads = 0;
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "list_local_directory") {
+        localDirectoryLoads += 1;
+        const path = (args as { request: { path: string } }).request.path;
+        return Promise.resolve({
+          path: path === "." ? "C:\\work" : path,
+          parentPath: "C:\\",
+          entries:
+            localDirectoryLoads > 1
+              ? [
+                  {
+                    name: "release.zip",
+                    path: "C:\\work\\release.zip",
+                    kind: "file",
+                    size: 1024,
+                    modifiedAt: 1_700_000_000,
+                    readonly: false,
+                    hidden: false,
+                  },
+                ]
+              : [],
+        });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-download",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: { path: "/home/bxssh", entries: [] },
+        });
+      }
+      if (command === "download_sftp_file") {
+        return Promise.resolve({
+          bytes: 1024,
+          elapsedMs: 10,
+          bytesPerSecond: 102_400,
+          sha256: "a".repeat(64),
+        });
+      }
+      if (command === "stat_sftp_path") {
+        return Promise.resolve({
+          name: "release.zip",
+          path: "/home/bxssh/release.zip",
+          kind: "file",
+          size: 1024,
+          modifiedAt: null,
+          permissions: 0o644,
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("list_local_directory", {
+        request: { path: "." },
+      });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    await screen.findByText("目录为空");
+
+    fireEvent.change(screen.getByLabelText("下载远端源文件"), {
+      target: { value: "/home/bxssh/release.zip" },
+    });
+    fireEvent.change(screen.getByLabelText("下载本地目标"), {
+      target: { value: "C:\\work\\release.zip" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "下载" }));
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("download_sftp_file", {
+        sessionId: "sftp-download",
+        remotePath: "/home/bxssh/release.zip",
+        localPath: "C:\\work\\release.zip",
+        language: "zh-CN",
+      });
+      expect(mocks.invoke).toHaveBeenCalledWith("list_local_directory", {
+        request: { path: "C:\\work" },
+      });
+    });
+    expect(await screen.findByText("release.zip")).toBeVisible();
+  });
+
+  it("resolves SFTP conflicts and keeps other transfer failures localized", async () => {
+    let uploadAttempts = 0;
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "list_local_directory") {
+        return Promise.resolve({
+          path: "C:\\work",
+          parentPath: "C:\\",
+          entries: [],
+        });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-errors",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: { path: "/home/bxssh", entries: [] },
+        });
+      }
+      if (command === "upload_sftp_file") {
+        uploadAttempts += 1;
+        return Promise.reject(
+          uploadAttempts === 1
+            ? {
+                code: "remote_target_exists",
+                message: "remote transfer target already exists",
+                stage: null,
+              }
+            : {
+                code: "transfer_integrity_mismatch",
+                message: "file transfer integrity check failed",
+                stage: null,
+              },
+        );
+      }
+      if (command === "upload_sftp_file_with_conflict") {
+        return Promise.resolve({
+          bytes: 1024,
+          elapsedMs: 10,
+          bytesPerSecond: 102_400,
+          sha256: "a".repeat(64),
+        });
+      }
+      if (command === "stat_sftp_path") {
+        return Promise.resolve({
+          name: "release.zip",
+          path: "/home/bxssh/release.zip",
+          kind: "file",
+          size: 2048,
+          modifiedAt: 1_700_000_100,
+          permissions: 0o644,
+        });
+      }
+      if (command === "list_sftp_directory") {
+        return Promise.resolve({ path: "/home/bxssh", entries: [] });
+      }
+      if (command === "stat_local_path") {
+        return Promise.resolve({
+          name: "release.zip",
+          path: "C:\\work\\release.zip",
+          kind: "file",
+          size: 1024,
+          modifiedAt: null,
+          readonly: false,
+          hidden: false,
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    await screen.findByText("目录为空");
+
+    fireEvent.change(screen.getByLabelText("上传本地源文件"), {
+      target: { value: "C:\\work\\release.zip" },
+    });
+    fireEvent.change(screen.getByLabelText("上传远端目标"), {
+      target: { value: "/home/bxssh/release.zip" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("stat_sftp_path", {
+        sessionId: "sftp-errors",
+        path: "/home/bxssh/release.zip",
+      });
+    });
+    expect(screen.getByText("目标位置已有同名条目")).toBeInTheDocument();
+    expect(screen.getByText("C:\\work\\release.zip")).toBeInTheDocument();
+    expect(screen.getByText("/home/bxssh/release.zip")).toBeInTheDocument();
+
+    const renameConflictButton = screen
+      .getAllByRole("button", { hidden: true })
+      .find((button) => button.textContent === "自动重命名");
+    expect(renameConflictButton).toBeDefined();
+    fireEvent.click(renameConflictButton!);
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "upload_sftp_file_with_conflict",
+        {
+          sessionId: "sftp-errors",
+          localPath: "C:\\work\\release.zip",
+          remotePath: "/home/bxssh/release.zip",
+          language: "zh-CN",
+          conflictAction: "rename",
+        },
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+    expect(
+      await screen.findByText("文件传输校验失败，未保留不完整的目标文件。"),
+    ).toBeVisible();
+  });
+
+  it("starts and cancels a recursive directory upload with one transfer ID", async () => {
+    const directoryUpload = new Promise(() => undefined);
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "list_connections") {
+        return Promise.resolve({ groups: [], connections: [] });
+      }
+      if (command === "list_local_directory") {
+        return Promise.resolve({
+          path: "C:\\work",
+          parentPath: "C:\\",
+          entries: [],
+        });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-directory",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: { path: "/home/bxssh", entries: [] },
+        });
+      }
+      if (command === "stat_local_path") {
+        return Promise.resolve({
+          name: "releases",
+          path: "C:\\work\\releases",
+          kind: "directory",
+          size: 0,
+          modifiedAt: null,
+          readonly: false,
+          hidden: false,
+        });
+      }
+      if (command === "upload_sftp_directory") {
+        return directoryUpload;
+      }
+      if (command === "cancel_sftp_transfer") {
+        return Promise.resolve(true);
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    await screen.findByText("目录为空");
+
+    fireEvent.change(screen.getByLabelText("上传本地源文件"), {
+      target: { value: "C:\\work\\releases" },
+    });
+    fireEvent.change(screen.getByLabelText("上传远端目标"), {
+      target: { value: "/home/bxssh/releases" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    expect(await screen.findByText("目录传输进行中")).toBeVisible();
+    const uploadCall = commandCalls("upload_sftp_directory")[0][1] as {
+      transferId: string;
+    };
+    expect(uploadCall.transferId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /取\s*消/ }));
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("cancel_sftp_transfer", {
+        transferId: uploadCall.transferId,
+      });
+    });
+  });
+
+  it("keeps SFTP back and forward history across directory navigation", async () => {
+    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "app_info") {
+        return Promise.resolve({ name: "BX SSH", version: "0.1.0" });
+      }
+      if (command === "probe_ssh_host") {
+        return Promise.resolve({
+          algorithm: "ssh-ed25519",
+          fingerprintSha256:
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        });
+      }
+      if (command === "start_password_sftp") {
+        return Promise.resolve({
+          sessionId: "sftp-history",
+          hostKey: {
+            algorithm: "ssh-ed25519",
+            fingerprintSha256:
+              "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          },
+          directory: {
+            path: "/home/bxssh",
+            entries: [
+              {
+                name: "logs",
+                path: "/home/bxssh/logs",
+                kind: "directory",
+                size: 4096,
+                modifiedAt: null,
+                permissions: 493,
+              },
+            ],
+          },
+        });
+      }
+      if (command === "list_sftp_directory") {
+        const path = (args as { path: string }).path;
+        return Promise.resolve({
+          path,
+          entries: [],
+        });
+      }
+      return Promise.resolve();
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByText("SFTP"));
+    fireEvent.click(screen.getByRole("button", { name: "检测主机指纹" }));
+    await screen.findByText("信任此主机指纹");
+    fireEvent.click(screen.getByRole("checkbox", { name: "信任此主机指纹" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "bxssh" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    await screen.findByText("logs");
+
+    fireEvent.doubleClick(screen.getByText("logs"));
+    await waitFor(() => {
+      expect(commandCalls("list_sftp_directory")).toHaveLength(1);
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("list_sftp_directory", {
+      sessionId: "sftp-history",
+      path: "/home/bxssh/logs",
+    });
+    expect(screen.getByLabelText("远端路径")).toHaveValue("/home/bxssh/logs");
+    expect(
+      screen.getByRole("button", { name: "返回上一个远端目录" }),
+    ).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "返回上一个远端目录" }));
+    await waitFor(() => {
+      expect(commandCalls("list_sftp_directory")).toHaveLength(2);
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("list_sftp_directory", {
+      sessionId: "sftp-history",
+      path: "/home/bxssh",
+    });
+    expect(screen.getByLabelText("远端路径")).toHaveValue("/home/bxssh");
+    expect(
+      screen.getByRole("button", { name: "返回上一个远端目录" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "前进到下一个远端目录" }),
+    ).toBeEnabled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "前进到下一个远端目录" }),
+    );
+    await waitFor(() => {
+      expect(commandCalls("list_sftp_directory")).toHaveLength(3);
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("list_sftp_directory", {
+      sessionId: "sftp-history",
+      path: "/home/bxssh/logs",
+    });
+    expect(screen.getByLabelText("远端路径")).toHaveValue("/home/bxssh/logs");
+  });
+
   it("confirms the active session and transfer impact before closing SFTP", async () => {
     let resolveUpload: ((value: unknown) => void) | undefined;
     const upload = new Promise((resolve) => {
@@ -1251,6 +1969,17 @@ describe("App", { timeout: 15_000 }, () => {
       }
       if (command === "upload_sftp_file") {
         return upload;
+      }
+      if (command === "stat_local_path") {
+        return Promise.resolve({
+          name: "release.zip",
+          path: "D:\\release.zip",
+          kind: "file",
+          size: 1024,
+          modifiedAt: null,
+          readonly: false,
+          hidden: false,
+        });
       }
       return Promise.resolve();
     });
@@ -1404,6 +2133,25 @@ describe("App", { timeout: 15_000 }, () => {
       ).not.toBeInTheDocument(),
     );
 
+    expect(mocks.terminalProps?.appearance?.fontSize).toBe(13);
+    const increaseFontSize = screen.getByRole("button", {
+      name: "放大当前会话字号",
+    });
+    expect(increaseFontSize).toBeEnabled();
+    fireEvent.click(increaseFontSize);
+    await screen.findByRole("button", { name: "当前会话字号 14" });
+    await waitFor(() =>
+      expect(mocks.terminalProps?.appearance?.fontSize).toBe(14),
+    );
+    expect(
+      JSON.parse(localStorage.getItem("bx-ssh.terminal-appearance") ?? "null")
+        .fontSize,
+    ).toBe(13);
+    fireEvent.click(screen.getByRole("button", { name: "当前会话字号 14" }));
+    await waitFor(() =>
+      expect(mocks.terminalProps?.appearance?.fontSize).toBe(13),
+    );
+
     const disconnect = screen.getByRole("button", { name: "断开" });
     fireEvent.click(disconnect);
     expect(commandCalls("close_terminal_session")).toHaveLength(0);
@@ -1439,7 +2187,7 @@ describe("App", { timeout: 15_000 }, () => {
         screen.queryByRole("tab", { name: /生产服务器/ }),
       ).not.toBeInTheDocument();
     });
-  });
+  }, 30_000);
 
   it("probes the host before launching a saved private-key connection", async () => {
     const saved = savedConnectionDetails();

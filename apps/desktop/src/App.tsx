@@ -9,15 +9,29 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import type { TFunction } from "i18next";
-import { Button, Checkbox, Input, InputNumber, Segmented, Tooltip } from "antd";
 import {
-  Circle,
+  open as openFileDialog,
+  save as saveFileDialog,
+} from "@tauri-apps/plugin-dialog";
+import type { TFunction } from "i18next";
+import {
+  Button,
+  Checkbox,
+  Dropdown,
+  Input,
+  InputNumber,
+  Segmented,
+  Tooltip,
+  type MenuProps,
+} from "antd";
+import {
   CircleX,
   ChevronDown,
   ChevronRight,
+  ClipboardPaste,
   Copy,
+  EllipsisVertical,
+  Eraser,
   FilePenLine,
   FileInput,
   Fingerprint,
@@ -26,18 +40,23 @@ import {
   History,
   MoveDown,
   MoveUp,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   PlugZap,
   RefreshCw,
+  RotateCcw,
   Search,
   ScanSearch,
   Server,
+  Settings,
   SquareTerminal,
   Star,
+  TextSelect,
   Trash2,
   Unplug,
+  Wifi,
+  WifiOff,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -52,25 +71,48 @@ import {
   type ConnectionLaunchStep,
 } from "./components/ConnectionLaunchDialog";
 import { ConnectionWorkspaceEmptyState } from "./components/ConnectionWorkspaceEmptyState";
+import { KeyManagerDialog } from "./components/KeyManagerDialog";
 import { OpenSshImportDialog } from "./components/OpenSshImportDialog";
-import { SessionTabBar, type SessionTab } from "./components/SessionTabBar";
+import {
+  SessionTabBar,
+  type SessionTab,
+  type SessionTabStatus,
+} from "./components/SessionTabBar";
+import { SettingsView } from "./components/SettingsView";
 import {
   TerminalPane,
   type TerminalHandle,
   type TerminalViewport,
 } from "./components/TerminalPane";
+import { shouldSkipApplicationShortcut } from "./components/terminalKeyboard";
+import {
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
+  type TerminalAppearancePreferences,
+} from "./components/terminalAppearance";
+import {
+  parseExternalHttpLink,
+  terminalPasteDetails,
+  type ExternalHttpLink,
+  type TerminalPasteDetails,
+} from "./components/terminalSecurity";
 import {
   AppDialog,
   EmptyState,
   FeedbackNotice,
   LoadingState,
 } from "./components/Feedback";
-import { SftpPane, type SftpTransferResult } from "./components/SftpPane";
+import {
+  SftpPane,
+  type SftpConflictDetails,
+  type SftpTransferResult,
+} from "./components/SftpPane";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { IpcError, ipc } from "./ipc/client";
 import type {
   AppInfo,
   AppMenuAction,
+  ApplicationSettings,
   AuthMethod,
   ConnectionCatalog,
   ConnectionConfig,
@@ -80,14 +122,24 @@ import type {
   ConnectionSettings,
   ExitImpact,
   HostKeyInfo,
+  KeyboardInteractiveEvent,
+  LocalFileEntry,
+  LocalDirectoryListing,
   OpenSshImportPreview,
   OpenSshImportRequest,
   RemoteDirectoryListing,
+  SftpConflictAction,
+  SftpTransferProgress,
+  RemoteFileEntry,
   SshConnectionEvent,
   SshConnectionStage,
   TerminalEvent,
 } from "./ipc/bindings";
 import { useUiPreferences } from "./ui/preferenceContext";
+import {
+  initialGlobalSettings,
+  terminalAppearanceFromSettings,
+} from "./ui/applicationSettings";
 
 type ConnectionState =
   | "idle"
@@ -114,6 +166,29 @@ interface ConnectionSearchResult {
   matchedFields: ConnectionSearchField[];
 }
 
+interface PendingTerminalPaste extends TerminalPasteDetails {
+  text: string;
+}
+
+interface SessionTerminalFontOverride {
+  fontSize: number;
+  sessionKey: string;
+}
+
+interface SftpNavigationHistory {
+  back: string[];
+  forward: string[];
+}
+
+interface PendingSftpTransfer {
+  direction: "upload" | "download";
+  localPath: string;
+  remotePath: string;
+  isDirectory: boolean;
+}
+
+type SftpNavigationIntent = "push" | "back" | "forward" | "refresh";
+
 const fallbackInfo: AppInfo = {
   name: "BX SSH",
   version: "0.1.0",
@@ -134,16 +209,31 @@ const DEFAULT_CONNECTION_SETTINGS: ConnectionSettings = {
 const MEMORY_USAGE_RECOVERY_DELAY_MS = 60_000;
 const EXIT_REQUESTED_EVENT = "app-exit-requested";
 const APP_MENU_ACTION_EVENT = "app-menu-action";
+const SFTP_TRANSFER_PROGRESS_EVENT = "sftp-transfer-progress";
 const SIDEBAR_WIDTH_MIN = 200;
 const SIDEBAR_WIDTH_MAX = 420;
-const SIDEBAR_WIDTH_DEFAULT = 240;
+const SIDEBAR_WIDTH_DEFAULT = 228;
 const SIDEBAR_WIDTH_STORAGE_KEY = "bx-ssh.sidebar-width";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "bx-ssh.sidebar-collapsed";
 
 export function App() {
   const { t } = useTranslation();
-  const { language } = useUiPreferences();
+  const {
+    language,
+    setLanguage,
+    setTerminalAppearance,
+    setThemeMode,
+    terminalAppearance,
+    themeMode,
+  } = useUiPreferences();
   const [appInfo, setAppInfo] = useState(fallbackInfo);
+  const [globalSettings, setGlobalSettings] = useState(() =>
+    initialGlobalSettings(language, themeMode, terminalAppearance),
+  );
+  const [globalSettingsLoading, setGlobalSettingsLoading] = useState(true);
+  const [globalSettingsSaving, setGlobalSettingsSaving] = useState(false);
+  const [globalSettingsError, setGlobalSettingsError] = useState<string>();
+  const [globalSettingsNotice, setGlobalSettingsNotice] = useState<string>();
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(22);
   const [username, setUsername] = useState("");
@@ -160,21 +250,58 @@ export function App() {
   const [connectionStage, setConnectionStage] =
     useState<SshConnectionStage | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [terminalSelection, setTerminalSelection] = useState("");
+  const [sessionTerminalFontOverride, setSessionTerminalFontOverride] =
+    useState<SessionTerminalFontOverride | null>(null);
+  const [terminalClipboardPending, setTerminalClipboardPending] =
+    useState(false);
+  const [terminalInteractionError, setTerminalInteractionError] = useState<
+    string | null
+  >(null);
+  const [pendingTerminalPaste, setPendingTerminalPaste] =
+    useState<PendingTerminalPaste | null>(null);
+  const [externalTerminalLink, setExternalTerminalLink] =
+    useState<ExternalHttpLink | null>(null);
+  const [externalLinkPending, setExternalLinkPending] = useState(false);
+  const [externalLinkError, setExternalLinkError] = useState<string | null>(
+    null,
+  );
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("terminal");
   const [connectionListMode, setConnectionListMode] =
     useState<ConnectionListMode>("connections");
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] =
     useState(readSidebarCollapsed);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [keyManagerOpen, setKeyManagerOpen] = useState(false);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [sftpSessionId, setSftpSessionId] = useState<string | null>(null);
   const [sftpDirectory, setSftpDirectory] =
     useState<RemoteDirectoryListing | null>(null);
+  const [localDirectory, setLocalDirectory] =
+    useState<LocalDirectoryListing | null>(null);
+  const [localBusy, setLocalBusy] = useState(false);
+  const [sftpNavigation, setSftpNavigation] = useState<SftpNavigationHistory>({
+    back: [],
+    forward: [],
+  });
   const [sftpBusy, setSftpBusy] = useState(false);
   const [sftpTransferActive, setSftpTransferActive] = useState(false);
+  const [sftpTransferId, setSftpTransferId] = useState<string | null>(null);
   const [sftpTransferResult, setSftpTransferResult] =
     useState<SftpTransferResult | null>(null);
+  const [sftpTransferNotice, setSftpTransferNotice] = useState<string | null>(
+    null,
+  );
+  const [sftpTransferProgress, setSftpTransferProgress] =
+    useState<SftpTransferProgress | null>(null);
+  const [sftpRetryTransfer, setSftpRetryTransfer] =
+    useState<PendingSftpTransfer | null>(null);
+  const [sftpConflict, setSftpConflict] = useState<SftpConflictDetails | null>(
+    null,
+  );
   const [sessionCloseOpen, setSessionCloseOpen] = useState(false);
+  const [reconnectConfirmOpen, setReconnectConfirmOpen] = useState(false);
   const [sessionClosePending, setSessionClosePending] = useState(false);
   const [sessionCloseError, setSessionCloseError] = useState<string | null>(
     null,
@@ -219,8 +346,16 @@ export function App() {
   const [activeSessionTab, setActiveSessionTab] = useState<SessionTab | null>(
     null,
   );
+  const [sessionTabs, setSessionTabs] = useState<SessionTab[]>([]);
   const [connectionLaunchStep, setConnectionLaunchStep] =
     useState<ConnectionLaunchStep>();
+  const [keyboardInteractivePrompt, setKeyboardInteractivePrompt] = useState<
+    Extract<KeyboardInteractiveEvent, { type: "prompt" }> | undefined
+  >();
+  const [
+    keyboardInteractiveResponsePending,
+    setKeyboardInteractiveResponsePending,
+  ] = useState(false);
   const [launchCredentialRef, setLaunchCredentialRef] = useState<string | null>(
     null,
   );
@@ -258,6 +393,7 @@ export function App() {
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const terminalRef = useRef<TerminalHandle>(null);
+  const terminalClipboardPendingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(null);
   const loadedConnectionIdRef = useRef<string | null>(null);
   const sidebarResizeRef = useRef<{
@@ -265,15 +401,22 @@ export function App() {
     startWidth: number;
   } | null>(null);
   const sftpSessionIdRef = useRef<string | null>(null);
+  const localDirectoryRef = useRef<LocalDirectoryListing | null>(null);
   const inputQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resizeTimerRef = useRef<number | null>(null);
   const memoryUsageTimerRef = useRef<number | null>(null);
   const connectionAttemptRef = useRef(0);
   const activeConnectionAttemptIdRef = useRef<string | null>(null);
   const connectionFlowPendingRef = useRef(false);
+  const terminalSessionIdsRef = useRef(new Map<string, string>());
   const sessionTabSequenceRef = useRef(0);
   const sftpOperationGenerationRef = useRef(0);
+  const localOperationGenerationRef = useRef(0);
+  const localDirectoryLoadRef = useRef(false);
+  const pendingSftpTransferRef = useRef<PendingSftpTransfer | null>(null);
   const sessionCloseCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const terminalPasteCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const externalLinkCancelButtonRef = useRef<HTMLButtonElement>(null);
   const exitCancelButtonRef = useRef<HTMLButtonElement>(null);
   const deleteCancelButtonRef = useRef<HTMLButtonElement>(null);
   const connectionStateRef = useRef<ConnectionState>("idle");
@@ -281,6 +424,73 @@ export function App() {
   const localizedErrorText = useCallback(
     (error: unknown) => errorText(error, t),
     [t],
+  );
+  const applyApplicationSettings = useCallback(
+    (settings: ApplicationSettings) => {
+      setLanguage(settings.language);
+      setThemeMode(settings.themeMode);
+      setTerminalAppearance(terminalAppearanceFromSettings(settings));
+    },
+    [setLanguage, setTerminalAppearance, setThemeMode],
+  );
+
+  const visibleSessionTabs = useMemo(() => {
+    if (!activeSessionTab) return sessionTabs;
+    return sessionTabs.map((tab) =>
+      tab.clientId === activeSessionTab.clientId
+        ? {
+            ...tab,
+            status: connectionState as SessionTabStatus,
+            statusLabel: connectionLabel(connectionState, connectionStage, t),
+          }
+        : tab,
+    );
+  }, [activeSessionTab, connectionStage, connectionState, sessionTabs, t]);
+
+  const renameSessionTab = (tab: SessionTab, name: string) => {
+    setSessionTabs((current) =>
+      current.map((item) =>
+        item.clientId === tab.clientId ? { ...item, name } : item,
+      ),
+    );
+    setActiveSessionTab((current) =>
+      current?.clientId === tab.clientId ? { ...current, name } : current,
+    );
+  };
+
+  const moveSessionTab = (tab: SessionTab, direction: "left" | "right") => {
+    setSessionTabs((current) => {
+      const index = current.findIndex((item) => item.clientId === tab.clientId);
+      const target = direction === "left" ? index - 1 : index + 1;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const updated = [...current];
+      [updated[index], updated[target]] = [updated[target], updated[index]];
+      return updated;
+    });
+  };
+
+  const selectSessionTab = (tab: SessionTab) => {
+    if (tab.clientId === activeSessionTab?.clientId) return;
+    setActiveSessionTab(tab);
+    setWorkspaceMode("terminal");
+    setLoadedConnectionId(tab.connectionId);
+    loadedConnectionIdRef.current = tab.connectionId;
+    setConnectionState(tab.status);
+    setConnectionStage(null);
+    setErrorMessage(null);
+  };
+  const sessionTerminalFontSize =
+    sessionTerminalFontOverride !== null &&
+    activeSessionTab !== null &&
+    sessionTerminalFontOverride.sessionKey === activeSessionTab.clientId
+      ? sessionTerminalFontOverride.fontSize
+      : terminalAppearance.fontSize;
+  const effectiveTerminalAppearance = useMemo<TerminalAppearancePreferences>(
+    () => ({
+      ...terminalAppearance,
+      fontSize: sessionTerminalFontSize,
+    }),
+    [sessionTerminalFontSize, terminalAppearance],
   );
 
   const loadConnectionCatalog = useCallback(async () => {
@@ -436,6 +646,39 @@ export function App() {
     let active = true;
 
     void ipc
+      .getGlobalSettings()
+      .then((snapshot) => {
+        if (!active || !snapshot) return;
+        setGlobalSettingsError(undefined);
+        if (snapshot.applicationInitialized) {
+          setGlobalSettings(snapshot);
+          applyApplicationSettings(snapshot.application);
+        } else {
+          setGlobalSettings((current) => ({
+            ...snapshot,
+            application: current.application,
+          }));
+        }
+        if (!loadedConnectionIdRef.current) {
+          setConnectionSettings(snapshot.connection);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) setGlobalSettingsError(localizedErrorText(error));
+      })
+      .finally(() => {
+        if (active) setGlobalSettingsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [applyApplicationSettings, localizedErrorText]);
+
+  useEffect(() => {
+    let active = true;
+
+    void ipc
       .listConnections()
       .then((catalog) => {
         if (active) {
@@ -490,7 +733,25 @@ export function App() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (shouldSkipApplicationShortcut(event)) return;
       if (!event.ctrlKey || event.altKey || event.metaKey) return;
+
+      const key = event.key.toLowerCase();
+
+      if (!event.shiftKey && key === "n") {
+        event.preventDefault();
+        setConnectionEditorInitialValue(undefined);
+        setConnectionEditorError(null);
+        setConnectionEditorNotice(undefined);
+        setConnectionEditorOpen(true);
+        return;
+      }
+
+      if (!event.shiftKey && key === "b") {
+        event.preventDefault();
+        setSidebarCollapsed((current) => !current);
+        return;
+      }
 
       if (!event.shiftKey && (event.key === "1" || event.key === "2")) {
         event.preventDefault();
@@ -499,10 +760,14 @@ export function App() {
       }
 
       if (!event.shiftKey) return;
-      if (event.key.toLowerCase() === "u") {
+      if (key === "f") {
+        if (workspaceMode !== "terminal" || !activeSessionTab) return;
+        event.preventDefault();
+        terminalRef.current?.openSearch();
+      } else if (key === "u") {
         event.preventDefault();
         setUpdateRequestId((current) => current + 1);
-      } else if (event.key.toLowerCase() === "q") {
+      } else if (key === "q") {
         event.preventDefault();
         void getCurrentWindow()
           .close()
@@ -512,16 +777,61 @@ export function App() {
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [selectWorkspaceMode]);
+  }, [activeSessionTab, selectWorkspaceMode, workspaceMode]);
 
   useEffect(() => {
     let disposed = false;
     let removeListener: (() => void) | undefined;
 
     void listen<ExitImpact>(EXIT_REQUESTED_EVENT, (event) => {
+      if (!globalSettings.application.confirmClose) {
+        void ipc.confirmAppExit().catch((error) => {
+          setExitImpact(event.payload);
+          setExitPending(false);
+          setExitError(localizedErrorText(error));
+        });
+        return;
+      }
       setExitImpact(event.payload);
       setExitPending(false);
       setExitError(null);
+    })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten();
+        } else {
+          removeListener = unlisten;
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      removeListener?.();
+    };
+  }, [globalSettings.application.confirmClose, localizedErrorText]);
+
+  useEffect(() => {
+    let disposed = false;
+    let removeListener: (() => void) | undefined;
+
+    void listen<SftpTransferProgress>(SFTP_TRANSFER_PROGRESS_EVENT, (event) => {
+      if (disposed) return;
+      const progress = event.payload;
+      if (progress.transferId) {
+        setSftpTransferId(progress.transferId);
+      }
+      setSftpTransferProgress((current) => {
+        if (
+          current?.transferId &&
+          progress.transferId &&
+          current.transferId === progress.transferId &&
+          progress.bytesTransferred < current.bytesTransferred
+        ) {
+          return current;
+        }
+        return progress;
+      });
     })
       .then((unlisten) => {
         if (disposed) {
@@ -561,6 +871,7 @@ export function App() {
   useEffect(
     () => () => {
       connectionAttemptRef.current += 1;
+      localOperationGenerationRef.current += 1;
       const activeAttemptId = activeConnectionAttemptIdRef.current;
       if (activeAttemptId) {
         void ipc.cancelSshConnection(activeAttemptId);
@@ -574,6 +885,11 @@ export function App() {
       const activeSessionId = sessionIdRef.current;
       if (activeSessionId) {
         void ipc.closeTerminalSession(activeSessionId);
+      }
+      const knownSessionIds = new Set(terminalSessionIdsRef.current.values());
+      if (activeSessionId) knownSessionIds.delete(activeSessionId);
+      for (const knownSessionId of knownSessionIds) {
+        void ipc.closeTerminalSession(knownSessionId);
       }
       const activeSftpSessionId = sftpSessionIdRef.current;
       if (activeSftpSessionId) {
@@ -636,11 +952,7 @@ export function App() {
 
   const connectionLaunchBlocked = () =>
     connectionFlowPendingRef.current ||
-    ["probing", "connecting", "connected", "closing"].includes(
-      connectionStateRef.current,
-    ) ||
-    sessionIdRef.current !== null ||
-    sftpSessionIdRef.current !== null;
+    ["probing", "connecting", "closing"].includes(connectionStateRef.current);
 
   const beginConnectionFlow = async (
     config: ConnectionConfig,
@@ -652,12 +964,21 @@ export function App() {
 
     const request = ++connectionAttemptRef.current;
     connectionFlowPendingRef.current = true;
+    const duplicateCount = sessionTabs.filter(
+      (item) => item.connectionId === config.id,
+    ).length;
     const tab: SessionTab = {
       clientId: `session-tab-${++sessionTabSequenceRef.current}`,
       connectionId: config.id,
       endpoint: `${config.username}@${config.host}:${config.port}`,
-      name: config.name,
+      name:
+        duplicateCount > 0
+          ? `${config.name} (${duplicateCount + 1})`
+          : config.name,
+      status: "probing",
+      statusLabel: t("status.probing"),
     };
+    setSessionTabs((current) => [...current, tab]);
     setActiveSessionTab(tab);
     setWorkspaceMode("terminal");
     setHost(config.host);
@@ -670,20 +991,11 @@ export function App() {
     setLaunchCredentialRef(config.credentialRef);
     setLaunchCredentialMode(config.credentialRef ? "vault" : "ask");
     setLaunchCredentialPassword(undefined);
+    setKeyboardInteractivePrompt(undefined);
+    setKeyboardInteractiveResponsePending(false);
     setLoadedConnectionId(config.id);
     loadedConnectionIdRef.current = config.id;
     resetHostTrust();
-
-    if (config.authMethod === "keyboardInteractive") {
-      setConnectionState("failed");
-      setErrorMessage(
-        t("connectionAuthentication.unsupported", {
-          method: connectionAuthLabel(config.authMethod, t),
-        }),
-      );
-      connectionFlowPendingRef.current = false;
-      return;
-    }
 
     const result = await probeHost(config.host, config.port, settings);
     if (connectionAttemptRef.current === request && result) {
@@ -703,7 +1015,13 @@ export function App() {
         connectionFlowPendingRef.current = false;
         return;
       }
-      setConnectionLaunchStep(result.known ? "password" : "fingerprint");
+      setConnectionLaunchStep(
+        result.known
+          ? config.authMethod === "keyboardInteractive"
+            ? "keyboardInteractive"
+            : "password"
+          : "fingerprint",
+      );
     } else {
       connectionFlowPendingRef.current = false;
     }
@@ -954,6 +1272,45 @@ export function App() {
     }
   };
 
+  const reconnectSession = async () => {
+    if (
+      connectionState !== "disconnected" ||
+      !activeSessionTab ||
+      connectionFlowPendingRef.current
+    ) {
+      return;
+    }
+
+    const connectionId =
+      loadedConnectionIdRef.current ?? activeSessionTab.connectionId;
+    const saved = connectionId
+      ? connectionCatalog.connections.find(
+          (item) => item.config.id === connectionId,
+        )
+      : undefined;
+    if (saved) {
+      await loadSavedConnection(saved);
+      return;
+    }
+
+    // Unsaved direct connections retain only the endpoint and host trust.
+    // Authentication is deliberately requested again after a disconnect.
+    setConnectionState(hostKey ? "ready" : "idle");
+    setConnectionLaunchStep(
+      launchAuthMethod === "keyboardInteractive"
+        ? "keyboardInteractive"
+        : "password",
+    );
+  };
+
+  const requestReconnect = () => {
+    if (globalSettings.application.reconnectConfirmation) {
+      setReconnectConfirmOpen(true);
+      return;
+    }
+    void reconnectSession();
+  };
+
   const recordLoadedConnectionSuccess = async () => {
     const id = loadedConnectionIdRef.current;
     if (!id) return;
@@ -1034,7 +1391,7 @@ export function App() {
   };
 
   const beginSshConnectionAttempt = () => {
-    const attemptId = createConnectionAttemptId();
+    const attemptId = createRandomOperationId();
     activeConnectionAttemptIdRef.current = attemptId;
     setConnectionStage("created");
     return attemptId;
@@ -1075,11 +1432,16 @@ export function App() {
   ): Promise<boolean> => {
     const credential = credentialOverride ?? password;
     const privateKeyAuth = launchAuthMethod === "privateKey";
+    const keyboardInteractiveAuth = launchAuthMethod === "keyboardInteractive";
     if (
       !hostKey ||
       !trusted ||
       !username ||
-      (privateKeyAuth ? !launchKeyReferenceId : !credential)
+      (privateKeyAuth
+        ? !launchKeyReferenceId
+        : keyboardInteractiveAuth
+          ? false
+          : !credential)
     ) {
       return false;
     }
@@ -1090,6 +1452,8 @@ export function App() {
 
     setConnectionState("connecting");
     setErrorMessage(null);
+    setKeyboardInteractivePrompt(undefined);
+    setKeyboardInteractiveResponsePending(false);
     terminalRef.current?.reset();
 
     const attempt = ++connectionAttemptRef.current;
@@ -1139,7 +1503,7 @@ export function App() {
       setSessionCloseError(null);
       if (event.type === "error") {
         setErrorMessage(commandErrorText(event.code, event.message, t));
-        setConnectionState("failed");
+        setConnectionState("disconnected");
         return;
       }
 
@@ -1162,11 +1526,26 @@ export function App() {
       }
     };
 
+    const handleKeyboardInteractiveEvent = (
+      event: KeyboardInteractiveEvent,
+    ) => {
+      if (
+        connectionAttemptRef.current !== attempt ||
+        event.type !== "prompt" ||
+        event.attemptId !== connectionAttemptId
+      ) {
+        return;
+      }
+      setKeyboardInteractiveResponsePending(false);
+      setKeyboardInteractivePrompt(event);
+    };
+
     const viewport = terminalRef.current?.viewport() ?? fallbackViewport;
 
     try {
       await enableLowMemoryUsage();
       const channels = {
+        onAuth: handleKeyboardInteractiveEvent,
         onState: (event: SshConnectionEvent) =>
           handleSshConnectionEvent(connectionAttemptId, event),
         onEvent: handleTerminalEvent,
@@ -1187,19 +1566,32 @@ export function App() {
             },
             channels,
           )
-        : await ipc.startPasswordShell(
-            {
-              attemptId: connectionAttemptId,
-              host,
-              port,
-              username,
-              password: credential,
-              expectedFingerprint: hostKey.fingerprintSha256,
-              settings: connectionSettings,
-              ...viewport,
-            },
-            channels,
-          );
+        : keyboardInteractiveAuth
+          ? await ipc.startKeyboardInteractiveShell(
+              {
+                attemptId: connectionAttemptId,
+                host,
+                port,
+                username,
+                expectedFingerprint: hostKey.fingerprintSha256,
+                settings: connectionSettings,
+                ...viewport,
+              },
+              channels,
+            )
+          : await ipc.startPasswordShell(
+              {
+                attemptId: connectionAttemptId,
+                host,
+                port,
+                username,
+                password: credential,
+                expectedFingerprint: hostKey.fingerprintSha256,
+                settings: connectionSettings,
+                ...viewport,
+              },
+              channels,
+            );
       acknowledgementSessionId = response.sessionId;
       queueAcknowledgement(processedSequence);
 
@@ -1211,6 +1603,8 @@ export function App() {
       }
 
       setPassword("");
+      setKeyboardInteractivePrompt(undefined);
+      setKeyboardInteractiveResponsePending(false);
       if (ended) {
         void ipc
           .closeTerminalSession(response.sessionId)
@@ -1219,6 +1613,12 @@ export function App() {
       }
 
       sessionIdRef.current = response.sessionId;
+      if (activeSessionTab) {
+        terminalSessionIdsRef.current.set(
+          activeSessionTab.clientId,
+          response.sessionId,
+        );
+      }
       scheduleNormalMemoryUsage();
       setSessionId(response.sessionId);
       setHostKey(response.hostKey);
@@ -1231,6 +1631,8 @@ export function App() {
         return false;
       }
       setPassword("");
+      setKeyboardInteractivePrompt(undefined);
+      setKeyboardInteractiveResponsePending(false);
       setErrorMessage(localizedErrorText(error));
       setConnectionState("failed");
       return false;
@@ -1260,6 +1662,11 @@ export function App() {
     setConnectionState("connecting");
     setErrorMessage(null);
     setSftpTransferResult(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
+    setSftpTransferNotice(null);
+    setSftpConflict(null);
+    pendingSftpTransferRef.current = null;
     terminalRef.current?.reset();
     const attempt = ++connectionAttemptRef.current;
     const connectionAttemptId = beginSshConnectionAttempt();
@@ -1304,6 +1711,7 @@ export function App() {
       scheduleNormalMemoryUsage();
       setSftpSessionId(response.sessionId);
       setSftpDirectory(response.directory);
+      setSftpNavigation({ back: [], forward: [] });
       setHostKey(response.hostKey);
       setConnectionState("connected");
       void recordLoadedConnectionSuccess();
@@ -1364,7 +1772,11 @@ export function App() {
     setFingerprintTrustPending(true);
     void persistHostFingerprint()
       .then(() => {
-        setConnectionLaunchStep("password");
+        setConnectionLaunchStep(
+          launchAuthMethod === "keyboardInteractive"
+            ? "keyboardInteractive"
+            : "password",
+        );
       })
       .catch((error: unknown) => {
         setErrorMessage(localizedErrorText(error));
@@ -1383,6 +1795,8 @@ export function App() {
     setLaunchAuthMethod("password");
     setLaunchKeyReferenceId(null);
     setLaunchCredentialPassword(undefined);
+    setKeyboardInteractivePrompt(undefined);
+    setKeyboardInteractiveResponsePending(false);
     setPassword("");
     setTrusted(false);
     setHostFingerprintKnown(false);
@@ -1390,9 +1804,24 @@ export function App() {
     setHostKey(null);
     setConnectionState("idle");
     setConnectionStage(null);
-    setActiveSessionTab(null);
-    setLoadedConnectionId(null);
-    loadedConnectionIdRef.current = null;
+    const cancelledTabId = activeSessionTab?.clientId;
+    const remainingTabs = cancelledTabId
+      ? sessionTabs.filter((tab) => tab.clientId !== cancelledTabId)
+      : sessionTabs;
+    if (cancelledTabId) terminalSessionIdsRef.current.delete(cancelledTabId);
+    const nextTab = remainingTabs.at(-1) ?? null;
+    setSessionTabs(remainingTabs);
+    setActiveSessionTab(nextTab);
+    const nextSessionId = nextTab
+      ? (terminalSessionIdsRef.current.get(nextTab.clientId) ?? null)
+      : null;
+    sessionIdRef.current = nextSessionId;
+    setSessionId(nextSessionId);
+    setLoadedConnectionId(nextTab?.connectionId ?? null);
+    loadedConnectionIdRef.current = nextTab?.connectionId ?? null;
+    if (nextTab) {
+      setConnectionState(nextSessionId ? nextTab.status : "disconnected");
+    }
     setConnectionSettings(DEFAULT_CONNECTION_SETTINGS);
   };
 
@@ -1448,12 +1877,33 @@ export function App() {
     }
   };
 
+  const submitKeyboardInteractive = (responses: string[]) => {
+    const attemptId = activeConnectionAttemptIdRef.current;
+    if (!attemptId || keyboardInteractiveResponsePending) {
+      return;
+    }
+    setKeyboardInteractiveResponsePending(true);
+    void ipc.respondKeyboardInteractive(attemptId, responses).catch((error) => {
+      if (activeConnectionAttemptIdRef.current === attemptId) {
+        setKeyboardInteractiveResponsePending(false);
+        setErrorMessage(localizedErrorText(error));
+      }
+    });
+  };
+
   const resetSessionWorkspace = () => {
     connectionAttemptRef.current += 1;
     connectionFlowPendingRef.current = false;
     sftpOperationGenerationRef.current += 1;
     setConnectionLaunchStep(undefined);
     setLaunchCredentialPassword(undefined);
+    setKeyboardInteractivePrompt(undefined);
+    setKeyboardInteractiveResponsePending(false);
+    setPendingTerminalPaste(null);
+    setExternalTerminalLink(null);
+    setExternalLinkError(null);
+    setTerminalInteractionError(null);
+    setTerminalSelection("");
     setConnectionState("idle");
     setConnectionStage(null);
     sessionIdRef.current = null;
@@ -1461,15 +1911,37 @@ export function App() {
     sftpSessionIdRef.current = null;
     setSftpSessionId(null);
     setSftpDirectory(null);
+    setSftpNavigation({ back: [], forward: [] });
     setSftpBusy(false);
     setSftpTransferActive(false);
+    setSftpTransferId(null);
     setSftpTransferResult(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
+    setSftpTransferNotice(null);
+    setSftpConflict(null);
+    pendingSftpTransferRef.current = null;
     setSessionCloseOpen(false);
     setSessionClosePending(false);
     setSessionCloseError(null);
-    setActiveSessionTab(null);
-    setLoadedConnectionId(null);
-    loadedConnectionIdRef.current = null;
+    const closingTabId = activeSessionTab?.clientId;
+    const remainingTabs = closingTabId
+      ? sessionTabs.filter((tab) => tab.clientId !== closingTabId)
+      : sessionTabs;
+    if (closingTabId) terminalSessionIdsRef.current.delete(closingTabId);
+    const nextTab = remainingTabs.at(-1) ?? null;
+    setSessionTabs(remainingTabs);
+    setActiveSessionTab(nextTab);
+    const nextSessionId = nextTab
+      ? (terminalSessionIdsRef.current.get(nextTab.clientId) ?? null)
+      : null;
+    sessionIdRef.current = nextSessionId;
+    setSessionId(nextSessionId);
+    setLoadedConnectionId(nextTab?.connectionId ?? null);
+    loadedConnectionIdRef.current = nextTab?.connectionId ?? null;
+    if (nextTab) {
+      setConnectionState(nextSessionId ? nextTab.status : "disconnected");
+    }
     setHostKey(null);
     setTrusted(false);
     setPassword("");
@@ -1488,8 +1960,28 @@ export function App() {
       return;
     }
 
+    if (!globalSettings.application.confirmClose) {
+      void confirmSessionClose();
+      return;
+    }
+
     setSessionCloseError(null);
     setSessionCloseOpen(true);
+  };
+
+  const closeSessionTab = (tab: SessionTab) => {
+    if (tab.clientId === activeSessionTab?.clientId) {
+      requestSessionClose();
+      return;
+    }
+    const terminalSessionId = terminalSessionIdsRef.current.get(tab.clientId);
+    if (terminalSessionId) {
+      terminalSessionIdsRef.current.delete(tab.clientId);
+      void ipc.closeTerminalSession(terminalSessionId).catch(() => undefined);
+    }
+    setSessionTabs((current) =>
+      current.filter((item) => item.clientId !== tab.clientId),
+    );
   };
 
   const confirmSessionClose = async () => {
@@ -1562,11 +2054,15 @@ export function App() {
     setSessionCloseError(null);
   };
 
-  const navigateSftp = async (path: string) => {
+  const navigateSftp = async (
+    path: string,
+    intent: SftpNavigationIntent = "push",
+  ) => {
     const activeSessionId = sftpSessionIdRef.current;
     if (!activeSessionId) {
       return;
     }
+    const currentPath = sftpDirectory?.path ?? null;
     const operationGeneration = sftpOperationGenerationRef.current;
 
     setSftpBusy(true);
@@ -1580,6 +2076,37 @@ export function App() {
         return;
       }
       setSftpDirectory(directory);
+      if (intent !== "refresh") {
+        setSftpNavigation((current) => {
+          if (intent === "back") {
+            const previousPath = current.back.at(-1);
+            if (!previousPath || !currentPath || previousPath === currentPath) {
+              return current;
+            }
+            return {
+              back: current.back.slice(0, -1),
+              forward: [...current.forward, currentPath],
+            };
+          }
+          if (intent === "forward") {
+            const nextPath = current.forward.at(-1);
+            if (!nextPath || !currentPath || nextPath === currentPath) {
+              return current;
+            }
+            return {
+              back: [...current.back, currentPath],
+              forward: current.forward.slice(0, -1),
+            };
+          }
+          if (!currentPath || directory.path === currentPath) {
+            return current;
+          }
+          return {
+            back: [...current.back, currentPath],
+            forward: [],
+          };
+        });
+      }
     } catch (error) {
       if (operationGeneration === sftpOperationGenerationRef.current) {
         setErrorMessage(localizedErrorText(error));
@@ -1591,9 +2118,71 @@ export function App() {
     }
   };
 
-  const refreshSftp = async () => {
-    await navigateSftp(sftpDirectory?.path ?? ".");
+  const goBackSftp = async () => {
+    const path = sftpNavigation.back.at(-1);
+    if (path) {
+      await navigateSftp(path, "back");
+    }
   };
+
+  const goForwardSftp = async () => {
+    const path = sftpNavigation.forward.at(-1);
+    if (path) {
+      await navigateSftp(path, "forward");
+    }
+  };
+
+  const refreshSftp = async () => {
+    await navigateSftp(sftpDirectory?.path ?? ".", "refresh");
+  };
+
+  const navigateLocal = useCallback(
+    async (path: string) => {
+      const operationGeneration = ++localOperationGenerationRef.current;
+      setLocalBusy(true);
+      setErrorMessage(null);
+      try {
+        const directory = await ipc.listLocalDirectory(path);
+        if (operationGeneration !== localOperationGenerationRef.current) {
+          return;
+        }
+        localDirectoryRef.current = directory;
+        setLocalDirectory(directory);
+      } catch (error) {
+        if (operationGeneration === localOperationGenerationRef.current) {
+          setErrorMessage(localizedErrorText(error));
+        }
+      } finally {
+        if (operationGeneration === localOperationGenerationRef.current) {
+          setLocalBusy(false);
+        }
+      }
+    },
+    [localizedErrorText],
+  );
+
+  const refreshLocal = async () => {
+    await navigateLocal(localDirectory?.path ?? ".");
+  };
+
+  useEffect(() => {
+    if (workspaceMode !== "sftp") {
+      localDirectoryLoadRef.current = false;
+      return;
+    }
+    if (localDirectory || localDirectoryLoadRef.current) {
+      return;
+    }
+    localDirectoryLoadRef.current = true;
+    void navigateLocal(
+      globalSettings.application.sftpDefaultLocalDirectory ?? ".",
+    );
+  }, [
+    globalSettings.application.sftpDefaultLocalDirectory,
+    localDirectory,
+    navigateLocal,
+    workspaceMode,
+  ]);
 
   const uploadSftp = async (localPath: string, remotePath: string) => {
     const activeSessionId = sftpSessionIdRef.current;
@@ -1605,14 +2194,38 @@ export function App() {
     setSftpBusy(true);
     setSftpTransferActive(true);
     setErrorMessage(null);
+    setSftpTransferNotice(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
     setSftpTransferResult(null);
+    setSftpConflict(null);
+    pendingSftpTransferRef.current = null;
+    let source: LocalFileEntry | null = null;
     try {
-      const summary = await ipc.uploadSftpFile(
-        activeSessionId,
-        localPath,
-        remotePath,
-        language,
-      );
+      source = await ipc.statLocalPath(localPath);
+      if (source.kind !== "file" && source.kind !== "directory") {
+        throw new IpcError(
+          "unsupported_transfer_entry",
+          `unsupported local transfer entry: ${localPath}`,
+        );
+      }
+      const transferId =
+        source.kind === "directory" ? createRandomOperationId() : null;
+      setSftpTransferId(transferId);
+      const summary = transferId
+        ? await ipc.uploadSftpDirectory(
+            activeSessionId,
+            transferId,
+            localPath,
+            remotePath,
+            language,
+          )
+        : await ipc.uploadSftpFile(
+            activeSessionId,
+            localPath,
+            remotePath,
+            language,
+          );
       if (
         operationGeneration !== sftpOperationGenerationRef.current ||
         sftpSessionIdRef.current !== activeSessionId
@@ -1633,12 +2246,63 @@ export function App() {
       setSftpDirectory(directory);
     } catch (error) {
       if (operationGeneration === sftpOperationGenerationRef.current) {
-        setErrorMessage(localizedErrorText(error));
+        if (
+          error instanceof IpcError &&
+          error.code === "remote_target_exists"
+        ) {
+          try {
+            const target = await ipc.statSftpPath(activeSessionId, remotePath);
+            if (
+              operationGeneration !== sftpOperationGenerationRef.current ||
+              sftpSessionIdRef.current !== activeSessionId
+            ) {
+              return;
+            }
+            pendingSftpTransferRef.current = {
+              direction: "upload",
+              localPath,
+              remotePath,
+              isDirectory: source?.kind === "directory",
+            };
+            const conflictDetails: SftpConflictDetails = {
+              direction: "upload",
+              sourcePath: source?.path ?? localPath,
+              targetPath: target.path,
+              sourceSize: source?.size ?? 0,
+              sourceModifiedAt: source?.modifiedAt ?? null,
+              targetSize: target.size,
+              targetModifiedAt: target.modifiedAt,
+            };
+            const defaultAction = globalSettings.application.sftpConflictAction;
+            if (defaultAction === "ask") {
+              setSftpConflict(conflictDetails);
+            } else {
+              await resolveSftpConflict(defaultAction, false);
+            }
+          } catch {
+            setErrorMessage(localizedErrorText(error));
+          }
+        } else {
+          if (
+            !isTransferCancellation(error) &&
+            source &&
+            (source.kind === "file" || source.kind === "directory")
+          ) {
+            setSftpRetryTransfer({
+              direction: "upload",
+              localPath,
+              remotePath,
+              isDirectory: source.kind === "directory",
+            });
+          }
+          setErrorMessage(localizedErrorText(error));
+        }
       }
     } finally {
       if (operationGeneration === sftpOperationGenerationRef.current) {
         setSftpBusy(false);
         setSftpTransferActive(false);
+        setSftpTransferId(null);
       }
     }
   };
@@ -1653,14 +2317,38 @@ export function App() {
     setSftpBusy(true);
     setSftpTransferActive(true);
     setErrorMessage(null);
+    setSftpTransferNotice(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
     setSftpTransferResult(null);
+    setSftpConflict(null);
+    pendingSftpTransferRef.current = null;
+    let source: RemoteFileEntry | null = null;
     try {
-      const summary = await ipc.downloadSftpFile(
-        activeSessionId,
-        remotePath,
-        localPath,
-        language,
-      );
+      source = await ipc.statSftpPath(activeSessionId, remotePath);
+      if (source.kind !== "file" && source.kind !== "directory") {
+        throw new IpcError(
+          "unsupported_transfer_entry",
+          `unsupported remote transfer entry: ${remotePath}`,
+        );
+      }
+      const transferId =
+        source.kind === "directory" ? createRandomOperationId() : null;
+      setSftpTransferId(transferId);
+      const summary = transferId
+        ? await ipc.downloadSftpDirectory(
+            activeSessionId,
+            transferId,
+            remotePath,
+            localPath,
+            language,
+          )
+        : await ipc.downloadSftpFile(
+            activeSessionId,
+            remotePath,
+            localPath,
+            language,
+          );
       if (
         operationGeneration !== sftpOperationGenerationRef.current ||
         sftpSessionIdRef.current !== activeSessionId
@@ -1668,16 +2356,285 @@ export function App() {
         return;
       }
       setSftpTransferResult({ direction: "download", summary });
+      const currentLocalPath = localDirectoryRef.current?.path;
+      if (currentLocalPath) {
+        await navigateLocal(currentLocalPath);
+      }
     } catch (error) {
       if (operationGeneration === sftpOperationGenerationRef.current) {
+        if (error instanceof IpcError && error.code === "local_target_exists") {
+          try {
+            const target = await ipc.statLocalPath(localPath);
+            if (
+              operationGeneration !== sftpOperationGenerationRef.current ||
+              sftpSessionIdRef.current !== activeSessionId
+            ) {
+              return;
+            }
+            pendingSftpTransferRef.current = {
+              direction: "download",
+              localPath,
+              remotePath,
+              isDirectory: source?.kind === "directory",
+            };
+            const conflictDetails: SftpConflictDetails = {
+              direction: "download",
+              sourcePath: source?.path ?? remotePath,
+              targetPath: target.path,
+              sourceSize: source?.size ?? 0,
+              sourceModifiedAt: source?.modifiedAt ?? null,
+              targetSize: target.size,
+              targetModifiedAt: target.modifiedAt,
+            };
+            const defaultAction = globalSettings.application.sftpConflictAction;
+            if (defaultAction === "ask") {
+              setSftpConflict(conflictDetails);
+            } else {
+              await resolveSftpConflict(defaultAction, false);
+            }
+          } catch {
+            setErrorMessage(localizedErrorText(error));
+          }
+        } else {
+          if (
+            !isTransferCancellation(error) &&
+            source &&
+            (source.kind === "file" || source.kind === "directory")
+          ) {
+            setSftpRetryTransfer({
+              direction: "download",
+              localPath,
+              remotePath,
+              isDirectory: source.kind === "directory",
+            });
+          }
+          setErrorMessage(localizedErrorText(error));
+        }
+      }
+    } finally {
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setSftpBusy(false);
+        setSftpTransferActive(false);
+        setSftpTransferId(null);
+      }
+    }
+  };
+
+  const resolveSftpConflict = async (
+    action: SftpConflictAction,
+    applyToAll: boolean,
+  ) => {
+    const pending = pendingSftpTransferRef.current;
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!pending || !activeSessionId) {
+      setSftpConflict(null);
+      pendingSftpTransferRef.current = null;
+      return;
+    }
+
+    const operationGeneration = sftpOperationGenerationRef.current;
+    const transferId = pending.isDirectory ? createRandomOperationId() : null;
+    setSftpBusy(true);
+    setSftpTransferActive(true);
+    setSftpTransferId(transferId);
+    setErrorMessage(null);
+    setSftpTransferNotice(null);
+    setSftpTransferProgress(null);
+    setSftpRetryTransfer(null);
+
+    try {
+      // The backend applies the selected action to every conflict in a
+      // directory transfer. The checkbox is intentionally batch-scoped and
+      // never persisted as a global preference.
+      void applyToAll;
+      const summary =
+        pending.direction === "upload"
+          ? transferId
+            ? await ipc.uploadSftpDirectoryWithConflict(
+                activeSessionId,
+                transferId,
+                pending.localPath,
+                pending.remotePath,
+                language,
+                action,
+              )
+            : await ipc.uploadSftpFileWithConflict(
+                activeSessionId,
+                pending.localPath,
+                pending.remotePath,
+                language,
+                action,
+              )
+          : transferId
+            ? await ipc.downloadSftpDirectoryWithConflict(
+                activeSessionId,
+                transferId,
+                pending.remotePath,
+                pending.localPath,
+                language,
+                action,
+              )
+            : await ipc.downloadSftpFileWithConflict(
+                activeSessionId,
+                pending.remotePath,
+                pending.localPath,
+                language,
+                action,
+              );
+
+      if (
+        operationGeneration !== sftpOperationGenerationRef.current ||
+        sftpSessionIdRef.current !== activeSessionId
+      ) {
+        return;
+      }
+
+      const skipped =
+        summary === null ||
+        (action === "skip" &&
+          pending.isDirectory &&
+          "files" in summary &&
+          summary.files === 0 &&
+          summary.directories === 0);
+      if (skipped) {
+        setSftpTransferNotice(t("sftp.transferSkipped"));
+        setSftpTransferResult(null);
+      } else {
+        setSftpTransferResult({ direction: pending.direction, summary });
+      }
+      setSftpConflict(null);
+      pendingSftpTransferRef.current = null;
+
+      if (pending.direction === "upload") {
+        const directory = await ipc.listSftpDirectory(
+          activeSessionId,
+          sftpDirectory?.path ?? ".",
+        );
+        if (
+          operationGeneration !== sftpOperationGenerationRef.current ||
+          sftpSessionIdRef.current !== activeSessionId
+        ) {
+          return;
+        }
+        setSftpDirectory(directory);
+      } else {
+        const currentLocalPath = localDirectoryRef.current?.path;
+        if (currentLocalPath) {
+          await navigateLocal(currentLocalPath);
+        }
+      }
+    } catch (error) {
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        if (!isTransferCancellation(error)) {
+          setSftpRetryTransfer(pending);
+        }
         setErrorMessage(localizedErrorText(error));
       }
     } finally {
       if (operationGeneration === sftpOperationGenerationRef.current) {
         setSftpBusy(false);
         setSftpTransferActive(false);
+        setSftpTransferId(null);
       }
     }
+  };
+
+  const cancelSftpConflict = () => {
+    pendingSftpTransferRef.current = null;
+    setSftpConflict(null);
+    setSftpTransferNotice(null);
+  };
+
+  const cancelSftpTransfer = async () => {
+    const transferId = sftpTransferId;
+    if (!transferId) return;
+    try {
+      await ipc.cancelSftpTransfer(transferId);
+    } catch (error) {
+      setErrorMessage(localizedErrorText(error));
+    }
+  };
+
+  const retrySftpTransfer = async () => {
+    const retry = sftpRetryTransfer;
+    if (!retry) return;
+    setSftpRetryTransfer(null);
+    if (retry.direction === "upload") {
+      await uploadSftp(retry.localPath, retry.remotePath);
+    } else {
+      await downloadSftp(retry.remotePath, retry.localPath);
+    }
+  };
+
+  const runSftpMutation = async (mutation: () => Promise<void>) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    const operationGeneration = sftpOperationGenerationRef.current;
+    setSftpBusy(true);
+    setErrorMessage(null);
+    try {
+      await mutation();
+      const directory = await ipc.listSftpDirectory(
+        activeSessionId,
+        sftpDirectory?.path ?? ".",
+      );
+      if (
+        operationGeneration !== sftpOperationGenerationRef.current ||
+        sftpSessionIdRef.current !== activeSessionId
+      ) {
+        return;
+      }
+      setSftpDirectory(directory);
+    } catch (error) {
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setErrorMessage(localizedErrorText(error));
+      }
+      throw error;
+    } finally {
+      if (operationGeneration === sftpOperationGenerationRef.current) {
+        setSftpBusy(false);
+      }
+    }
+  };
+
+  const createSftpDirectory = async (remotePath: string) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.createSftpDirectory(activeSessionId, remotePath),
+    );
+  };
+
+  const deleteSftpEntry = async (remotePath: string, recursive: boolean) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.deleteSftpEntry(activeSessionId, remotePath, recursive),
+    );
+  };
+
+  const moveSftpEntry = async (sourcePath: string, targetPath: string) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.moveSftpEntry(activeSessionId, sourcePath, targetPath),
+    );
+  };
+
+  const renameSftpEntry = async (sourcePath: string, targetPath: string) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.renameSftpEntry(activeSessionId, sourcePath, targetPath),
+    );
+  };
+
+  const chmodSftpEntry = async (remotePath: string, permissions: number) => {
+    const activeSessionId = sftpSessionIdRef.current;
+    if (!activeSessionId) return;
+    await runSftpMutation(() =>
+      ipc.chmodSftpEntry(activeSessionId, remotePath, permissions),
+    );
   };
 
   const writeTerminal = useCallback(
@@ -1718,6 +2675,132 @@ export function App() {
     [localizedErrorText],
   );
 
+  const copyTerminalSelection = async (selection?: string) => {
+    const text = selection ?? terminalRef.current?.getSelection() ?? "";
+    if (!text) return;
+
+    try {
+      await ipc.writeClipboardText(text);
+      setTerminalInteractionError(null);
+    } catch (error) {
+      setTerminalInteractionError(localizedErrorText(error));
+    }
+  };
+
+  const pasteTerminalText = (text: string) => {
+    if (!sessionIdRef.current || !text) return;
+    terminalRef.current?.paste(text);
+    terminalRef.current?.focus();
+    setTerminalInteractionError(null);
+  };
+
+  const requestTerminalPaste = async () => {
+    const activeSessionId = sessionIdRef.current;
+    if (!activeSessionId || terminalClipboardPendingRef.current) return;
+
+    terminalClipboardPendingRef.current = true;
+    setTerminalClipboardPending(true);
+    setTerminalInteractionError(null);
+    try {
+      const text = await ipc.readClipboardText();
+      if (sessionIdRef.current !== activeSessionId || !text) return;
+      const details = terminalPasteDetails(text);
+      if (
+        details.requiresConfirmation &&
+        globalSettings.application.multilinePasteConfirmation
+      ) {
+        setPendingTerminalPaste({ text, ...details });
+      } else {
+        pasteTerminalText(text);
+      }
+    } catch (error) {
+      setTerminalInteractionError(localizedErrorText(error));
+    } finally {
+      terminalClipboardPendingRef.current = false;
+      setTerminalClipboardPending(false);
+    }
+  };
+
+  const confirmTerminalPaste = () => {
+    const pending = pendingTerminalPaste;
+    setPendingTerminalPaste(null);
+    if (pending) pasteTerminalText(pending.text);
+  };
+
+  const clearTerminalScrollback = () => {
+    terminalRef.current?.clearScrollback();
+    terminalRef.current?.focus();
+    setTerminalSelection("");
+  };
+
+  const resetTerminalState = () => {
+    terminalRef.current?.reset();
+    terminalRef.current?.focus();
+    setTerminalSelection("");
+  };
+
+  const selectAllTerminalContents = () => {
+    terminalRef.current?.selectAll();
+    terminalRef.current?.focus();
+  };
+
+  const adjustSessionTerminalFontSize = (delta: number) => {
+    const sessionKey = activeSessionTab?.clientId;
+    if (!sessionKey) return;
+
+    setSessionTerminalFontOverride((current) => {
+      const currentFontSize =
+        current?.sessionKey === sessionKey
+          ? current.fontSize
+          : terminalAppearance.fontSize;
+      return {
+        sessionKey,
+        fontSize: Math.min(
+          TERMINAL_FONT_SIZE_MAX,
+          Math.max(TERMINAL_FONT_SIZE_MIN, currentFontSize + delta),
+        ),
+      };
+    });
+  };
+
+  const resetSessionTerminalFontSize = () => {
+    setSessionTerminalFontOverride(null);
+  };
+
+  const requestExternalTerminalLink = (value: string) => {
+    const link = parseExternalHttpLink(value);
+    if (!link) {
+      setTerminalInteractionError(t("terminal.externalLinkInvalid"));
+      return;
+    }
+    if (!globalSettings.application.externalLinkConfirmation) {
+      void ipc
+        .openExternalUrl(link.url)
+        .catch((error) =>
+          setTerminalInteractionError(localizedErrorText(error)),
+        );
+      return;
+    }
+    setExternalLinkError(null);
+    setExternalTerminalLink(link);
+  };
+
+  const confirmExternalTerminalLink = async () => {
+    const link = externalTerminalLink;
+    if (!link || externalLinkPending) return;
+
+    setExternalLinkPending(true);
+    setExternalLinkError(null);
+    try {
+      await ipc.openExternalUrl(link.url);
+      setExternalTerminalLink(null);
+    } catch (error) {
+      setExternalLinkError(localizedErrorText(error));
+    } finally {
+      setExternalLinkPending(false);
+    }
+  };
+
   const confirmAppExit = async () => {
     setExitPending(true);
     setExitError(null);
@@ -1738,8 +2821,63 @@ export function App() {
     setExitError(null);
   };
 
+  const saveApplicationSettings = async (
+    application: ApplicationSettings,
+    connection: ConnectionSettings,
+  ) => {
+    setGlobalSettingsSaving(true);
+    setGlobalSettingsError(undefined);
+    setGlobalSettingsNotice(undefined);
+    try {
+      const saved = await ipc.saveGlobalSettings(application, connection);
+      setGlobalSettings(saved);
+      applyApplicationSettings(saved.application);
+      if (!loadedConnectionIdRef.current) {
+        setConnectionSettings(saved.connection);
+      }
+      setGlobalSettingsNotice(t("settings.feedback.saved"));
+    } catch (error) {
+      setGlobalSettingsError(localizedErrorText(error));
+    } finally {
+      setGlobalSettingsSaving(false);
+    }
+  };
+
+  const openLogDirectory = async () => {
+    setGlobalSettingsError(undefined);
+    setGlobalSettingsNotice(undefined);
+    try {
+      await ipc.openLogDirectory();
+    } catch (error) {
+      setGlobalSettingsError(localizedErrorText(error));
+    }
+  };
+
+  const exportDiagnostics = async () => {
+    setGlobalSettingsError(undefined);
+    setGlobalSettingsNotice(undefined);
+    try {
+      const destination = await saveFileDialog({
+        defaultPath: "bx-ssh-diagnostics.zip",
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+        title: t("settings.actions.exportDiagnostics"),
+      });
+      if (typeof destination !== "string") {
+        return;
+      }
+      await ipc.exportDiagnostics(destination);
+      setGlobalSettingsNotice(t("settings.feedback.diagnosticsExported"));
+    } catch (error) {
+      setGlobalSettingsError(localizedErrorText(error));
+    }
+  };
+
   const busy = ["probing", "connecting", "closing"].includes(connectionState);
   const connected = connectionState === "connected";
+  const sessionFontSizeOverridden =
+    sessionTerminalFontOverride !== null &&
+    activeSessionTab !== null &&
+    sessionTerminalFontOverride.sessionKey === activeSessionTab.clientId;
   const activeSessionId =
     workspaceMode === "terminal" ? sessionId : sftpSessionId;
   const currentSessionCloseImpact = {
@@ -1747,40 +2885,81 @@ export function App() {
     activeTransfers: Number(sftpTransferActive),
   };
 
+  const terminalOperationsMenu: MenuProps = {
+    items: [
+      {
+        key: "copy",
+        icon: <Copy size={13} />,
+        label: t("terminal.copySelection"),
+        disabled: !terminalSelection,
+      },
+      {
+        key: "paste",
+        icon: <ClipboardPaste size={13} />,
+        label: t("terminal.paste"),
+        disabled: sessionId === null || terminalClipboardPending,
+      },
+      { type: "divider" },
+      {
+        key: "select-all",
+        icon: <TextSelect size={13} />,
+        label: t("terminal.selectAll"),
+      },
+      {
+        key: "clear-scrollback",
+        icon: <Eraser size={13} />,
+        label: t("terminal.clearScrollback"),
+      },
+      {
+        key: "reset",
+        icon: <RotateCcw size={13} />,
+        label: t("terminal.resetState"),
+      },
+    ],
+    onClick: ({ key }) => {
+      if (key === "copy") void copyTerminalSelection();
+      if (key === "paste") void requestTerminalPaste();
+      if (key === "select-all") selectAllTerminalContents();
+      if (key === "clear-scrollback") clearTerminalScrollback();
+      if (key === "reset") resetTerminalState();
+    },
+  };
+
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell${globalSettings.application.compactLayout ? " is-compact" : ""}`}
+    >
       <WindowTitleBar
+        activeSessions={currentSessionCloseImpact.activeSessions}
+        activeTransfers={currentSessionCloseImpact.activeTransfers}
         appName={appInfo.name}
         connectionLabel={connectionLabel(connectionState, connectionStage, t)}
         connectionState={connectionState}
+        connectionSearch={connectionSearch}
+        onConnectionSearchChange={setConnectionSearch}
         onCheckForUpdates={() => setUpdateRequestId((current) => current + 1)}
+        onNewConnection={openNewConnectionEditor}
+        onToggleSettings={() => setSettingsOpen((current) => !current)}
+        onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
         onWorkspaceModeChange={selectWorkspaceMode}
         updateRequestId={updateRequestId}
         version={appInfo.version}
         workspaceMode={workspaceMode}
         workspaceModeLocked={connected || busy}
+        sidebarCollapsed={sidebarCollapsed}
+        settingsOpen={settingsOpen}
       />
 
       <div
         className={`workspace${sidebarResizing ? " is-resizing-sidebar" : ""}`}
         style={{
-          gridTemplateColumns: `${sidebarCollapsed ? 32 : sidebarWidth}px minmax(0, 1fr)`,
+          gridTemplateColumns: `${sidebarCollapsed ? 0 : sidebarWidth}px minmax(0, 1fr)`,
         }}
       >
         <aside
           className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}
           aria-label={t("connection.sidebar")}
         >
-          <Tooltip title={t("connectionSidebar.expand")} placement="right">
-            <Button
-              className="sidebar-restore"
-              aria-label={t("connectionSidebar.expand")}
-              icon={<PanelLeftOpen size={15} />}
-              size="small"
-              type="text"
-              onClick={() => setSidebarCollapsed(false)}
-            />
-          </Tooltip>
           <div className="sidebar-heading">
             <h1>{t("connection.title")}</h1>
             <div className="sidebar-heading-actions">
@@ -1789,15 +2968,6 @@ export function App() {
                   ? t("terminal.protocol")
                   : t("sftp.protocol")}
               </span>
-              <Tooltip title={t("connectionSidebar.collapse")}>
-                <Button
-                  aria-label={t("connectionSidebar.collapse")}
-                  icon={<PanelLeftClose size={14} />}
-                  size="small"
-                  type="text"
-                  onClick={() => setSidebarCollapsed(true)}
-                />
-              </Tooltip>
             </div>
           </div>
 
@@ -1837,16 +3007,6 @@ export function App() {
               type="success"
             />
           )}
-
-          <Input
-            allowClear
-            aria-label={t("connectionSearch.label")}
-            className="connection-search"
-            placeholder={t("connectionSearch.placeholder")}
-            prefix={<Search size={14} aria-hidden="true" />}
-            value={connectionSearch}
-            onChange={(event) => setConnectionSearch(event.target.value)}
-          />
 
           {!connectionSearch.trim() && (
             <div role="group" aria-label={t("connectionListView.label")}>
@@ -2511,6 +3671,18 @@ export function App() {
               >
                 {t("connection.cancel")}
               </Button>
+            ) : !activeSessionId &&
+              connectionState === "disconnected" &&
+              activeSessionTab ? (
+              <Button
+                type="primary"
+                icon={<RefreshCw size={15} />}
+                disabled={busy}
+                onClick={requestReconnect}
+                block
+              >
+                {t("connection.reconnect")}
+              </Button>
             ) : !activeSessionId ? (
               <Button
                 type="primary"
@@ -2536,7 +3708,7 @@ export function App() {
             )}
           </div>
 
-          {errorMessage && (
+          {errorMessage && !(workspaceMode === "sftp" && sftpRetryTransfer) && (
             <FeedbackNotice
               className="connection-error"
               type="error"
@@ -2574,16 +3746,22 @@ export function App() {
         )}
 
         <main
-          className={`session-workspace${activeSessionTab ? " has-session-tab" : ""}`}
+          className={`session-workspace${sessionTabs.length ? " has-session-tab" : ""}`}
         >
-          {activeSessionTab && (
+          {sessionTabs.length > 0 && (
             <SessionTabBar
-              closing={connectionState === "closing"}
-              connectionState={connectionState}
+              activeClientId={activeSessionTab?.clientId ?? ""}
+              closingClientId={
+                connectionState === "closing"
+                  ? activeSessionTab?.clientId
+                  : undefined
+              }
               disabled={busy || connectionLaunchStep !== undefined}
-              statusLabel={connectionLabel(connectionState, connectionStage, t)}
-              tab={activeSessionTab}
-              onClose={requestSessionClose}
+              tabs={visibleSessionTabs}
+              onClose={closeSessionTab}
+              onMove={moveSessionTab}
+              onRename={renameSessionTab}
+              onSelect={selectSessionTab}
             />
           )}
           <div className="session-workspace-content">
@@ -2599,52 +3777,205 @@ export function App() {
                       ? `${username}@${host}:${port}`
                       : t("sftp.notConnected")}
                   </span>
-                </div>
-                <div className="terminal-stage">
-                  <TerminalPane
-                    ref={terminalRef}
-                    connected={connected}
-                    onData={writeTerminal}
-                    onResize={resizeTerminal}
-                  />
-                  {!connected &&
-                    (connectionState === "idle" && !hostKey ? (
-                      <ConnectionWorkspaceEmptyState
-                        language={language}
-                        loadingConnectionId={connectionActionId}
-                        recentConnections={recentConnections}
-                        totalConnections={connectionCatalog.connections.length}
-                        onImportConfig={openOpenSshImport}
-                        onNewConnection={openNewConnectionEditor}
-                        onQuickConnect={(item) =>
-                          void loadSavedConnection(item)
+                  <div className="terminal-toolbar-actions">
+                    <Tooltip
+                      title={`${t("terminal.search.label")} (Ctrl+Shift+F)`}
+                    >
+                      <Button
+                        aria-label={t("terminal.search.label")}
+                        icon={<Search size={14} />}
+                        size="small"
+                        type="text"
+                        onClick={() => terminalRef.current?.openSearch()}
+                      />
+                    </Tooltip>
+                    <Tooltip title={t("terminal.decreaseFontSize")}>
+                      <Button
+                        aria-label={t("terminal.decreaseFontSize")}
+                        disabled={
+                          sessionTerminalFontSize <= TERMINAL_FONT_SIZE_MIN
                         }
+                        icon={<ZoomOut size={14} />}
+                        size="small"
+                        type="text"
+                        onClick={() => adjustSessionTerminalFontSize(-1)}
                       />
-                    ) : (
-                      <EmptyState
-                        className="terminal-empty"
-                        icon={<SquareTerminal size={36} strokeWidth={1.3} />}
-                        title={connectionLabel(
-                          connectionState,
-                          connectionStage,
-                          t,
-                        )}
+                    </Tooltip>
+                    <Tooltip
+                      title={
+                        sessionFontSizeOverridden
+                          ? t("terminal.resetFontSize", {
+                              size: terminalAppearance.fontSize,
+                            })
+                          : t("terminal.currentFontSize")
+                      }
+                    >
+                      <Button
+                        aria-label={t("terminal.fontSizeValue", {
+                          size: sessionTerminalFontSize,
+                        })}
+                        className="terminal-font-size"
+                        disabled={!sessionFontSizeOverridden}
+                        size="small"
+                        type="text"
+                        onClick={resetSessionTerminalFontSize}
+                      >
+                        {sessionTerminalFontSize}
+                      </Button>
+                    </Tooltip>
+                    <Tooltip title={t("terminal.increaseFontSize")}>
+                      <Button
+                        aria-label={t("terminal.increaseFontSize")}
+                        disabled={
+                          sessionTerminalFontSize >= TERMINAL_FONT_SIZE_MAX
+                        }
+                        icon={<ZoomIn size={14} />}
+                        size="small"
+                        type="text"
+                        onClick={() => adjustSessionTerminalFontSize(1)}
                       />
-                    ))}
+                    </Tooltip>
+                    <Tooltip
+                      title={`${t("terminal.copySelection")} (Ctrl+Shift+C)`}
+                    >
+                      <Button
+                        aria-label={t("terminal.copySelection")}
+                        disabled={!terminalSelection}
+                        icon={<Copy size={14} />}
+                        size="small"
+                        type="text"
+                        onClick={() => void copyTerminalSelection()}
+                      />
+                    </Tooltip>
+                    <Tooltip title={`${t("terminal.paste")} (Ctrl+Shift+V)`}>
+                      <Button
+                        aria-label={t("terminal.paste")}
+                        disabled={sessionId === null}
+                        icon={<ClipboardPaste size={14} />}
+                        loading={terminalClipboardPending}
+                        size="small"
+                        type="text"
+                        onClick={() => void requestTerminalPaste()}
+                      />
+                    </Tooltip>
+                    <Tooltip title={t("terminal.operationsMenu")}>
+                      <Dropdown
+                        menu={terminalOperationsMenu}
+                        placement="bottomRight"
+                        trigger={["click"]}
+                      >
+                        <Button
+                          aria-label={t("terminal.operationsMenu")}
+                          icon={<EllipsisVertical size={14} />}
+                          size="small"
+                          type="text"
+                        />
+                      </Dropdown>
+                    </Tooltip>
+                  </div>
                 </div>
+                <Dropdown
+                  menu={terminalOperationsMenu}
+                  trigger={["contextMenu"]}
+                >
+                  <div className="terminal-stage">
+                    <TerminalPane
+                      key={activeSessionTab?.clientId ?? "terminal-empty"}
+                      ref={terminalRef}
+                      appearance={effectiveTerminalAppearance}
+                      connected={connected}
+                      sessionKey={activeSessionTab?.clientId}
+                      onCopySelection={(selection) =>
+                        void copyTerminalSelection(selection)
+                      }
+                      onData={writeTerminal}
+                      onOpenLink={requestExternalTerminalLink}
+                      onPasteRequest={() => void requestTerminalPaste()}
+                      onResize={resizeTerminal}
+                      onSelectionChange={(selection) => {
+                        setTerminalSelection(selection);
+                        if (
+                          selection &&
+                          globalSettings.application.copyOnSelect
+                        ) {
+                          void copyTerminalSelection(selection);
+                        }
+                      }}
+                    />
+                    {terminalInteractionError && (
+                      <FeedbackNotice
+                        className="terminal-operation-error"
+                        closable
+                        message={t("terminal.operationFailed")}
+                        description={terminalInteractionError}
+                        showIcon
+                        type="error"
+                        onClose={() => setTerminalInteractionError(null)}
+                      />
+                    )}
+                    {!connected &&
+                      (connectionState === "idle" && !hostKey ? (
+                        <ConnectionWorkspaceEmptyState
+                          language={language}
+                          loadingConnectionId={connectionActionId}
+                          recentConnections={recentConnections}
+                          totalConnections={
+                            connectionCatalog.connections.length
+                          }
+                          onImportConfig={openOpenSshImport}
+                          onNewConnection={openNewConnectionEditor}
+                          onQuickConnect={(item) =>
+                            void loadSavedConnection(item)
+                          }
+                        />
+                      ) : (
+                        <EmptyState
+                          className="terminal-empty"
+                          icon={<SquareTerminal size={36} strokeWidth={1.3} />}
+                          title={connectionLabel(
+                            connectionState,
+                            connectionStage,
+                            t,
+                          )}
+                        />
+                      ))}
+                  </div>
+                </Dropdown>
               </section>
             ) : (
               <section className="sftp-workspace">
                 <SftpPane
                   busy={sftpBusy}
+                  canGoBack={sftpNavigation.back.length > 0}
+                  canGoForward={sftpNavigation.forward.length > 0}
                   connected={connected}
                   directory={sftpDirectory}
                   endpoint={`${username}@${host}:${port}`}
+                  localBusy={localBusy}
+                  localDirectory={localDirectory}
+                  transferNotice={sftpTransferNotice}
+                  transferProgress={sftpTransferProgress}
+                  transferError={sftpRetryTransfer ? errorMessage : null}
+                  onRetryTransfer={retrySftpTransfer}
                   transferResult={sftpTransferResult}
+                  transferId={sftpTransferId}
+                  onBack={goBackSftp}
+                  onForward={goForwardSftp}
+                  onLocalNavigate={navigateLocal}
+                  onLocalRefresh={refreshLocal}
                   onNavigate={navigateSftp}
                   onRefresh={refreshSftp}
                   onUpload={uploadSftp}
                   onDownload={downloadSftp}
+                  onCancelTransfer={cancelSftpTransfer}
+                  conflict={sftpConflict}
+                  onResolveConflict={resolveSftpConflict}
+                  onCancelConflict={cancelSftpConflict}
+                  onCreateDirectory={createSftpDirectory}
+                  onDeleteEntry={deleteSftpEntry}
+                  onMoveEntry={moveSftpEntry}
+                  onRenameEntry={renameSftpEntry}
+                  onChmodEntry={chmodSftpEntry}
                 />
                 {!connected && connectionState === "idle" && !hostKey && (
                   <ConnectionWorkspaceEmptyState
@@ -2661,31 +3992,71 @@ export function App() {
             )}
           </div>
         </main>
+
+        {settingsOpen && (
+          <SettingsView
+            appName={appInfo.name}
+            errorMessage={globalSettingsError}
+            groups={connectionCatalog.groups}
+            left={sidebarCollapsed ? 0 : sidebarWidth}
+            loading={globalSettingsLoading}
+            notice={globalSettingsNotice}
+            saving={globalSettingsSaving}
+            settings={globalSettings}
+            version={appInfo.version}
+            onCheckForUpdates={() =>
+              setUpdateRequestId((current) => current + 1)
+            }
+            onExportDiagnostics={() => void exportDiagnostics()}
+            onOpenLogDirectory={() => void openLogDirectory()}
+            onManageSshKeys={() => setKeyManagerOpen(true)}
+            onClose={() => setSettingsOpen(false)}
+            onSave={(application, connection) =>
+              void saveApplicationSettings(application, connection)
+            }
+          />
+        )}
+        <KeyManagerDialog
+          open={keyManagerOpen}
+          onClose={() => setKeyManagerOpen(false)}
+        />
       </div>
 
-      <footer className="statusbar">
+      <footer className={`statusbar${connected ? " is-connected" : ""}`}>
         <span className="status-item">
-          <Circle
-            className={`status-dot state-${connectionState}`}
-            size={7}
-            fill="currentColor"
-          />
-          {connectionLabel(connectionState, connectionStage, t)}
+          {connected ? <Wifi size={10} /> : <WifiOff size={10} />}
+          {!connected && settingsOpen
+            ? t("settings.title")
+            : connectionLabel(connectionState, connectionStage, t)}
         </span>
         <span className="status-spacer" />
-        <Tooltip
-          title={
-            workspaceMode === "terminal"
-              ? t("terminal.type")
-              : t("sftp.protocolVersion")
-          }
-        >
-          <span>
-            {workspaceMode === "terminal" ? "xterm-256color" : "SFTP v3"}
-          </span>
+        {connected && (
+          <>
+            <Tooltip
+              title={
+                workspaceMode === "terminal"
+                  ? t("terminal.type")
+                  : t("sftp.protocolVersion")
+              }
+            >
+              <span>
+                {workspaceMode === "terminal" ? "xterm-256color" : "SFTP v3"}
+              </span>
+            </Tooltip>
+            <span className="status-divider" />
+            <span>UTF-8</span>
+          </>
+        )}
+        <Tooltip title={t("settings.title")}>
+          <button
+            aria-label={t("settings.open")}
+            className="statusbar-settings"
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings size={10} />
+          </button>
         </Tooltip>
-        <span className="status-divider" />
-        <span>UTF-8</span>
       </footer>
 
       <ConnectionLaunchDialog
@@ -2697,14 +4068,136 @@ export function App() {
         }
         hostKey={hostKey ?? undefined}
         initialPassword={launchCredentialPassword}
-        pending={connectionState === "connecting" || fingerprintTrustPending}
+        pending={
+          fingerprintTrustPending ||
+          keyboardInteractiveResponsePending ||
+          (connectionState === "connecting" && !keyboardInteractivePrompt)
+        }
         step={activeSessionTab ? connectionLaunchStep : undefined}
         authMethod={launchAuthMethod}
+        keyboardPrompt={keyboardInteractivePrompt}
         onCancel={cancelConnectionFlow}
         onConfirmFingerprint={confirmConnectionFingerprint}
         initialCredentialMode={launchCredentialMode}
         onSubmitPassword={(credential, mode) =>
           void authenticatePendingConnection(credential, mode)
+        }
+        onSubmitKeyboardInteractive={submitKeyboardInteractive}
+      />
+
+      <AppDialog
+        open={pendingTerminalPaste !== null}
+        title={t("terminal.pasteConfirmTitle")}
+        description={
+          pendingTerminalPaste
+            ? t("terminal.pasteConfirmDescription", {
+                characters: pendingTerminalPaste.characterCount,
+                lines: pendingTerminalPaste.lineCount,
+              })
+            : undefined
+        }
+        initialFocusRef={terminalPasteCancelButtonRef}
+        onClose={() => setPendingTerminalPaste(null)}
+        footer={
+          <>
+            <Button
+              ref={terminalPasteCancelButtonRef}
+              onClick={() => setPendingTerminalPaste(null)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button type="primary" onClick={confirmTerminalPaste}>
+              {t("terminal.confirmPaste")}
+            </Button>
+          </>
+        }
+      >
+        {pendingTerminalPaste && (
+          <pre
+            aria-label={t("terminal.pastePreview")}
+            className="terminal-paste-preview"
+          >
+            {pendingTerminalPaste.text}
+          </pre>
+        )}
+      </AppDialog>
+
+      <AppDialog
+        open={externalTerminalLink !== null}
+        title={t("terminal.externalLinkTitle")}
+        description={t("terminal.externalLinkDescription")}
+        closable={!externalLinkPending}
+        closeOnEscape={!externalLinkPending}
+        initialFocusRef={externalLinkCancelButtonRef}
+        onClose={() => {
+          if (!externalLinkPending) {
+            setExternalTerminalLink(null);
+            setExternalLinkError(null);
+          }
+        }}
+        footer={
+          <>
+            <Button
+              ref={externalLinkCancelButtonRef}
+              disabled={externalLinkPending}
+              onClick={() => {
+                setExternalTerminalLink(null);
+                setExternalLinkError(null);
+              }}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              loading={externalLinkPending}
+              type="primary"
+              onClick={() => void confirmExternalTerminalLink()}
+            >
+              {t("terminal.openExternalLink")}
+            </Button>
+          </>
+        }
+      >
+        {externalTerminalLink && (
+          <dl className="terminal-external-link-details">
+            <dt>{t("terminal.externalLinkHost")}</dt>
+            <dd>{externalTerminalLink.host}</dd>
+            <dt>{t("terminal.externalLinkUrl")}</dt>
+            <dd>{externalTerminalLink.url}</dd>
+          </dl>
+        )}
+        {externalLinkError && (
+          <FeedbackNotice
+            message={t("terminal.externalLinkFailed")}
+            description={externalLinkError}
+            showIcon
+            type="error"
+          />
+        )}
+      </AppDialog>
+
+      <AppDialog
+        open={reconnectConfirmOpen}
+        title={t("connection.reconnect")}
+        closable
+        closeOnEscape
+        maskClosable={false}
+        description={t("settings.descriptions.reconnectConfirm")}
+        onClose={() => setReconnectConfirmOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setReconnectConfirmOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="primary"
+              onClick={() => {
+                setReconnectConfirmOpen(false);
+                void reconnectSession();
+              }}
+            >
+              {t("connection.reconnect")}
+            </Button>
+          </>
         }
       />
 
@@ -2967,6 +4460,7 @@ export function App() {
       />
 
       <ConnectionEditorDialog
+        defaultGroupId={globalSettings.application.defaultGroupId}
         errorMessage={connectionEditorError ?? undefined}
         groupOptions={connectionCatalog.groups.map((group) => ({
           label: group.name,
@@ -3295,25 +4789,64 @@ function commandErrorText(
       return t("errors.invalidCredential");
     case "private_key_error":
       return t("errors.privateKeyError");
+    case "log_directory_unavailable":
+      return t("errors.logDirectoryUnavailable");
+    case "diagnostics_export_failed":
+      return t("errors.diagnosticsExportFailed");
     case "authentication_rejected":
       return t("errors.authenticationRejected");
     case "legacy_rsa_signature_only":
       return t("errors.legacyRsaSignatureOnly");
+    case "invalid_local_path":
+      return t("errors.invalidLocalPath");
+    case "local_path_not_found":
+      return t("errors.localPathNotFound");
+    case "local_path_not_directory":
+      return t("errors.localPathNotDirectory");
+    case "local_path_permission_denied":
+      return t("errors.localPathPermissionDenied");
+    case "local_path_io_error":
+      return t("errors.localPathIoError");
+    case "invalid_local_file":
+      return t("errors.invalidLocalFile");
+    case "invalid_local_directory":
+      return t("errors.invalidLocalDirectory");
+    case "invalid_remote_path":
+      return t("errors.invalidRemotePath");
+    case "invalid_remote_directory":
+      return t("errors.invalidRemoteDirectory");
+    case "unsupported_transfer_entry":
+      return t("errors.unsupportedTransferEntry");
+    case "remote_directory_not_empty":
+      return t("errors.remoteDirectoryNotEmpty");
+    case "invalid_remote_permissions":
+      return t("errors.invalidRemotePermissions");
+    case "local_target_exists":
+      return t("errors.localTargetExists");
+    case "remote_target_exists":
+      return t("errors.remoteTargetExists");
+    case "transfer_integrity_mismatch":
+      return t("errors.transferIntegrityMismatch");
+    case "transfer_cancelled":
+      return t("errors.transferCancelled");
+    case "transfer_cleanup_failed":
+      return t("errors.transferCleanupFailed");
+    case "sftp_error":
+      return t("errors.sftpOperation");
+    case "transfer_io_error":
+      return t("errors.transferIo");
     case "keep_alive_failed":
       return t("errors.keepAliveFailed");
+    case "clipboard_unavailable":
+      return t("terminal.clipboardUnavailable");
+    case "terminal_output_unavailable":
+      return t("terminal.outputUnavailable");
+    case "invalid_external_url":
+      return t("terminal.externalLinkInvalid");
+    case "external_link_open_failed":
+      return t("terminal.externalLinkFailed");
     default:
       return fallback;
-  }
-}
-
-function connectionAuthLabel(method: AuthMethod, t: TFunction): string {
-  switch (method) {
-    case "privateKey":
-      return t("connectionEditor.auth.privateKey");
-    case "keyboardInteractive":
-      return t("connectionEditor.auth.keyboardInteractive");
-    default:
-      return t("connectionEditor.auth.password");
   }
 }
 
@@ -3324,7 +4857,11 @@ function isClosedSessionError(error: unknown): boolean {
   );
 }
 
-function createConnectionAttemptId(): string {
+function isTransferCancellation(error: unknown): boolean {
+  return error instanceof IpcError && error.code === "transfer_cancelled";
+}
+
+function createRandomOperationId(): string {
   if (typeof globalThis.crypto.randomUUID === "function") {
     return globalThis.crypto.randomUUID();
   }

@@ -1,6 +1,6 @@
 # BX SSH Supply-chain Security Policy
 
-Version: G0-09 (2026-08-03)
+Version: P1 security review (2026-09-08)
 
 ## Required gates
 
@@ -13,8 +13,32 @@ Every pull request and push to `main` must pass these checks:
 5. Gitleaks scans the complete Git history and fails on a detected secret.
 6. Syft 1.50.0 creates a CycloneDX JSON SBOM, verifies Cargo and npm components, and archives it for 14 days.
 7. Pull requests also run GitHub Dependency Review, which blocks high-severity vulnerabilities and prohibited licenses.
+8. RC publication additionally runs `pnpm release:controls`, validates `quality/phase-1-release-gate.json`, and archives a self-contained release manifest with checksums, symbols, SBOM, signatures, test reports, and provenance.
 
 Every GitHub Action uses a full commit SHA with a readable version comment. `Cargo.lock` and `pnpm-lock.yaml` are committed, and CI uses frozen/locked installation. Dependabot checks Cargo, npm, and Actions weekly.
+
+`.gitleaksignore` records one reviewed historical false positive: the redaction
+test in `private_keys.rs` contained PEM header text without private-key bytes.
+The exception identifies only commit `848fbe01a973590f37ef82e80f1dbd3176b879b3`,
+the file, the `private-key` rule and its original line. The test now uses plain
+marker text; no file, rule or later finding is excluded. CI archives a redacted
+JSON scan report so a future finding can be traced without exposing its value.
+
+`pnpm check` runs Rust/npm exception expiry and both npm license inventories
+before the other local checks. `pnpm security:test` covers expired and malformed
+exception records and the compatibility of security dependency overrides.
+
+The September 8 dependency review pins three development dependency fixes:
+
+- `nanoid` 3.x uses 3.3.18 for GHSA-2v37-7h3g-55p8.
+- `deepmerge-ts` 7.x consumers use 8.0.2 for GHSA-ggr8-5vv4-36mx.
+- `@wdio/utils` uses `@puppeteer/browsers` 3.2.2 to remove the unpatched
+  `extract-zip` dependency (GHSA-jmr9-qjv8-65gv). Its Node requirement is covered
+  by this workspace's Node 22.20 minimum. WebdriverIO module loading and browser
+  path resolution are regression-tested, followed by the desktop E2E suite.
+
+These pins do not suppress npm audit findings. Keep the overrides until upstream
+WebdriverIO/PostCSS requirements select the fixed dependency paths themselves.
 
 ## License policy
 
@@ -27,6 +51,12 @@ Production npm dependencies are limited to MIT, ISC, Apache-2.0, and `Apache-2.0
 Release signing private keys may only come from a GitHub Environment secret or an offline release host. They must not be written to the repository, artifacts, caches, or ordinary logs. Update-signing tests use ephemeral CI keys whose artifacts expire with the job retention period.
 
 SBOMs, test reports, and bundle-size reports may be archived. They must not contain databases, credentials, private keys, logs, or runtime data. `artifacts/` remains excluded by `.gitignore`.
+
+Release evidence is retained for at least 90 days. A release manifest must identify the immutable signed tag, source commit, every release-blocking QA suite, open defect disposition, artifact SHA-256 values, and the exact archive paths for SBOMs, signatures, symbols, and reports.
+
+The protected `release` environment also provides a read-only `BRANCH_PROTECTION_TOKEN` so the RC workflow can verify `main` branch protection through the GitHub API. This token is never included in release artifacts or metadata.
+
+The same environment provides the maintainer's `RELEASE_TAG_SIGNING_PUBLIC_KEY`. The RC workflow imports this public key into an ephemeral GPG keyring only to verify the annotated release tag; no tag-signing private key is stored in CI or the repository.
 
 ## Updates and exceptions
 

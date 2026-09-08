@@ -9,6 +9,46 @@ export const commands = {
 async appInfo() : Promise<AppInfo> {
     return await TAURI_INVOKE("app_info");
 },
+async readClipboardText() : Promise<Result<string, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_clipboard_text") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async writeClipboardText(text: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("write_clipboard_text", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openExternalUrl(url: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_external_url", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openLogDirectory() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_log_directory") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async exportDiagnostics(destination: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_diagnostics", { destination }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async probeSshHost(request: ProbeHostRequest) : Promise<Result<HostKeyInfo, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("probe_ssh_host", { request }) };
@@ -65,9 +105,65 @@ async closeTerminalSession(sessionId: string) : Promise<Result<null, CommandErro
     else return { status: "error", error: e  as any };
 }
 },
+async respondKeyboardInteractive(attemptId: string, responses: SensitiveString[]) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("respond_keyboard_interactive", { attemptId, responses }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listSftpDirectory(sessionId: string, path: string) : Promise<Result<RemoteDirectoryListing, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_sftp_directory", { sessionId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async statSftpPath(sessionId: string, path: string) : Promise<Result<RemoteFileEntry, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stat_sftp_path", { sessionId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createSftpDirectory(sessionId: string, remotePath: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_sftp_directory", { sessionId, remotePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteSftpEntry(sessionId: string, remotePath: string, recursive: boolean) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_sftp_entry", { sessionId, remotePath, recursive }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async moveSftpEntry(sessionId: string, sourcePath: string, targetPath: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("move_sftp_entry", { sessionId, sourcePath, targetPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async renameSftpEntry(sessionId: string, sourcePath: string, targetPath: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_sftp_entry", { sessionId, sourcePath, targetPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chmodSftpEntry(sessionId: string, remotePath: string, permissions: number) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chmod_sftp_entry", { sessionId, remotePath, permissions }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -81,9 +177,65 @@ async uploadSftpFile(sessionId: string, localPath: string, remotePath: string, l
     else return { status: "error", error: e  as any };
 }
 },
+async uploadSftpFileWithConflict(sessionId: string, localPath: string, remotePath: string, language: string, conflictAction: SftpConflictAction) : Promise<Result<TransferSummary | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upload_sftp_file_with_conflict", { sessionId, localPath, remotePath, language, conflictAction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async downloadSftpFile(sessionId: string, remotePath: string, localPath: string, language: string) : Promise<Result<TransferSummary, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("download_sftp_file", { sessionId, remotePath, localPath, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async downloadSftpFileWithConflict(sessionId: string, remotePath: string, localPath: string, language: string, conflictAction: SftpConflictAction) : Promise<Result<TransferSummary | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_sftp_file_with_conflict", { sessionId, remotePath, localPath, language, conflictAction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async uploadSftpDirectory(sessionId: string, transferId: string, localPath: string, remotePath: string, language: string) : Promise<Result<TransferBatchSummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upload_sftp_directory", { sessionId, transferId, localPath, remotePath, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async uploadSftpDirectoryWithConflict(sessionId: string, transferId: string, localPath: string, remotePath: string, language: string, conflictAction: SftpConflictAction) : Promise<Result<TransferBatchSummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upload_sftp_directory_with_conflict", { sessionId, transferId, localPath, remotePath, language, conflictAction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async downloadSftpDirectory(sessionId: string, transferId: string, remotePath: string, localPath: string, language: string) : Promise<Result<TransferBatchSummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_sftp_directory", { sessionId, transferId, remotePath, localPath, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async downloadSftpDirectoryWithConflict(sessionId: string, transferId: string, remotePath: string, localPath: string, language: string, conflictAction: SftpConflictAction) : Promise<Result<TransferBatchSummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_sftp_directory_with_conflict", { sessionId, transferId, remotePath, localPath, language, conflictAction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelSftpTransfer(transferId: string) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_sftp_transfer", { transferId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -129,6 +281,22 @@ async confirmAppExit() : Promise<Result<null, CommandError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async listLocalDirectory(request: LocalPathRequest) : Promise<Result<LocalDirectoryListing, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_local_directory", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async statLocalPath(request: LocalPathRequest) : Promise<Result<LocalFileEntry, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stat_local_path", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listConnections() : Promise<Result<ConnectionCatalog, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_connections") };
@@ -153,7 +321,7 @@ async saveConnection(config: ConnectionConfig, settings: ConnectionSettingsOverr
     else return { status: "error", error: e  as any };
 }
 },
-async getPasswordCredential(credentialRef: string) : Promise<Result<string | null, CommandError>> {
+async getPasswordCredential(credentialRef: string) : Promise<Result<SensitiveString | null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_password_credential", { credentialRef }) };
 } catch (e) {
@@ -161,7 +329,7 @@ async getPasswordCredential(credentialRef: string) : Promise<Result<string | nul
     else return { status: "error", error: e  as any };
 }
 },
-async savePasswordCredential(credentialRef: string, password: string) : Promise<Result<null, CommandError>> {
+async savePasswordCredential(credentialRef: string, password: SensitiveString) : Promise<Result<null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("save_password_credential", { credentialRef, password }) };
 } catch (e) {
@@ -241,6 +409,22 @@ async reorderConnections(groupId: string | null, ids: string[]) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
+async getGlobalSettings() : Promise<Result<GlobalSettingsSnapshot, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_global_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveGlobalSettings(application: ApplicationSettings, connection: ConnectionSettings) : Promise<Result<GlobalSettingsSnapshot, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_global_settings", { application, connection }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewOpensshConfig(path: string | null) : Promise<Result<OpenSshImportPreview, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_openssh_config", { path }) };
@@ -252,6 +436,38 @@ async previewOpensshConfig(path: string | null) : Promise<Result<OpenSshImportPr
 async importOpensshConnections(request: OpenSshImportRequest) : Promise<Result<OpenSshImportResult, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("import_openssh_connections", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listPrivateKeys() : Promise<Result<PrivateKeySummary[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_private_keys") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async inspectPrivateKeyFile(path: string, passphrase: SensitiveString | null) : Promise<Result<PrivateKeyMetadata, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("inspect_private_key_file", { path, passphrase }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async savePrivateKeyReference(request: PrivateKeyReferenceRequest, passphrase: SensitiveString | null) : Promise<Result<PrivateKeySummary, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_private_key_reference", { request, passphrase }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deletePrivateKeyReference(id: string) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_private_key_reference", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -279,9 +495,11 @@ async cancelSshConnection(attemptId: string) : Promise<Result<boolean, CommandEr
 
 export type AppInfo = { name: string; version: string }
 export type AppMenuAction = "show-terminal" | "show-sftp" | "check-for-updates"
+export type ApplicationLanguage = "zh-CN" | "en-US"
+export type ApplicationSettings = { version: number; language: ApplicationLanguage; themeMode: ThemeMode; confirmClose: boolean; defaultGroupId: string | null; compactLayout: boolean; terminalFontFamily: TerminalFontFamily; terminalFontSize: number; terminalLineHeight: TerminalLineHeight; terminalCursorStyle: TerminalCursorStyle; terminalCursorBlink: boolean; terminalColorScheme: TerminalColorScheme; multilinePasteConfirmation: boolean; copyOnSelect: boolean; reconnectConfirmation: boolean; sftpDefaultLocalDirectory: string | null; sftpConflictAction: SftpConflictAction; externalLinkConfirmation: boolean; excludeCredentialsFromExport: boolean; autoCheckUpdates: boolean; logLevel: LogLevel }
 export type AuthMethod = "password" | "privateKey" | "keyboardInteractive"
 export type CommandError = { code: CommandErrorCode; message: string; stage: SshConnectionStage | null }
-export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_file" | "local_target_exists" | "remote_target_exists" | "transfer_integrity_mismatch" | "connect_timeout" | "dns_lookup_timeout" | "dns_lookup_failed" | "tcp_connect_timeout" | "connection_refused" | "network_unreachable" | "tcp_connect_failed" | "handshake_timeout" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "keep_alive_failed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "credential_store_locked" | "credential_store_unavailable" | "credential_store_failed" | "invalid_credential" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid"
+export type CommandErrorCode = "invalid_host" | "invalid_port" | "invalid_username" | "invalid_fingerprint" | "invalid_terminal_size" | "invalid_remote_path" | "invalid_local_path" | "local_path_not_found" | "local_path_not_directory" | "local_path_permission_denied" | "local_path_io_error" | "invalid_local_file" | "invalid_local_directory" | "invalid_remote_directory" | "unsupported_transfer_entry" | "local_target_exists" | "remote_target_exists" | "remote_directory_not_empty" | "invalid_remote_permissions" | "transfer_integrity_mismatch" | "transfer_cancelled" | "transfer_cleanup_failed" | "connect_timeout" | "dns_lookup_timeout" | "dns_lookup_failed" | "tcp_connect_timeout" | "connection_refused" | "network_unreachable" | "tcp_connect_failed" | "handshake_timeout" | "handshake_failed" | "connection_cancelled" | "invalid_connection_attempt" | "invalid_transfer_id" | "connection_attempt_conflict" | "session_state_invalid" | "authentication_timeout" | "host_key_unavailable" | "host_key_mismatch" | "authentication_rejected" | "legacy_rsa_signature_only" | "channel_request_rejected" | "channel_closed" | "keep_alive_failed" | "private_key_error" | "sftp_error" | "transfer_io_error" | "transport_error" | "session_not_found" | "session_closed" | "terminal_output_unavailable" | "update_not_available" | "update_changed" | "update_signature_invalid" | "update_insecure_endpoint" | "update_unavailable" | "update_cancelled" | "update_in_progress" | "update_backup_failed" | "update_failed" | "webview_memory_usage_failed" | "database_unavailable" | "database_query_failed" | "credential_store_locked" | "credential_store_unavailable" | "credential_store_failed" | "invalid_credential" | "clipboard_unavailable" | "invalid_external_url" | "external_link_open_failed" | "open_ssh_config_not_found" | "open_ssh_config_io_error" | "open_ssh_config_invalid" | "log_directory_unavailable" | "diagnostics_export_failed"
 export type ConnectionCatalog = { groups: ConnectionGroup[]; connections: ConnectionListItem[] }
 export type ConnectionConfig = { id: string; groupId: string | null; name: string; host: string; port: number; username: string; notes: string | null; color: string | null; authMethod: AuthMethod; credentialRef: string | null; keyReferenceId: string | null }
 export type ConnectionDetails = { connection: ConnectionListItem; settings: ConnectionSettingsSnapshot }
@@ -293,7 +511,15 @@ export type ConnectionSettingsOverride = { connectTimeoutSecs: number | null; ke
 export type ConnectionSettingsScope = { kind: "global" } | { kind: "group"; groupId: string } | { kind: "connection"; connectionId: string }
 export type ConnectionSettingsSnapshot = { layers: ConnectionSettingsLayers; resolved: ConnectionSettings }
 export type ExitImpact = { activeSessions: number; activeTransfers: number }
+export type GlobalSettingsSnapshot = { application: ApplicationSettings; applicationInitialized: boolean; connection: ConnectionSettings }
 export type HostKeyInfo = { algorithm: string; fingerprintSha256: string }
+export type KeyboardInteractiveEvent = { type: "prompt"; attemptId: string; name: string; instructions: string; prompts: KeyboardInteractivePromptItem[] }
+export type KeyboardInteractivePromptItem = { prompt: string; echo: boolean }
+export type LocalDirectoryListing = { path: string; parentPath: string | null; entries: LocalFileEntry[] }
+export type LocalFileEntry = { name: string; path: string; kind: LocalFileKind; size: number; modifiedAt: number | null; readonly: boolean; hidden: boolean }
+export type LocalFileKind = "directory" | "file" | "symlink" | "other"
+export type LocalPathRequest = { path: string }
+export type LogLevel = "error" | "warn" | "info" | "debug"
 export type OpenSshDuplicateStrategy = "skip" | "overwrite"
 export type OpenSshImportError = "invalidPort" | "missingHost" | "missingUsername"
 export type OpenSshImportItem = { sourceId: string; alias: string; host: string; port: number; username: string; identityFile: string | null; duplicateConnectionId: string | null; duplicateConnectionName: string | null; errors: OpenSshImportError[]; warnings: OpenSshImportWarning[] }
@@ -301,19 +527,41 @@ export type OpenSshImportPreview = { sourcePath: string; sourceFingerprint: stri
 export type OpenSshImportRequest = { sourcePath: string; sourceFingerprint: string; selectedSourceIds: string[]; duplicateStrategy: OpenSshDuplicateStrategy }
 export type OpenSshImportResult = { imported: number; overwritten: number; skipped: number }
 export type OpenSshImportWarning = "duplicate" | "identityFileRequiresKeySetup"
+export type PrivateKeyMetadata = { publicKeyAlgorithm: string; fingerprintSha256: string; encrypted: boolean }
+export type PrivateKeyReferenceRequest = { name: string; storageKind: PrivateKeyStorageKind; filePath: string | null; comment: string | null }
+export type PrivateKeyStorageKind = "file" | "imported"
+export type PrivateKeySummary = { id: string; name: string; storageKind: PrivateKeyStorageKind; filePath: string | null; publicKeyAlgorithm: string | null; fingerprintSha256: string | null; comment: string | null; createdAt: number; updatedAt: number; referenceCount: number; revision: number }
 export type ProbeHostRequest = { host: string; port: number; settings: ConnectionSettings }
 export type RemoteDirectoryListing = { path: string; entries: RemoteFileEntry[] }
 export type RemoteFileEntry = { name: string; path: string; kind: RemoteFileKind; size: number; modifiedAt: number | null; permissions: number | null }
 export type RemoteFileKind = "directory" | "file" | "symlink" | "other"
+/**
+ * A string that must not be rendered or logged as plaintext.
+ * The transparent serde representation keeps the IPC wire contract as a
+ * string while the Rust value is cleared when it is dropped. Callers should
+ * use `into_inner` only at the final hand-off to a library that requires an
+ * owned `String`.
+ */
+export type SensitiveString = string
+export type SftpConflictAction = "ask" | "overwrite" | "skip" | "rename"
+export type SftpTransferDirection = "upload" | "download"
+export type SftpTransferProgress = { transferId: string | null; direction: SftpTransferDirection; path: string; bytesTransferred: number; totalBytes: number | null; filesCompleted: number; totalFiles: number | null }
 export type SshConnectionEvent = { attemptId: string; stage: SshConnectionStage }
 export type SshConnectionStage = "created" | "resolvingDns" | "connectingTcp" | "handshaking" | "authenticating" | "openingChannel" | "connected" | "closing" | "closed" | "cancelled" | "failed"
-export type StartPrivateKeySftpRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: string | null; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }
-export type StartPrivateKeyShellRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: string | null; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
-export type StartSftpRequest = { attemptId: string; host: string; port: number; username: string; password: string; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }
+export type StartKeyboardInteractiveShellRequest = { attemptId: string; host: string; port: number; username: string; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
+export type StartPrivateKeySftpRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: SensitiveString | null; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }
+export type StartPrivateKeyShellRequest = { attemptId: string; host: string; port: number; username: string; keyReferenceId: string; passphrase: SensitiveString | null; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
+export type StartSftpRequest = { attemptId: string; host: string; port: number; username: string; password: SensitiveString; expectedFingerprint: string; settings: ConnectionSettings; initialPath: string | null }
 export type StartSftpResponse = { sessionId: string; hostKey: HostKeyInfo; directory: RemoteDirectoryListing }
-export type StartShellRequest = { attemptId: string; host: string; port: number; username: string; password: string; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
+export type StartShellRequest = { attemptId: string; host: string; port: number; username: string; password: SensitiveString; expectedFingerprint: string; settings: ConnectionSettings; columns: number; rows: number; pixelWidth: number; pixelHeight: number }
 export type StartShellResponse = { sessionId: string; hostKey: HostKeyInfo }
+export type TerminalColorScheme = "bxDark" | "solarizedDark" | "bxLight"
+export type TerminalCursorStyle = "block" | "underline" | "bar"
 export type TerminalEvent = { type: "exited"; code: number | null; signal: string | null } | { type: "error"; code: CommandErrorCode; message: string }
+export type TerminalFontFamily = "cascadiaMono" | "cascadiaCode" | "consolas"
+export type TerminalLineHeight = "compact" | "standard" | "relaxed"
+export type ThemeMode = "light" | "dark" | "system"
+export type TransferBatchSummary = { files: number; directories: number; bytes: number; elapsedMs: number; bytesPerSecond: number }
 export type TransferSummary = { bytes: number; elapsedMs: number; bytesPerSecond: number; sha256: string }
 export type TrustHostFingerprintRequest = { host: string; port: number; hostKey: HostKeyInfo }
 export type UpdateEvent = { type: "started"; contentLength: number | null } | { type: "progress"; chunkLength: number } | { type: "verified" }

@@ -48,16 +48,32 @@ pub enum SshError {
     LegacyRsaSignatureOnly,
     #[error("terminal columns and rows must be greater than zero")]
     InvalidTerminalSize,
-    #[error("remote SFTP path must not be empty or contain a null byte")]
+    #[error(
+        "remote SFTP path must not be empty, contain a null byte, a backslash, or a parent-directory component"
+    )]
     InvalidRemotePath,
     #[error("local transfer path must reference a regular file")]
     InvalidLocalFile,
+    #[error("local transfer path must reference a directory")]
+    InvalidLocalDirectory,
+    #[error("remote transfer path must reference a directory")]
+    InvalidRemoteDirectory,
+    #[error("directory transfer does not support this entry: {path}")]
+    UnsupportedTransferEntry { path: String },
     #[error("local transfer target already exists")]
     LocalTargetExists,
     #[error("remote transfer target already exists")]
     RemoteTargetExists,
+    #[error("remote directory is not empty")]
+    RemoteDirectoryNotEmpty,
+    #[error("remote permissions must be an octal mode between 0000 and 7777")]
+    InvalidRemotePermissions,
     #[error("file transfer integrity check failed: expected {expected}, received {actual}")]
     TransferIntegrityMismatch { expected: String, actual: String },
+    #[error("file transfer was cancelled")]
+    TransferCancelled,
+    #[error("directory transfer failed and cleanup also failed: transfer: {transfer}; cleanup: {cleanup}")]
+    TransferCleanupFailed { transfer: String, cleanup: String },
     #[error("{request} request was rejected by the SSH server")]
     ChannelRequestRejected { request: &'static str },
     #[error("SSH channel closed while waiting for the {request} response")]
@@ -119,9 +135,16 @@ impl SshError {
             | Self::InvalidTerminalSize
             | Self::InvalidRemotePath
             | Self::InvalidLocalFile
+            | Self::InvalidLocalDirectory
+            | Self::InvalidRemoteDirectory
+            | Self::UnsupportedTransferEntry { .. }
             | Self::LocalTargetExists
             | Self::RemoteTargetExists
+            | Self::RemoteDirectoryNotEmpty
+            | Self::InvalidRemotePermissions
             | Self::TransferIntegrityMismatch { .. }
+            | Self::TransferCancelled
+            | Self::TransferCleanupFailed { .. }
             | Self::Sftp(_)
             | Self::TransferIo(_)
             | Self::KeepAliveFailed

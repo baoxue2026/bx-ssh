@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "phase": "P1",
+  "updatedAt": "2026-09-08T15:40:43.5796727Z",
+  "releaseReadiness": "blocked",
+  "releaseReadinessReason": "开发提交 4de6662 的 CI、Security、Package 已全部通过；Win11 参考设备性能/人工/24h 稳定性、跨版本升级与数据保留、独立审批者和正式签名环境仍待验收。",
+  "items": [
+    {
+      "id": "QA-COMP-01",
+      "title": "OpenSSH 服务端兼容矩阵",
+      "state": "partially_verified",
+      "blocking": true,
+      "evidence": [
+        "commit:ca157ee",
+        "scripts/test-openssh-windows.ps1",
+        "crates/ssh-core/tests/openssh.rs",
+        "本机 Windows 10 OpenSSH 8.1p1：Ed25519、ECDSA P-256、RSA-SHA2 已通过",
+        "2026-09-08：Windows Release SFTP、上传/下载取消、单 subsystem 兼容路径和十会话已通过",
+        "apps/desktop/tests/e2e/ssh-workflows.spec.ts（真实 OpenSSH 的三项桌面流程已通过）",
+        "https://github.com/baoxue2026/bx-ssh/actions/runs/34238620274（4de6662：15 组 OpenSSH、6 组桌面矩阵与 Windows 真实 SSH 流程全部通过）"
+      ],
+      "pendingEvidence": ["Windows 11 24H2 系统代理、输入法和高 DPI 人工验收"]
+    },
+    {
+      "id": "QA-INSTALL-01",
+      "title": "Windows 安装、卸载、升级和签名验证",
+      "state": "partially_verified",
+      "blocking": true,
+      "evidence": [
+        "commit:0f1ba67",
+        "scripts/test-windows-installation.ps1",
+        ".github/workflows/package.yml",
+        ".github/workflows/release.yml",
+        "pnpm check:windows-packaging 已通过",
+        "本机 release NSIS 安装包静默安装和卸载通过",
+        "2026-09-08：修复进程参数与超时后，本机 0.1.0 MSI/NSIS 安装、卸载均通过（未要求正式签名，未执行跨版本升级）",
+        "scripts/test-windows-process.ps1（真实验证参数边界、退出码、超时及子进程清理）",
+        "https://github.com/baoxue2026/bx-ssh/actions/runs/34238620319（4de6662：三平台打包归档通过，Windows 0.1.1 MSI/NSIS 安装卸载约 4 秒完成）"
+      ],
+      "pendingEvidence": [
+        "上一版本到当前版本的覆盖升级及用户数据保留报告",
+        "正式 Windows Authenticode 签名证书验证"
+      ]
+    },
+    {
+      "id": "QA-PERF-STAB-01",
+      "title": "1GB SFTP、10 会话和 24 小时稳定性",
+      "state": "blocked",
+      "blocking": true,
+      "evidence": [
+        "commit:a133f3a",
+        "commit:fdbb9bf",
+        "scripts/collect-windows-stability.ps1（已完成短时采集冒烟）",
+        "本机十会话：BX_SESSION_RESULT sessions=10 elapsed_ms=410",
+        "本机 1GiB 上传/下载及 SHA-256 一致性通过",
+        "crates/ssh-core/src/sftp_read.rs（有界预读、顺序校验、短读与取消测试）",
+        "artifacts/test-reports/openssh-phase1-final-release-1g.json（干净提交 500ccee，1GiB 下载 98.1 MB/s，OpenSSH 基线 160.1 MB/s，61%）",
+        "本机为 Windows 10 + SATA SSD；数据传输 5.6 秒，持久化完成 10.9 秒，总速率仍未达到 OpenSSH 的 80%"
+      ],
+      "pendingEvidence": [
+        "Windows 11 24H2 / NVMe 参考设备同文件、双向独立 OpenSSH 基线，含持久化的传输速度达到 80%",
+        "冷启动、空闲/十会话内存、标签切换与 5 分钟大输出完整性能报告",
+        "Windows 11 24H2 参考设备连续 24 小时 soak 报告",
+        "休眠/唤醒、断网重连与句柄泄漏报告（SFTP 中途取消已通过自动化）"
+      ]
+    },
+    {
+      "id": "QA-MANUAL-WINDOWS-01",
+      "title": "真实 Windows 环境人工验收",
+      "state": "pending_external",
+      "blocking": true,
+      "evidence": [
+        "commit:fdbb9bf",
+        "scripts/test-windows-manual-smoke.ps1",
+        "artifacts/test-reports/windows-manual-smoke.json（本机 Windows 10 Debug 冒烟）",
+        "2026-09-08：本机真实 SSH 连接、密码重试、终端回显、SFTP 文件/目录和冲突跳过 E2E 已通过"
+      ],
+      "pendingEvidence": [
+        "签名安装包首次安装、覆盖升级和卸载",
+        "Windows 11 24H2 真实 SSH/终端/SFTP 人工验收",
+        "Windows 11 24H2 高 DPI、输入法、系统代理和托盘恢复"
+      ]
+    },
+    {
+      "id": "QA-TRACEABILITY-01",
+      "title": "一期完成状态和验收追踪",
+      "state": "implemented_pending_external",
+      "blocking": true,
+      "evidence": [
+        "quality/phase-1-test-matrix.json",
+        "quality/phase-1-release-gate.json",
+        "scripts/check-release-gate.mjs",
+        "scripts/prepare-release-evidence.mjs",
+        "quality/phase-1-acceptance-progress.md",
+        "quality/phase-1-release-setup.md",
+        "https://github.com/baoxue2026/bx-ssh/actions/runs/34238620271（4de6662：完整 Security 与 SBOM 通过）",
+        "https://github.com/baoxue2026/bx-ssh/actions/runs/34238620319/artifacts/10061867924（Windows 原型安装包、符号与验收报告已归档，保留至 2026-12-07）"
+      ],
+      "pendingEvidence": ["每个 blocking 套件的版本化测试报告和发布附件"]
+    },
+    {
+      "id": "RELEASE-PROTECTION-01",
+      "title": "main 分支保护、正式签名和 RC 发布门禁",
+      "state": "implemented_pending_external",
+      "blocking": true,
+      "evidence": [
+        "quality/phase-1-release-gate.json",
+        ".github/workflows/release.yml",
+        "scripts/check-main-branch-protection.mjs",
+        "scripts/check-main-branch-protection.test.mjs",
+        "scripts/check-release-gate.mjs",
+        "pnpm main-protection:test 已通过",
+        "pnpm release:controls 已通过",
+        "pnpm release:test 已通过",
+        "2026-09-08 GitHub API 实查：main 未保护；仓库仅有所有者；environment 与 repository secrets 均为 0",
+        "quality/phase-1-main-branch-protection.json（可审阅的请求模板，尚未应用）"
+      ],
+      "pendingEvidence": [
+        "确定独立 PR 审批者后应用 main 保护，并通过实际 API 响应校验",
+        "创建受保护的 release 环境并配置正式 Authenticode、Tauri updater 和分支保护查询凭据",
+        "配置 RELEASE_TAG_SIGNING_PUBLIC_KEY 核验公钥",
+        "首个 annotated、signed、immutable v1.0.0-rc.1 标签及完整发布清单"
+      ]
+    }
+  ]
+}

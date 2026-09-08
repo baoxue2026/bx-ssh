@@ -1,8 +1,10 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 
-use bx_contracts::{HostKeyInfo, SshConnectionStage};
+use bx_contracts::{HostKeyInfo, PrivateKeyMetadata, SshConnectionStage};
 use russh::client;
 use russh::keys::{self, ssh_key, HashAlg, PrivateKeyWithHashAlg};
 use tokio::net::{lookup_host, TcpStream};
@@ -93,6 +95,19 @@ pub struct ClientSession {
     negotiated_algorithms: SshNegotiatedAlgorithms,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyboardInteractivePrompt {
+    pub name: String,
+    pub instructions: String,
+    pub prompts: Vec<KeyboardInteractivePromptItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyboardInteractivePromptItem {
+    pub prompt: String,
+    pub echo: bool,
+}
+
 impl ClientSession {
     pub fn host_key(&self) -> &HostKeyInfo {
         &self.host_key
@@ -103,12 +118,21 @@ impl ClientSession {
     }
 
     pub async fn open_shell(&self, size: TerminalSize) -> Result<SshShell, SshError> {
+        self.open_shell_with_environment(size, &BTreeMap::new())
+            .await
+    }
+
+    pub async fn open_shell_with_environment(
+        &self,
+        size: TerminalSize,
+        environment: &BTreeMap<String, String>,
+    ) -> Result<SshShell, SshError> {
         let channel = self
             .handle
             .channel_open_session()
             .await
             .map_err(SshError::ChannelOpenFailed)?;
-        SshShell::open(channel, size).await
+        SshShell::open_with_environment(channel, size, environment).await
     }
 
     pub async fn open_sftp(&self) -> Result<SftpClient, SshError> {
@@ -121,7 +145,17 @@ impl ClientSession {
             .request_subsystem(true, "sftp")
             .await
             .map_err(SshError::ChannelOpenFailed)?;
-        SftpClient::open(channel.into_stream()).await
+
+        let mut sftp = SftpClient::open(channel.into_stream()).await?;
+        // russh-sftp's high-level File only exposes sequential reads. Use one
+        // additional subsystem for bounded read-ahead on a single raw handle.
+        // Servers with MaxSessions=1 retain the compatible sequential path.
+        if let Ok(read_channel) = self.handle.channel_open_session().await {
+            if read_channel.request_subsystem(true, "sftp").await.is_ok() {
+                sftp.enable_read_ahead(read_channel.into_stream()).await;
+            }
+        }
+        Ok(sftp)
     }
 
     pub async fn wait_for_transport(&mut self) -> Result<(), SshError> {
@@ -221,6 +255,137 @@ where
     })
 }
 
+/// Authenticate using SSH keyboard-interactive (RFC 4256) prompts.
+///
+/// The callback is invoked once for every server prompt round. Answers are
+/// supplied by the caller and are never logged or retained by this crate.
+pub async fn authenticate_keyboard_interactive_with_progress<F, Fut>(
+    endpoint: &SshEndpoint,
+    username: &str,
+    expected_fingerprint: &str,
+    cancellation: &ConnectionCancellation,
+    mut on_prompt: F,
+    mut on_stage: impl FnMut(SshConnectionStage),
+) -> Result<ClientSession, SshError>
+where
+    F: FnMut(KeyboardInteractivePrompt) -> Fut,
+    Fut: Future<Output = Result<Vec<String>, SshError>>,
+{
+    validate_username(username)?;
+    let fingerprint = HostFingerprint::parse(expected_fingerprint)?;
+    let (mut handle, host_key, negotiated_algorithms) =
+        connect(endpoint, Some(fingerprint), cancellation, &mut on_stage).await?;
+
+    on_stage(SshConnectionStage::Authenticating);
+    let reply = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => {
+            let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
+            return Err(SshError::ConnectionCancelled);
+        }
+        result = time::timeout(
+            endpoint.operation_timeout(),
+            handle.authenticate_keyboard_interactive_start(username, None::<String>),
+        ) => result,
+    };
+    let mut reply = match reply {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            return Err(SshError::AuthenticationFailed(error));
+        }
+        Err(_) => {
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            return Err(SshError::AuthenticationTimeout);
+        }
+    };
+
+    loop {
+        let response = match reply {
+            russh::client::KeyboardInteractiveAuthResponse::Success => break,
+            russh::client::KeyboardInteractiveAuthResponse::Failure { .. } => {
+                let _ = handle
+                    .disconnect(russh::Disconnect::ByApplication, "", "")
+                    .await;
+                return Err(SshError::AuthenticationRejected {
+                    method: "keyboard-interactive",
+                });
+            }
+            russh::client::KeyboardInteractiveAuthResponse::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            } => {
+                let prompt = KeyboardInteractivePrompt {
+                    name,
+                    instructions,
+                    prompts: prompts
+                        .into_iter()
+                        .map(|item| KeyboardInteractivePromptItem {
+                            prompt: item.prompt,
+                            echo: item.echo,
+                        })
+                        .collect(),
+                };
+                let answers = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => {
+                        let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
+                        return Err(SshError::ConnectionCancelled);
+                    }
+                    answers = on_prompt(prompt) => answers,
+                };
+                match answers {
+                    Ok(answers) => answers,
+                    Err(error) => {
+                        let _ = handle
+                            .disconnect(russh::Disconnect::ByApplication, "", "")
+                            .await;
+                        return Err(error);
+                    }
+                }
+            }
+        };
+
+        let next_reply = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => {
+                let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
+                return Err(SshError::ConnectionCancelled);
+            }
+            result = time::timeout(
+                endpoint.operation_timeout(),
+                handle.authenticate_keyboard_interactive_respond(response),
+            ) => result,
+        };
+        reply = match next_reply {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => {
+                let _ = handle
+                    .disconnect(russh::Disconnect::ByApplication, "", "")
+                    .await;
+                return Err(SshError::AuthenticationFailed(error));
+            }
+            Err(_) => {
+                let _ = handle
+                    .disconnect(russh::Disconnect::ByApplication, "", "")
+                    .await;
+                return Err(SshError::AuthenticationTimeout);
+            }
+        };
+    }
+
+    Ok(ClientSession {
+        handle,
+        host_key,
+        negotiated_algorithms,
+    })
+}
+
 pub async fn authenticate_private_key(
     endpoint: &SshEndpoint,
     username: &str,
@@ -238,6 +403,23 @@ pub async fn authenticate_private_key(
         |_| {},
     )
     .await
+}
+
+/// Parse a private key without authenticating to a server and return only the
+/// public metadata that is safe to display in the desktop UI.
+///
+/// The private key contents and passphrase are consumed entirely in this
+/// function and are never included in the returned value or debug output.
+pub fn inspect_private_key(
+    private_key_contents: &str,
+    passphrase: Option<&str>,
+) -> Result<PrivateKeyMetadata, SshError> {
+    let private_key = keys::decode_secret_key(private_key_contents, passphrase)?;
+    Ok(PrivateKeyMetadata {
+        public_key_algorithm: private_key.algorithm().to_string(),
+        fingerprint_sha256: private_key.fingerprint(HashAlg::Sha256).to_string(),
+        encrypted: passphrase.is_some(),
+    })
 }
 
 pub async fn authenticate_private_key_with_progress<F>(
@@ -361,6 +543,18 @@ async fn authenticate_loaded_private_key(
         host_key,
         negotiated_algorithms,
     })
+}
+
+#[cfg(test)]
+mod private_key_tests {
+    use super::inspect_private_key;
+
+    #[test]
+    fn rejects_invalid_private_key_contents_without_exposing_them() {
+        let error = inspect_private_key("not a private key", None).unwrap_err();
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("not a private key"));
+    }
 }
 
 async fn connect(

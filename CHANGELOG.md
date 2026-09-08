@@ -6,6 +6,14 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 
 ## [Unreleased]
 
+### Fixed
+
+- Isolate desktop E2E application data and credential services from normal installations.
+- Improve SFTP download throughput with bounded read-ahead and buffered local writes while preserving integrity checks, cancellation, and atomic publication.
+- Fix vulnerable development dependency paths and enforce reviewed security exception expiry in local checks.
+- Preserve Windows installer argument boundaries, enforce process timeouts, and wait for NSIS uninstall completion.
+- Repair Linux CI credential setup, PAM empty-prompt assertions, historical test-marker secret-scan findings, and pull-request artifact names.
+
 ### Added
 
 - Initial open-source repository governance, contribution, security, and conduct policies.
@@ -20,6 +28,10 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 - SQLCipher database encryption with random system-stored data keys, transactional migrations, Argon2id password fallback, and independently encrypted imported private keys.
 - Unsigned Windows, macOS, and Linux prototype packaging with installation-bundle size reports and enforced desktop size budgets.
 - Signed full-package update checks and installation with tamper and wrong-key rejection validation.
-- Containerized OpenSSH integration testing across Ubuntu 22.04, Ubuntu 24.04, and Debian 12 with Nextest JUnit reports.
-- Debug-only Tauri end-to-end testing on Windows, macOS, and Linux with WebdriverIO reports and isolated test permissions.
+- OpenSSH compatibility testing across Ubuntu 22.04, Ubuntu 24.04, Debian 12, Rocky Linux 9, and Windows Server 2025, covering Ed25519, ECDSA P-256, RSA-SHA2, password, public-key, and keyboard-interactive authentication.
+- Debug-only Tauri end-to-end testing on Windows, macOS, and Linux with keyboard workflows, Windows viewport/DPI profiles, WCAG 2.1 A/AA reports, and isolated test permissions.
+- Credential, host-fingerprint, CSP, command-boundary, path-traversal, external-link, and log-redaction security controls are validated by a dedicated regression gate.
+- Startup, multi-session, terminal-output, memory, and SFTP performance budgets are captured by a dedicated regression gate and report schema.
+- A 24-hour stability, sleep/wake, network interruption, reconnect, and resource-leak protocol is enforced through a versioned budget and report validator.
 - G0-09 security and supply-chain gates with Rust/npm vulnerability and license checks, full-history secret scanning, CycloneDX SBOM archival, automated dependency updates, and a threat model.
+- P1-QA-09 release-candidate gate with versioned SBOM, license, signed installer/update, symbol, checksum, defect-disposition, and provenance evidence validation.

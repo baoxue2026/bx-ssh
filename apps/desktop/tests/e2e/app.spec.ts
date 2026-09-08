@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { browser, expect, $ } from "@wdio/globals";
+import { prepareApplication } from "./application";
+import { e2eProfile } from "./profile";
 
 const executable =
   process.platform === "win32" ? "bx-ssh-desktop.exe" : "bx-ssh-desktop";
@@ -14,6 +16,10 @@ interface AppInfo {
 }
 
 describe("BX SSH desktop shell", () => {
+  before(async () => {
+    await prepareApplication({ clearSshFixtures: true });
+  });
+
   it("loads the application and invokes the Rust backend", async () => {
     const shell = await $(".app-shell");
     await shell.waitForDisplayed();
@@ -24,7 +30,7 @@ describe("BX SSH desktop shell", () => {
 
     await expect($(".brand")).toHaveText(appInfo.name);
     await expect($(".version")).toHaveText(`v${appInfo.version}`);
-    await expect($("h1=连接验证")).toBeDisplayed();
+    await expect($(".sidebar")).toHaveAttribute("aria-label", "SSH 连接验证");
     await expect($(".connection-workspace-empty")).toBeDisplayed();
     await expect($(".connection-workspace-empty")).toHaveAttribute(
       "aria-label",
@@ -50,6 +56,47 @@ describe("BX SSH desktop shell", () => {
 
     await browser.keys(["Control", "2"]);
     await expect($(".sidebar-heading span")).toHaveText("SFTP v3");
+  });
+
+  it("completes core navigation with the keyboard", async () => {
+    await browser.keys(["Control", "n"]);
+    const connectionDialog = await $('[role="dialog"]');
+    await connectionDialog.waitForDisplayed();
+    await expect($(".ant-modal-title=新建连接")).toBeDisplayed();
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => {
+          const dialog = document.querySelector('[role="dialog"]');
+          return dialog?.contains(document.activeElement) ?? false;
+        }),
+      { timeoutMsg: "the connection dialog did not receive keyboard focus" },
+    );
+
+    await browser.keys(["Escape"]);
+    await connectionDialog.waitForDisplayed({ reverse: true });
+
+    await browser.keys(["Control", "b"]);
+    await browser.waitUntil(async () =>
+      ((await $(".sidebar").getAttribute("class")) ?? "").includes(
+        "is-collapsed",
+      ),
+    );
+    await browser.keys(["Control", "b"]);
+    await browser.waitUntil(
+      async () =>
+        !((await $(".sidebar").getAttribute("class")) ?? "").includes(
+          "is-collapsed",
+        ),
+    );
+
+    await focusAndActivate('button[aria-label="设置"]');
+    await expect($(".settings-view")).toBeDisplayed();
+    await focusAndActivate(".settings-nav-item:nth-child(2)");
+    await expect($(".settings-content h2")).toHaveText("终端");
+    await focusAndActivate(".settings-header button");
+    await $(".settings-view").waitForDisplayed({ reverse: true });
+
+    await browser.keys(["Control", "1"]);
   });
 
   it("maximizes and restores from the custom title bar", async () => {
@@ -78,7 +125,7 @@ describe("BX SSH desktop shell", () => {
     );
   });
 
-  it("keeps title-bar controls inside the viewport at Windows scale", async () => {
+  it("keeps key workflow regions inside the configured viewport", async () => {
     const geometry = (await browser.execute(() => {
       const topbar = document.querySelector(".topbar")!.getBoundingClientRect();
       const controls = Array.from(
@@ -89,24 +136,62 @@ describe("BX SSH desktop shell", () => {
       });
       return {
         devicePixelRatio: window.devicePixelRatio,
+        documentWidth: document.documentElement.scrollWidth,
+        innerHeight: window.innerHeight,
         innerWidth: window.innerWidth,
         topbarHeight: topbar.height,
         controls,
+        regions: [".topbar", ".workspace", ".statusbar"].map((selector) => {
+          const rect = document
+            .querySelector(selector)!
+            .getBoundingClientRect();
+          return {
+            selector,
+            bottom: rect.bottom,
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+          };
+        }),
       };
     })) as {
       devicePixelRatio: number;
+      documentWidth: number;
+      innerHeight: number;
       innerWidth: number;
       topbarHeight: number;
       controls: Array<{ left: number; right: number; width: number }>;
+      regions: Array<{
+        selector: string;
+        bottom: number;
+        left: number;
+        right: number;
+        top: number;
+      }>;
     };
 
-    expect(geometry.devicePixelRatio).toBeGreaterThanOrEqual(1);
+    if (e2eProfile.expectedDeviceScaleFactor !== null) {
+      expect(
+        Math.abs(
+          geometry.devicePixelRatio - e2eProfile.expectedDeviceScaleFactor,
+        ),
+      ).toBeLessThanOrEqual(0.05);
+    } else {
+      expect(geometry.devicePixelRatio).toBeGreaterThan(0);
+    }
+    expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.innerWidth + 1);
     expect(geometry.topbarHeight).toBe(38);
     expect(geometry.controls).toHaveLength(3);
     for (const control of geometry.controls) {
       expect(control.width).toBe(46);
       expect(control.left).toBeGreaterThanOrEqual(0);
       expect(control.right).toBeLessThanOrEqual(geometry.innerWidth);
+    }
+    for (const region of geometry.regions) {
+      expect(region.left).toBeGreaterThanOrEqual(-1);
+      expect(region.top).toBeGreaterThanOrEqual(-1);
+      expect(region.right).toBeLessThanOrEqual(geometry.innerWidth + 1);
+      expect(region.bottom).toBeLessThanOrEqual(geometry.innerHeight + 1);
     }
   });
 
@@ -132,7 +217,10 @@ describe("BX SSH desktop shell", () => {
     expect(startupPreferences.remoteFontRequests).toEqual([]);
 
     await selectAppearanceItem("外观", "English");
-    await expect($("h1=Connection Verification")).toBeDisplayed();
+    await expect($(".sidebar")).toHaveAttribute(
+      "aria-label",
+      "SSH connection verification",
+    );
     await browser.waitUntil(
       async () =>
         (await browser.execute(() => document.documentElement.lang)) ===
@@ -154,11 +242,11 @@ describe("BX SSH desktop shell", () => {
     );
 
     await selectAppearanceItem("Appearance", "Simplified Chinese");
-    await expect($("h1=连接验证")).toBeDisplayed();
+    await expect($(".sidebar")).toHaveAttribute("aria-label", "SSH 连接验证");
   });
 
   it("restores the existing window when a second instance starts", async () => {
-    await $('button[aria-label="最小化窗口"]').click();
+    await $(".window-control:first-child").click();
     await browser.waitUntil(
       () =>
         browser.tauri.execute(({ core }) =>
@@ -188,7 +276,8 @@ describe("BX SSH desktop shell", () => {
 });
 
 async function selectAppearanceItem(menuLabel: string, itemLabel: string) {
-  await $(`button=${menuLabel}`).click();
+  const triggerLabel = menuLabel === "Appearance" ? "Theme" : "主题";
+  await $(`button[aria-label="${triggerLabel}"]`).click();
   const item = await $(`.ant-dropdown-menu-item=${itemLabel}`);
   await item.waitForDisplayed();
   await item.click();
@@ -202,6 +291,17 @@ async function expectRootPreferences(theme: string, themeMode: string) {
     }))) as { theme?: string; themeMode?: string };
     return preferences.theme === theme && preferences.themeMode === themeMode;
   });
+}
+
+async function focusAndActivate(selector: string): Promise<void> {
+  const target = await $(selector);
+  const focused = await browser.execute((targetSelector) => {
+    const element = document.querySelector<HTMLElement>(targetSelector);
+    element?.focus();
+    return document.activeElement === element;
+  }, selector);
+  expect(focused).toBe(true);
+  await target.click();
 }
 
 async function launchSecondaryInstance(): Promise<void> {

@@ -116,7 +116,7 @@ export function OpenSshImportDialog({
         <Tooltip title={t("connectionImport.loadDefaultHelp")}>
           <Button
             icon={<RefreshCw size={14} />}
-            disabled={pending}
+            disabled={pending || loading}
             loading={loading}
             onClick={onLoadDefault}
           >

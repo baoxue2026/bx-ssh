@@ -20,8 +20,8 @@
         "title": "BX SSH",
         "width": 1180,
         "height": 760,
-        "minWidth": 800,
-        "minHeight": 560,
+        "minWidth": 640,
+        "minHeight": 360,
         "center": true,
         "decorations": false,
         "resizable": true
@@ -44,8 +44,18 @@
       "icons/icon.ico"
     ],
     "windows": {
+      "allowDowngrades": false,
       "webviewInstallMode": {
         "type": "skip"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "SimpChinese"],
+        "startMenuFolder": "BX SSH"
+      },
+      "wix": {
+        "upgradeCode": "701bc81a-2856-5f89-97c6-ee8383d0e686",
+        "language": "en-US"
       }
     }
   },

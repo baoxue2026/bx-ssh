@@ -1,4 +1,4 @@
-use bx_contracts::AppInfo;
+use bx_contracts::{AppInfo, LogLevel};
 #[cfg(any(debug_assertions, test))]
 use bx_contracts::{
     ConnectionConfig, ConnectionSettings, ConnectionSettingsLayers, ConnectionSettingsScope,
@@ -10,18 +10,25 @@ use tauri_plugin_window_state::StateFlags;
 #[cfg(any(debug_assertions, test))]
 use tauri_specta::{collect_commands, Builder};
 
+mod clipboard;
 mod command_error;
 mod connections;
 mod desktop_shell;
+mod diagnostics;
+mod external_links;
 mod lifecycle;
+mod local_files;
+mod logging;
 mod openssh_import;
 mod platform;
 mod private_keys;
 mod session_manager;
+mod settings;
 mod sftp;
 mod terminal;
 mod update;
 
+use clipboard::{read_clipboard_text, write_clipboard_text};
 use connections::{
     delete_connection, delete_connection_group, delete_password_credential, get_connection,
     get_password_credential, list_connections, record_successful_connection,
@@ -31,20 +38,33 @@ use connections::{
 };
 #[cfg(any(debug_assertions, test))]
 use desktop_shell::AppMenuAction;
+use diagnostics::{export_diagnostics, open_log_directory};
+use external_links::open_external_url;
 use lifecycle::{confirm_app_exit, AppActivity, ExitCoordinator, ExitImpact, EXIT_REQUESTED_EVENT};
+use local_files::{list_local_directory, stat_local_path};
 use openssh_import::{import_openssh_connections, preview_openssh_config};
 use platform::set_webview_memory_usage;
+use private_keys::{
+    delete_private_key_reference, inspect_private_key_file, list_private_keys,
+    save_private_key_reference,
+};
 use session_manager::{cancel_ssh_connection, SshSessionManager};
 use sftp::{
-    close_sftp_session, download_sftp_file, hash_remote_sftp_file, list_sftp_directory,
-    start_password_sftp, start_private_key_sftp, upload_sftp_file, SftpSessionManager,
+    cancel_sftp_transfer, chmod_sftp_entry, close_sftp_session, create_sftp_directory,
+    delete_sftp_entry, download_sftp_directory, download_sftp_directory_with_conflict,
+    download_sftp_file, download_sftp_file_with_conflict, hash_remote_sftp_file,
+    list_sftp_directory, move_sftp_entry, rename_sftp_entry, start_password_sftp,
+    start_private_key_sftp, stat_sftp_path, upload_sftp_directory,
+    upload_sftp_directory_with_conflict, upload_sftp_file, upload_sftp_file_with_conflict,
+    SftpSessionManager,
 };
 use terminal::{
     acknowledge_terminal_output, close_terminal_session, get_known_host, probe_ssh_host,
-    resize_terminal, start_password_shell, start_private_key_shell, trust_host_fingerprint,
-    write_terminal, TerminalSessionManager,
+    resize_terminal, respond_keyboard_interactive, start_keyboard_interactive_shell,
+    start_password_shell, start_private_key_shell, trust_host_fingerprint, write_terminal,
+    TerminalSessionManager,
 };
-use update::{check_for_update, install_update};
+use update::{cancel_update, check_for_update, install_update, UpdateOperationState};
 
 #[cfg(all(feature = "e2e", not(debug_assertions)))]
 compile_error!("the e2e feature must never be enabled in release builds");
@@ -60,6 +80,11 @@ fn command_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             app_info,
+            clipboard::read_clipboard_text,
+            clipboard::write_clipboard_text,
+            external_links::open_external_url,
+            diagnostics::open_log_directory,
+            diagnostics::export_diagnostics,
             terminal::probe_ssh_host,
             terminal::get_known_host,
             terminal::trust_host_fingerprint,
@@ -67,14 +92,30 @@ fn command_builder() -> Builder<tauri::Wry> {
             terminal::resize_terminal,
             terminal::acknowledge_terminal_output,
             terminal::close_terminal_session,
+            terminal::respond_keyboard_interactive,
             sftp::list_sftp_directory,
+            sftp::stat_sftp_path,
+            sftp::create_sftp_directory,
+            sftp::delete_sftp_entry,
+            sftp::move_sftp_entry,
+            sftp::rename_sftp_entry,
+            sftp::chmod_sftp_entry,
             sftp::upload_sftp_file,
+            sftp::upload_sftp_file_with_conflict,
             sftp::download_sftp_file,
+            sftp::download_sftp_file_with_conflict,
+            sftp::upload_sftp_directory,
+            sftp::upload_sftp_directory_with_conflict,
+            sftp::download_sftp_directory,
+            sftp::download_sftp_directory_with_conflict,
+            sftp::cancel_sftp_transfer,
             sftp::hash_remote_sftp_file,
             sftp::close_sftp_session,
             platform::set_webview_memory_usage,
             update::check_for_update,
             lifecycle::confirm_app_exit,
+            local_files::list_local_directory,
+            local_files::stat_local_path,
             connections::list_connections,
             connections::get_connection,
             connections::save_connection,
@@ -89,17 +130,29 @@ fn command_builder() -> Builder<tauri::Wry> {
             connections::reorder_connection_groups,
             connections::set_connection_favorite,
             connections::reorder_connections,
+            settings::get_global_settings,
+            settings::save_global_settings,
             openssh_import::preview_openssh_config,
             openssh_import::import_openssh_connections,
+            private_keys::list_private_keys,
+            private_keys::inspect_private_key_file,
+            private_keys::save_private_key_reference,
+            private_keys::delete_private_key_reference,
             session_manager::cancel_ssh_connection
         ])
         .typ::<terminal::StartShellRequest>()
+        .typ::<terminal::StartKeyboardInteractiveShellRequest>()
         .typ::<terminal::StartPrivateKeyShellRequest>()
         .typ::<terminal::StartShellResponse>()
         .typ::<terminal::TerminalEvent>()
+        .typ::<terminal::KeyboardInteractiveEvent>()
         .typ::<sftp::StartSftpRequest>()
         .typ::<sftp::StartPrivateKeySftpRequest>()
         .typ::<sftp::StartSftpResponse>()
+        .typ::<bx_contracts::TransferBatchSummary>()
+        .typ::<bx_contracts::SftpConflictAction>()
+        .typ::<bx_contracts::SftpTransferDirection>()
+        .typ::<bx_contracts::SftpTransferProgress>()
         .typ::<session_manager::SshConnectionEvent>()
         .typ::<update::UpdateEvent>()
         .typ::<AppMenuAction>()
@@ -108,6 +161,10 @@ fn command_builder() -> Builder<tauri::Wry> {
         .typ::<ConnectionSettings>()
         .typ::<ConnectionSettingsLayers>()
         .typ::<ConnectionSettingsScope>()
+        .typ::<bx_contracts::PrivateKeyStorageKind>()
+        .typ::<bx_contracts::PrivateKeySummary>()
+        .typ::<bx_contracts::PrivateKeyMetadata>()
+        .typ::<bx_contracts::PrivateKeyReferenceRequest>()
 }
 
 fn window_state_flags() -> StateFlags {
@@ -138,6 +195,14 @@ fn export_typescript_bindings() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(feature = "e2e")]
+    assert_eq!(
+        context.config().identifier,
+        "io.github.baoxue2026.bx-ssh.e2e",
+        "E2E builds must use the isolated application identity"
+    );
+
     #[cfg(debug_assertions)]
     export_typescript_bindings();
 
@@ -165,6 +230,13 @@ pub fn run() {
         .on_menu_event(desktop_shell::handle_menu_event)
         .on_tray_icon_event(desktop_shell::handle_tray_event)
         .setup(|app| {
+            let log_directory = app.path().app_data_dir()?.join("logs");
+            logging::initialize(log_directory, LogLevel::Info)?;
+            logging::event(
+                LogLevel::Info,
+                "application_started",
+                logging::LogFields::default(),
+            );
             desktop_shell::setup_tray(app.handle())?;
             Ok(())
         });
@@ -180,6 +252,7 @@ pub fn run() {
         .manage(sftp_manager)
         .manage(session_manager)
         .manage(ConnectionRepositoryState::default())
+        .manage(UpdateOperationState::default())
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
@@ -194,11 +267,18 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            read_clipboard_text,
+            write_clipboard_text,
+            open_external_url,
+            open_log_directory,
+            export_diagnostics,
             probe_ssh_host,
             get_known_host,
             trust_host_fingerprint,
             start_password_shell,
             start_private_key_shell,
+            start_keyboard_interactive_shell,
+            respond_keyboard_interactive,
             write_terminal,
             resize_terminal,
             acknowledge_terminal_output,
@@ -206,15 +286,31 @@ pub fn run() {
             start_password_sftp,
             start_private_key_sftp,
             list_sftp_directory,
+            stat_sftp_path,
+            create_sftp_directory,
+            delete_sftp_entry,
+            move_sftp_entry,
+            rename_sftp_entry,
+            chmod_sftp_entry,
             upload_sftp_file,
+            upload_sftp_file_with_conflict,
             download_sftp_file,
+            download_sftp_file_with_conflict,
+            upload_sftp_directory,
+            upload_sftp_directory_with_conflict,
+            download_sftp_directory,
+            download_sftp_directory_with_conflict,
+            cancel_sftp_transfer,
             hash_remote_sftp_file,
             close_sftp_session,
             cancel_ssh_connection,
             set_webview_memory_usage,
             check_for_update,
             install_update,
+            cancel_update,
             confirm_app_exit,
+            list_local_directory,
+            stat_local_path,
             list_connections,
             get_connection,
             save_connection,
@@ -229,10 +325,16 @@ pub fn run() {
             reorder_connection_groups,
             set_connection_favorite,
             reorder_connections,
+            settings::get_global_settings,
+            settings::save_global_settings,
             preview_openssh_config,
-            import_openssh_connections
+            import_openssh_connections,
+            list_private_keys,
+            inspect_private_key_file,
+            save_private_key_reference,
+            delete_private_key_reference
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build BX SSH")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {

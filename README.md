@@ -31,6 +31,21 @@ pnpm install
 pnpm dev
 ```
 
+## Windows Data and Installation Policy
+
+The Windows NSIS installer uses the current-user scope and groups shortcuts under
+`BX SSH`. MSI upgrades use a stable upgrade code, and both installer formats reject
+downgrades. The updater runs in passive mode and exits the old process before the
+new version is launched.
+
+Uninstall removes the application binaries, shortcuts, and installer metadata. It
+intentionally preserves the user data directory and Windows Credential Manager
+entries so reinstalling or upgrading does not lose saved connections, settings,
+host fingerprints, private-key references, or credentials. To remove all data,
+uninstall the application first, delete `%APPDATA%\\io.github.baoxue2026.bx-ssh`,
+and remove the `io.github.baoxue2026.bx-ssh` and
+`io.github.baoxue2026.bx-ssh.password` entries from Windows Credential Manager.
+
 Run all local quality checks before opening a pull request:
 
 ```powershell

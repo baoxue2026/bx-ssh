@@ -3,6 +3,7 @@ set -eu
 
 test_user="${BX_SSH_TEST_USERNAME:-bxssh}"
 test_password="${BX_SSH_TEST_PASSWORD:?BX_SSH_TEST_PASSWORD is required}"
+host_key_algorithm="${BX_SSH_TEST_HOST_KEY_ALGORITHM:-ed25519}"
 authorized_key="/test/authorized_keys"
 
 if [ ! -s "${authorized_key}" ]; then
@@ -12,7 +13,24 @@ fi
 
 mkdir -p /run/sshd
 rm -f /etc/ssh/ssh_host_*
-ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key
+case "${host_key_algorithm}" in
+  ed25519)
+    host_key_path="/etc/ssh/ssh_host_ed25519_key"
+    ssh-keygen -q -t ed25519 -N "" -f "${host_key_path}"
+    ;;
+  ecdsa-p256)
+    host_key_path="/etc/ssh/ssh_host_ecdsa_key"
+    ssh-keygen -q -t ecdsa -b 256 -N "" -f "${host_key_path}"
+    ;;
+  rsa-sha2)
+    host_key_path="/etc/ssh/ssh_host_rsa_key"
+    ssh-keygen -q -t rsa -b 3072 -N "" -f "${host_key_path}"
+    ;;
+  *)
+    echo "unsupported host key algorithm: ${host_key_algorithm}" >&2
+    exit 2
+    ;;
+esac
 
 if ! id "${test_user}" >/dev/null 2>&1; then
   useradd --create-home --user-group --shell /bin/bash "${test_user}"
@@ -27,13 +45,15 @@ install -m 0600 -o "${test_user}" -g "${test_user}" \
 cat >/etc/ssh/sshd_config <<EOF
 Port 22
 ListenAddress 0.0.0.0
-HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey ${host_key_path}
 AuthorizedKeysFile .ssh/authorized_keys
+AcceptEnv BX_SSH_TEST_ENV
+MaxStartups 64
 PasswordAuthentication yes
 PubkeyAuthentication yes
-KbdInteractiveAuthentication no
-ChallengeResponseAuthentication no
-UsePAM no
+KbdInteractiveAuthentication yes
+ChallengeResponseAuthentication yes
+UsePAM yes
 PermitRootLogin no
 PermitEmptyPasswords no
 StrictModes yes

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import i18n from "../i18n";
 import {
   LANGUAGE_STORAGE_KEY,
+  TERMINAL_APPEARANCE_STORAGE_KEY,
   THEME_STORAGE_KEY,
   readLanguage,
+  readTerminalAppearance,
   readThemeMode,
   resolveTheme,
   writePreference,
@@ -18,6 +20,9 @@ const DARK_THEME_QUERY = "(prefers-color-scheme: dark)";
 export function UiPreferencesProvider({ children }: { children: ReactNode }) {
   const [themeMode, setThemeMode] = useState<ThemeMode>(readThemeMode);
   const [language, setLanguage] = useState<AppLanguage>(readLanguage);
+  const [terminalAppearance, setTerminalAppearance] = useState(
+    readTerminalAppearance,
+  );
   const [systemTheme, setSystemTheme] =
     useState<ResolvedTheme>(readSystemTheme);
   const resolvedTheme = resolveTheme(themeMode, systemTheme);
@@ -42,15 +47,24 @@ export function UiPreferencesProvider({ children }: { children: ReactNode }) {
     }
   }, [language, resolvedTheme, themeMode]);
 
+  useEffect(() => {
+    writePreference(
+      TERMINAL_APPEARANCE_STORAGE_KEY,
+      JSON.stringify(terminalAppearance),
+    );
+  }, [terminalAppearance]);
+
   const value = useMemo<UiPreferences>(
     () => ({
       language,
       resolvedTheme,
+      setTerminalAppearance,
       setLanguage,
       setThemeMode,
+      terminalAppearance,
       themeMode,
     }),
-    [language, resolvedTheme, themeMode],
+    [language, resolvedTheme, terminalAppearance, themeMode],
   );
 
   return (

@@ -1,10 +1,12 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::path::Path;
 
 use bx_contracts::{
-    AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails, ConnectionGroup,
-    ConnectionListItem, ConnectionSettingsLayers, ConnectionSettingsOverride,
-    ConnectionSettingsScope, ConnectionSettingsSnapshot, HostKeyInfo,
+    ApplicationSettings, AuthMethod, ConnectionCatalog, ConnectionConfig, ConnectionDetails,
+    ConnectionGroup, ConnectionListItem, ConnectionSettings, ConnectionSettingsLayers,
+    ConnectionSettingsOverride, ConnectionSettingsScope, ConnectionSettingsSnapshot,
+    GlobalSettingsSnapshot, HostKeyInfo, PrivateKeyStorageKind, PrivateKeySummary,
 };
 use rusqlite::{params, OptionalExtension, Row, Transaction};
 
@@ -12,6 +14,7 @@ use crate::{EncryptedDatabase, PersistenceError, Result, APPLICATION_MIGRATIONS}
 
 const CONNECT_TIMEOUT_KEY: &str = "connection.connectTimeoutSecs";
 const KEEP_ALIVE_KEY: &str = "connection.keepAliveSecs";
+const APPLICATION_SETTINGS_KEY: &str = "application.settings";
 
 const CONNECTION_LIST_SQL: &str = "
     SELECT c.id, c.group_id, c.name, c.host, c.port, c.username, c.notes, c.color,
@@ -83,6 +86,11 @@ impl ConnectionRepository {
         Ok(Self { database })
     }
 
+    /// Creates a consistent encrypted backup while the repository lock is held.
+    pub fn backup_to(&self, destination: impl AsRef<Path>) -> Result<()> {
+        self.database.backup_to(destination)
+    }
+
     pub fn list_catalog(&self) -> Result<ConnectionCatalog> {
         Ok(ConnectionCatalog {
             groups: self.list_groups()?,
@@ -108,7 +116,12 @@ impl ConnectionRepository {
         };
         let layers = self
             .load_settings_layers(&connection.config.id, connection.config.group_id.as_deref())?;
-        let resolved = layers.resolve();
+        let resolved =
+            layers
+                .resolve_checked()
+                .map_err(|_| PersistenceError::InvalidStoredRecord {
+                    entity: "connection setting",
+                })?;
         Ok(Some(ConnectionDetails {
             connection,
             settings: ConnectionSettingsSnapshot { layers, resolved },
@@ -168,6 +181,169 @@ impl ConnectionRepository {
             })
             .optional()
             .map_err(|source| database_operation("query a private key", source))
+    }
+
+    pub fn list_private_key_summaries(&self) -> Result<Vec<PrivateKeySummary>> {
+        let mut statement = self
+            .database
+            .connection()
+            .prepare(
+                "SELECT k.id, k.name, k.storage_kind, k.file_path,
+                        k.public_key_algorithm, k.fingerprint_sha256, k.comment,
+                        k.created_at, k.updated_at, k.revision,
+                        COUNT(c.id)
+                 FROM key_references k
+                 LEFT JOIN connections c
+                   ON c.key_reference_id = k.id
+                 GROUP BY k.id
+                 ORDER BY k.name COLLATE NOCASE, k.id",
+            )
+            .map_err(|source| database_operation("prepare private key list", source))?;
+        let rows = statement
+            .query_map([], |row| {
+                let storage = row.get::<_, String>(2)?;
+                let storage_kind = PrivateKeyStorageKind::from_database_value(&storage)
+                    .ok_or_else(|| {
+                        rusqlite::Error::InvalidColumnType(
+                            2,
+                            "storage_kind".to_owned(),
+                            rusqlite::types::Type::Text,
+                        )
+                    })?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    storage_kind,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, i64>(10)?,
+                ))
+            })
+            .map_err(|source| database_operation("query private key list", source))?;
+        rows.map(|row| {
+            let (
+                id,
+                name,
+                storage_kind,
+                file_path,
+                public_key_algorithm,
+                fingerprint_sha256,
+                comment,
+                created_at,
+                updated_at,
+                revision,
+                reference_count,
+            ) = row.map_err(|source| database_operation("read private key summary", source))?;
+            Ok(PrivateKeySummary {
+                id,
+                name,
+                storage_kind,
+                file_path,
+                public_key_algorithm,
+                fingerprint_sha256,
+                comment,
+                created_at: stored_u64(created_at, "private key")?,
+                updated_at: stored_u64(updated_at, "private key")?,
+                revision: stored_u64(revision, "private key")?,
+                reference_count: stored_u64(reference_count, "private key reference count")?,
+            })
+        })
+        .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_private_key_reference(
+        &mut self,
+        id: &str,
+        name: &str,
+        storage_kind: PrivateKeyStorageKind,
+        file_path: Option<&str>,
+        encrypted_material: Option<&[u8]>,
+        material_key_ref: Option<&str>,
+        passphrase_credential_ref: Option<&str>,
+        public_key_algorithm: &str,
+        fingerprint_sha256: &str,
+        comment: Option<&str>,
+        now_ms: u64,
+    ) -> Result<()> {
+        validate_id(id)?;
+        if name.trim().is_empty()
+            || public_key_algorithm.trim().is_empty()
+            || !is_sha256_fingerprint(fingerprint_sha256)
+        {
+            return Err(PersistenceError::InvalidStoredRecord {
+                entity: "private key",
+            });
+        }
+        let now = timestamp_to_i64(now_ms)?;
+        let valid_storage = match storage_kind {
+            PrivateKeyStorageKind::File => {
+                file_path.is_some_and(|path| !path.trim().is_empty())
+                    && encrypted_material.is_none()
+                    && material_key_ref.is_none()
+            }
+            PrivateKeyStorageKind::Imported => {
+                file_path.is_none()
+                    && encrypted_material.is_some_and(|value| !value.is_empty())
+                    && material_key_ref.is_some_and(|value| !value.trim().is_empty())
+            }
+        };
+        if !valid_storage {
+            return Err(PersistenceError::InvalidStoredRecord {
+                entity: "private key",
+            });
+        }
+        self.database
+            .connection()
+            .execute(
+                "INSERT INTO key_references
+                 (id, name, storage_kind, file_path, encrypted_material, material_key_ref,
+                  passphrase_credential_ref, public_key_algorithm, fingerprint_sha256,
+                  comment, created_at, updated_at, revision)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, 1)",
+                params![
+                    id,
+                    name.trim(),
+                    storage_kind.database_value(),
+                    file_path.map(str::trim),
+                    encrypted_material,
+                    material_key_ref.map(str::trim),
+                    passphrase_credential_ref.map(str::trim),
+                    public_key_algorithm.trim(),
+                    fingerprint_sha256,
+                    comment.map(str::trim),
+                    now,
+                ],
+            )
+            .map_err(|source| database_operation("insert private key reference", source))?;
+        Ok(())
+    }
+
+    pub fn delete_private_key_reference(&mut self, id: &str) -> Result<bool> {
+        validate_id(id)?;
+        let connection_count: i64 = self
+            .database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM connections WHERE key_reference_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(|source| database_operation("check private key references", source))?;
+        if connection_count > 0 {
+            return Err(PersistenceError::PrivateKeyInUse);
+        }
+        let changed = self
+            .database
+            .connection()
+            .execute("DELETE FROM key_references WHERE id = ?1", [id])
+            .map_err(|source| database_operation("delete private key reference", source))?;
+        Ok(changed > 0)
     }
 
     pub fn trust_host_fingerprint(
@@ -353,6 +529,9 @@ impl ConnectionRepository {
         config
             .validate()
             .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
+        settings
+            .validate()
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
         let now = timestamp_to_i64(now_ms)?;
         let transaction = self
             .database
@@ -394,6 +573,9 @@ impl ConnectionRepository {
         settings: ConnectionSettingsOverride,
         now_ms: u64,
     ) -> Result<()> {
+        settings
+            .validate()
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
         let owner = match scope {
             ConnectionSettingsScope::Global => SettingOwner::Global,
             ConnectionSettingsScope::Group { group_id } if !group_id.trim().is_empty() => {
@@ -416,6 +598,97 @@ impl ConnectionRepository {
         transaction
             .commit()
             .map_err(|source| database_operation("commit a settings transaction", source))
+    }
+
+    pub fn get_global_settings(&self) -> Result<GlobalSettingsSnapshot> {
+        let (mut application, application_initialized) =
+            read_application_settings(self.database.connection())?;
+        if let Some(group_id) = application.default_group_id.as_deref() {
+            let exists = self
+                .database
+                .connection()
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM connection_groups WHERE id = ?1)",
+                    [group_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|source| database_operation("validate the default group", source))?;
+            if !exists {
+                application.default_group_id = None;
+            }
+        }
+        let layers = ConnectionSettingsLayers {
+            global: self.load_setting_override(SettingOwner::Global)?,
+            group: None,
+            connection: None,
+        };
+        let connection =
+            layers
+                .resolve_checked()
+                .map_err(|_| PersistenceError::InvalidStoredRecord {
+                    entity: "connection setting",
+                })?;
+        Ok(GlobalSettingsSnapshot {
+            application,
+            application_initialized,
+            connection,
+        })
+    }
+
+    pub fn save_global_settings(
+        &mut self,
+        application: &ApplicationSettings,
+        connection: ConnectionSettings,
+        now_ms: u64,
+    ) -> Result<GlobalSettingsSnapshot> {
+        application
+            .validate()
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
+        connection
+            .validate()
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
+        if let Some(group_id) = application.default_group_id.as_deref() {
+            let exists = self
+                .database
+                .connection()
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM connection_groups WHERE id = ?1)",
+                    [group_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|source| database_operation("validate the default group", source))?;
+            if !exists {
+                return Err(PersistenceError::InvalidConnectionConfiguration);
+            }
+        }
+        let serialized = serde_json::to_string(application)
+            .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
+        let now = timestamp_to_i64(now_ms)?;
+        let transaction = self
+            .database
+            .transaction()
+            .map_err(|source| database_operation("start a global settings transaction", source))?;
+        write_global_json_setting(&transaction, APPLICATION_SETTINGS_KEY, &serialized, now)
+            .map_err(|source| database_operation("save application settings", source))?;
+        apply_settings(
+            &transaction,
+            SettingOwner::Global,
+            ConnectionSettingsOverride {
+                connect_timeout_secs: Some(connection.connect_timeout_secs),
+                keep_alive_secs: Some(connection.keep_alive_secs),
+            },
+            now,
+        )
+        .map_err(|source| database_operation("save global connection settings", source))?;
+        transaction
+            .commit()
+            .map_err(|source| database_operation("commit a global settings transaction", source))?;
+
+        Ok(GlobalSettingsSnapshot {
+            application: application.clone(),
+            application_initialized: true,
+            connection,
+        })
     }
 
     pub fn delete_connection(&mut self, id: &str, now_ms: u64) -> Result<bool> {
@@ -740,6 +1013,9 @@ fn save_connection_record(
     settings: ConnectionSettingsOverride,
     now: i64,
 ) -> Result<()> {
+    settings
+        .validate()
+        .map_err(|_| PersistenceError::InvalidConnectionConfiguration)?;
     transaction
         .execute(
             "INSERT INTO connections
@@ -871,6 +1147,51 @@ fn write_setting(
     .map(|_| ())
 }
 
+fn write_global_json_setting(
+    transaction: &Transaction<'_>,
+    key: &str,
+    value_json: &str,
+    now: i64,
+) -> rusqlite::Result<()> {
+    transaction
+        .execute(
+            "INSERT INTO settings (key, value_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?3)
+             ON CONFLICT(key) WHERE group_id IS NULL AND connection_id IS NULL
+             DO UPDATE SET value_json = excluded.value_json,
+                           updated_at = excluded.updated_at,
+                           revision = settings.revision + 1",
+            params![key, value_json, now],
+        )
+        .map(|_| ())
+}
+
+fn read_application_settings(
+    connection: &rusqlite::Connection,
+) -> Result<(ApplicationSettings, bool)> {
+    let value_json = connection
+        .query_row(
+            "SELECT value_json FROM settings
+             WHERE key = ?1 AND group_id IS NULL AND connection_id IS NULL",
+            [APPLICATION_SETTINGS_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|source| database_operation("read application settings", source))?;
+    let Some(value_json) = value_json else {
+        return Ok((ApplicationSettings::default(), false));
+    };
+    let settings = serde_json::from_str::<ApplicationSettings>(&value_json)
+        .map_err(|_| PersistenceError::InvalidStoredRecord {
+            entity: "application setting",
+        })?
+        .migrate()
+        .map_err(|_| PersistenceError::InvalidStoredRecord {
+            entity: "application setting",
+        })?;
+    Ok((settings, true))
+}
+
 fn read_setting_rows<P>(
     statement: rusqlite::Result<rusqlite::Statement<'_>>,
     parameters: P,
@@ -900,6 +1221,11 @@ where
             _ => {}
         }
     }
+    values
+        .validate()
+        .map_err(|_| PersistenceError::InvalidStoredRecord {
+            entity: "connection setting",
+        })?;
     Ok(values)
 }
 
@@ -1006,12 +1332,22 @@ fn validate_host_key(host_key: &HostKeyInfo) -> Result<()> {
     }
 }
 
+fn is_sha256_fingerprint(value: &str) -> bool {
+    value.strip_prefix("SHA256:").is_some_and(|encoded| {
+        encoded.len() == 43
+            && encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::{Deref, DerefMut};
 
     use bx_contracts::{
-        ConnectionSettings, HostKeyInfo, DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEP_ALIVE_SECS,
+        ConnectionSettings, HostKeyInfo, LogLevel, ThemeMode, DEFAULT_CONNECT_TIMEOUT_SECS,
+        DEFAULT_KEEP_ALIVE_SECS,
     };
     use tempfile::{tempdir, TempDir};
 
@@ -1102,6 +1438,52 @@ mod tests {
             .get_private_key_reference("missing")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn manages_private_key_summaries_and_prevents_deleting_referenced_keys() {
+        let mut repository = test_repository();
+        repository
+            .insert_private_key_reference(
+                "key-1",
+                "Deploy key",
+                PrivateKeyStorageKind::File,
+                Some("/keys/deploy"),
+                None,
+                None,
+                None,
+                "ssh-ed25519",
+                "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                Some("production"),
+                1_000,
+            )
+            .unwrap();
+        let summaries = repository.list_private_key_summaries().unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].reference_count, 0);
+        assert_eq!(summaries[0].storage_kind, PrivateKeyStorageKind::File);
+
+        let mut connection =
+            ConnectionConfig::new("connection-1", "Production", "example.com", "alice");
+        connection.auth_method = AuthMethod::PrivateKey;
+        connection.key_reference_id = Some("key-1".to_owned());
+        repository
+            .save_connection(&connection, ConnectionSettingsOverride::default(), 2_000)
+            .unwrap();
+        assert!(matches!(
+            repository.delete_private_key_reference("key-1"),
+            Err(PersistenceError::PrivateKeyInUse)
+        ));
+        assert_eq!(
+            repository.list_private_key_summaries().unwrap()[0].reference_count,
+            1
+        );
+
+        repository.delete_connection("connection-1", 3_000).unwrap();
+        assert!(matches!(
+            repository.delete_private_key_reference("key-1"),
+            Err(PersistenceError::PrivateKeyInUse)
+        ));
     }
 
     #[test]
@@ -1356,6 +1738,139 @@ mod tests {
                 keep_alive_secs: 50,
             }
         );
+    }
+
+    #[test]
+    fn rejects_zero_connect_timeout_without_persisting_other_settings() {
+        let mut repository = test_repository();
+
+        assert!(matches!(
+            repository.save_settings(
+                &ConnectionSettingsScope::Global,
+                ConnectionSettingsOverride {
+                    connect_timeout_secs: Some(0),
+                    keep_alive_secs: Some(45),
+                },
+                1000,
+            ),
+            Err(PersistenceError::InvalidConnectionConfiguration)
+        ));
+
+        let setting_count: i64 = repository
+            .database
+            .connection()
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(setting_count, 0);
+    }
+
+    #[test]
+    fn rejects_a_connection_with_corrupted_stored_settings() {
+        let mut repository = test_repository();
+        let config = ConnectionConfig::new("connection-1", "Production", "example.com", "alice");
+        repository
+            .save_connection(&config, ConnectionSettingsOverride::default(), 1000)
+            .unwrap();
+        repository
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO settings
+                 (key, value_json, connection_id, created_at, updated_at)
+                 VALUES (?1, '0', ?2, 1001, 1001)",
+                params![CONNECT_TIMEOUT_KEY, config.id],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            repository.get_connection(&config.id),
+            Err(PersistenceError::InvalidStoredRecord {
+                entity: "connection setting"
+            })
+        ));
+    }
+
+    #[test]
+    fn saves_and_loads_versioned_global_settings_atomically() {
+        let mut repository = test_repository();
+        let initial = repository.get_global_settings().unwrap();
+        assert!(!initial.application_initialized);
+        assert_eq!(initial.application, ApplicationSettings::default());
+        assert_eq!(initial.connection, ConnectionSettings::default());
+
+        repository
+            .save_group(&test_group("group-1", "Production", "#1677FF", 0), 1000)
+            .unwrap();
+        let application = ApplicationSettings {
+            theme_mode: ThemeMode::Light,
+            default_group_id: Some("group-1".to_owned()),
+            terminal_font_size: 16,
+            log_level: LogLevel::Debug,
+            ..ApplicationSettings::default()
+        };
+        let connection = ConnectionSettings {
+            connect_timeout_secs: 20,
+            keep_alive_secs: 45,
+        };
+
+        let saved = repository
+            .save_global_settings(&application, connection, 1001)
+            .unwrap();
+        assert!(saved.application_initialized);
+        assert_eq!(saved.application, application);
+        assert_eq!(saved.connection, connection);
+        assert_eq!(repository.get_global_settings().unwrap(), saved);
+    }
+
+    #[test]
+    fn migrates_older_application_settings_and_clears_a_stale_default_group() {
+        let repository = test_repository();
+        repository
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO settings (key, value_json, created_at, updated_at)
+                 VALUES (?1, ?2, 1000, 1000)",
+                params![
+                    APPLICATION_SETTINGS_KEY,
+                    r#"{"version":0,"themeMode":"light","defaultGroupId":"deleted-group"}"#
+                ],
+            )
+            .unwrap();
+
+        let settings = repository.get_global_settings().unwrap();
+        assert!(settings.application_initialized);
+        assert_eq!(settings.application.theme_mode, ThemeMode::Light);
+        assert_eq!(settings.application.default_group_id, None);
+        assert_eq!(settings.application.log_level, LogLevel::Info);
+    }
+
+    #[test]
+    fn rejects_an_unknown_default_group_without_partial_global_settings() {
+        let mut repository = test_repository();
+        let application = ApplicationSettings {
+            default_group_id: Some("missing-group".to_owned()),
+            ..ApplicationSettings::default()
+        };
+
+        assert!(matches!(
+            repository.save_global_settings(
+                &application,
+                ConnectionSettings {
+                    connect_timeout_secs: 20,
+                    keep_alive_secs: 45,
+                },
+                1000,
+            ),
+            Err(PersistenceError::InvalidConnectionConfiguration)
+        ));
+
+        let setting_count: i64 = repository
+            .database
+            .connection()
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(setting_count, 0);
     }
 
     #[test]

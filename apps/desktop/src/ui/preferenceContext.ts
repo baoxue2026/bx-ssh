@@ -4,12 +4,15 @@ import type {
   ResolvedTheme,
   ThemeMode,
 } from "./preferenceStorage";
+import type { TerminalAppearancePreferences } from "../components/terminalAppearance";
 
 export interface UiPreferences {
   language: AppLanguage;
   resolvedTheme: ResolvedTheme;
+  setTerminalAppearance(appearance: TerminalAppearancePreferences): void;
   setLanguage(language: AppLanguage): void;
   setThemeMode(themeMode: ThemeMode): void;
+  terminalAppearance: TerminalAppearancePreferences;
   themeMode: ThemeMode;
 }
 

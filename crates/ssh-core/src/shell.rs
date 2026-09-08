@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use russh::{client, Channel, ChannelMsg};
 
 use crate::SshError;
@@ -74,10 +76,16 @@ pub struct SshShell {
 }
 
 impl SshShell {
-    pub(crate) async fn open(
+    pub(crate) async fn open_with_environment(
         mut channel: Channel<client::Msg>,
         size: TerminalSize,
+        environment: &BTreeMap<String, String>,
     ) -> Result<Self, SshError> {
+        for (name, value) in environment {
+            channel.set_env(true, name, value).await?;
+            await_request_reply(&mut channel, "environment").await?;
+        }
+
         channel
             .request_pty(
                 true,

@@ -56,6 +56,12 @@ Each commit must represent one coherent change. Do not mix feature behavior with
 - `CHANGELOG.md` keeps an `[Unreleased]` section and records user-visible changes.
 - Build artifacts, SBOMs, signatures, symbols, and test reports are generated and archived by CI, not committed to source control.
 
+## Quality Gates
+
+The phase-1 test matrix is maintained in [quality/phase-1-test-matrix.json](quality/phase-1-test-matrix.json). It defines owners, environments, commands, manual checks, artifacts, and release-blocking suites for functional, compatibility, performance, stability, security, installation, recovery, and release validation. CI runs `pnpm qa:check` and `pnpm qa:test`; changes to the matrix must keep both checks passing. The RC policy in [quality/phase-1-release-gate.json](quality/phase-1-release-gate.json) additionally requires traceable versioned evidence before publication.
+
+P0 and P1 defects block releases. P0 covers security or unrecoverable data impact and inability to start or upgrade; P1 covers unavailable core SSH, terminal, SFTP, credential, or update workflows. P2 and P3 defects require an owner and planned disposition but do not automatically block a release.
+
 ## Sensitive Data
 
 Never commit passwords, private keys, tokens, signing material, real databases, host inventories, logs, diagnostics, or user data.

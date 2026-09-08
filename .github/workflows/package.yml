@@ -72,6 +72,14 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
+      - name: Validate Windows installation policy
+        run: node scripts/check-windows-packaging.mjs
+
+      - name: Test Windows installer process handling
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-process.ps1
+
       - name: Prepare updater signing directory
         run: >-
           node -e "require('node:fs').mkdirSync(process.argv[1], { recursive: true })"
@@ -118,13 +126,31 @@ jobs:
           --version "0.1.1"
           --base-url "https://github.com/baoxue2026/bx-ssh/releases/download/v0.1.1/"
 
+      - name: Validate Windows installer lifecycle
+        if: runner.os == 'Windows'
+        timeout-minutes: 15
+        shell: pwsh
+        run: >-
+          ./scripts/test-windows-installation.ps1
+          -BundleRoot "target/release/bundle"
+          -ReportPath "artifacts/installation/windows-installation-report.json"
+
+      - name: Prepare versioned release evidence fragment
+        run: >-
+          node scripts/prepare-release-evidence.mjs
+          --platform "${{ matrix.platform }}"
+          --version "ci-${{ github.sha }}"
+          --bundle-dir "${{ github.workspace }}/target/release/bundle"
+          --output-dir "${{ github.workspace }}/artifacts/release"
+          --reports-dir "${{ github.workspace }}/artifacts"
+
       - name: Upload prototype bundles and size report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bx-ssh-${{ matrix.platform }}-${{ github.sha }}
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 90
           path: |
             target/release/bundle/**/*.AppImage
             target/release/bundle/**/*.deb
@@ -135,5 +161,11 @@ jobs:
             target/release/bundle/**/*.sig
             target/release/bundle/**/*.tar.gz
             target/release/bundle/**/*.zip
+            target/release/**/*.pdb
+            target/release/**/*.dSYM/**
+            target/release/**/*.debug
+            target/release/**/*.sym
             artifacts/bundle-size/*
             artifacts/updater/reports/*
+            artifacts/installation/*
+            artifacts/release/**

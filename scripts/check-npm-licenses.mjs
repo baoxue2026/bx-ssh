@@ -86,7 +86,7 @@ for (const [license, packages] of Object.entries(report)) {
     if (
       matching &&
       matching.license === license &&
-      matching.reviewBy >= new Date().toISOString().slice(0, 10)
+      matching.reviewBy > new Date().toISOString().slice(0, 10)
     ) {
       continue;
     }

@@ -13,10 +13,22 @@ pub(crate) enum CommandErrorCode {
     InvalidFingerprint,
     InvalidTerminalSize,
     InvalidRemotePath,
+    InvalidLocalPath,
+    LocalPathNotFound,
+    LocalPathNotDirectory,
+    LocalPathPermissionDenied,
+    LocalPathIoError,
     InvalidLocalFile,
+    InvalidLocalDirectory,
+    InvalidRemoteDirectory,
+    UnsupportedTransferEntry,
     LocalTargetExists,
     RemoteTargetExists,
+    RemoteDirectoryNotEmpty,
+    InvalidRemotePermissions,
     TransferIntegrityMismatch,
+    TransferCancelled,
+    TransferCleanupFailed,
     ConnectTimeout,
     DnsLookupTimeout,
     DnsLookupFailed,
@@ -28,6 +40,7 @@ pub(crate) enum CommandErrorCode {
     HandshakeFailed,
     ConnectionCancelled,
     InvalidConnectionAttempt,
+    InvalidTransferId,
     ConnectionAttemptConflict,
     SessionStateInvalid,
     AuthenticationTimeout,
@@ -44,11 +57,15 @@ pub(crate) enum CommandErrorCode {
     TransportError,
     SessionNotFound,
     SessionClosed,
+    TerminalOutputUnavailable,
     UpdateNotAvailable,
     UpdateChanged,
     UpdateSignatureInvalid,
     UpdateInsecureEndpoint,
     UpdateUnavailable,
+    UpdateCancelled,
+    UpdateInProgress,
+    UpdateBackupFailed,
     UpdateFailed,
     WebviewMemoryUsageFailed,
     DatabaseUnavailable,
@@ -57,9 +74,14 @@ pub(crate) enum CommandErrorCode {
     CredentialStoreUnavailable,
     CredentialStoreFailed,
     InvalidCredential,
+    ClipboardUnavailable,
+    InvalidExternalUrl,
+    ExternalLinkOpenFailed,
     OpenSshConfigNotFound,
     OpenSshConfigIoError,
     OpenSshConfigInvalid,
+    LogDirectoryUnavailable,
+    DiagnosticsExportFailed,
 }
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -98,14 +120,16 @@ impl CommandError {
         )
     }
 
+    pub(crate) fn local_path(code: CommandErrorCode, message: impl Into<String>) -> Self {
+        Self::new(code, message)
+    }
+
     pub(crate) fn update(code: CommandErrorCode, message: impl Into<String>) -> Self {
         Self::new(code, message)
     }
-}
 
-impl From<SshError> for CommandError {
-    fn from(error: SshError) -> Self {
-        let code = match &error {
+    pub(crate) fn from_ssh(error: &SshError) -> Self {
+        let code = match error {
             SshError::InvalidHost => CommandErrorCode::InvalidHost,
             SshError::InvalidPort => CommandErrorCode::InvalidPort,
             SshError::InvalidUsername => CommandErrorCode::InvalidUsername,
@@ -113,11 +137,18 @@ impl From<SshError> for CommandError {
             SshError::InvalidTerminalSize => CommandErrorCode::InvalidTerminalSize,
             SshError::InvalidRemotePath => CommandErrorCode::InvalidRemotePath,
             SshError::InvalidLocalFile => CommandErrorCode::InvalidLocalFile,
+            SshError::InvalidLocalDirectory => CommandErrorCode::InvalidLocalDirectory,
+            SshError::InvalidRemoteDirectory => CommandErrorCode::InvalidRemoteDirectory,
+            SshError::UnsupportedTransferEntry { .. } => CommandErrorCode::UnsupportedTransferEntry,
             SshError::LocalTargetExists => CommandErrorCode::LocalTargetExists,
             SshError::RemoteTargetExists => CommandErrorCode::RemoteTargetExists,
+            SshError::RemoteDirectoryNotEmpty => CommandErrorCode::RemoteDirectoryNotEmpty,
+            SshError::InvalidRemotePermissions => CommandErrorCode::InvalidRemotePermissions,
             SshError::TransferIntegrityMismatch { .. } => {
                 CommandErrorCode::TransferIntegrityMismatch
             }
+            SshError::TransferCancelled => CommandErrorCode::TransferCancelled,
+            SshError::TransferCleanupFailed { .. } => CommandErrorCode::TransferCleanupFailed,
             SshError::ConnectTimeout => CommandErrorCode::ConnectTimeout,
             SshError::DnsLookupTimeout => CommandErrorCode::DnsLookupTimeout,
             SshError::DnsLookupFailed(_) => CommandErrorCode::DnsLookupFailed,
@@ -150,14 +181,26 @@ impl From<SshError> for CommandError {
     }
 }
 
+impl From<SshError> for CommandError {
+    fn from(error: SshError) -> Self {
+        Self::from_ssh(&error)
+    }
+}
+
 impl From<PersistenceError> for CommandError {
     fn from(error: PersistenceError) -> Self {
         let code = match &error {
             PersistenceError::DatabaseOperation { .. }
             | PersistenceError::InvalidConnectionConfiguration
             | PersistenceError::InvalidStoredRecord { .. }
-            | PersistenceError::InvalidTimestamp => CommandErrorCode::DatabaseQueryFailed,
+            | PersistenceError::InvalidTimestamp
+            | PersistenceError::MigrationFailed { .. }
+            | PersistenceError::MigrationBackupFailed(_)
+            | PersistenceError::MigrationBackupIoFailed(_)
+            | PersistenceError::DatabaseBackupFailed(_)
+            | PersistenceError::DatabaseBackupIoFailed(_) => CommandErrorCode::DatabaseQueryFailed,
             PersistenceError::InvalidCredential => CommandErrorCode::InvalidCredential,
+            PersistenceError::PrivateKeyInUse => CommandErrorCode::PrivateKeyError,
             PersistenceError::CredentialStoreLocked => CommandErrorCode::CredentialStoreLocked,
             PersistenceError::CredentialStoreUnavailable => {
                 CommandErrorCode::CredentialStoreUnavailable
@@ -234,7 +277,17 @@ mod tests {
 
         let locked = CommandError::from(bx_persistence::PersistenceError::CredentialStoreLocked);
         let invalid = CommandError::from(bx_persistence::PersistenceError::InvalidCredential);
+        let backup = CommandError::from(bx_persistence::PersistenceError::MigrationBackupIoFailed(
+            std::io::Error::other("test backup failure"),
+        ));
+        let update_backup =
+            CommandError::from(bx_persistence::PersistenceError::DatabaseBackupIoFailed(
+                std::io::Error::other("test update backup failure"),
+            ));
         assert_eq!(locked.code, CommandErrorCode::CredentialStoreLocked);
         assert_eq!(invalid.code, CommandErrorCode::InvalidCredential);
+        assert_eq!(backup.code, CommandErrorCode::DatabaseQueryFailed);
+        assert_eq!(update_backup.code, CommandErrorCode::DatabaseQueryFailed);
+        assert!(!update_backup.message.contains("test update backup failure"));
     }
 }

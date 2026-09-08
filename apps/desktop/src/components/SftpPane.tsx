@@ -1,65 +1,313 @@
-import { useState } from "react";
-import { Button, Input, Tooltip } from "antd";
+import { useMemo, useState } from "react";
+import { Button, Checkbox, Input, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 import {
   ArrowUp,
+  ArrowLeft,
+  ArrowRight,
+  ArrowDownAZ,
+  ArrowDownWideNarrow,
+  ArrowUpAZ,
+  ArrowUpWideNarrow,
+  AlertTriangle,
   CheckCircle2,
   Download,
+  Eye,
   File,
   Folder,
+  FolderPlus,
   FolderOpen,
+  FilePenLine,
+  MoveRight,
   RefreshCw,
+  ShieldCheck,
+  Trash2,
   Upload,
 } from "lucide-react";
-import type { RemoteDirectoryListing, TransferSummary } from "../ipc/bindings";
-import { EmptyState, LoadingState } from "./Feedback";
+import type {
+  LocalDirectoryListing,
+  LocalFileEntry,
+  RemoteDirectoryListing,
+  RemoteFileEntry,
+  SftpConflictAction,
+  SftpTransferProgress,
+  TransferBatchSummary,
+  TransferSummary,
+} from "../ipc/bindings";
+import { EmptyState, FeedbackNotice, LoadingState } from "./Feedback";
 
 export interface SftpTransferResult {
   direction: "upload" | "download";
-  summary: TransferSummary;
+  summary: TransferSummary | TransferBatchSummary;
+}
+
+export interface SftpConflictDetails {
+  direction: "upload" | "download";
+  sourcePath: string;
+  targetPath: string;
+  sourceSize: number;
+  sourceModifiedAt: number | null;
+  targetSize: number;
+  targetModifiedAt: number | null;
 }
 
 interface SftpPaneProps {
   busy: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
   connected: boolean;
   directory: RemoteDirectoryListing | null;
   endpoint: string;
+  localBusy: boolean;
+  localDirectory: LocalDirectoryListing | null;
+  transferNotice?: string | null;
+  transferProgress?: SftpTransferProgress | null;
+  transferError?: string | null;
   transferResult: SftpTransferResult | null;
+  transferId: string | null;
   onDownload(remotePath: string, localPath: string): Promise<void>;
+  onBack(): Promise<void>;
+  onForward(): Promise<void>;
+  onLocalNavigate(path: string): Promise<void>;
+  onLocalRefresh(): Promise<void>;
   onNavigate(path: string): Promise<void>;
   onRefresh(): Promise<void>;
   onUpload(localPath: string, remotePath: string): Promise<void>;
+  onCancelTransfer(): Promise<void>;
+  onRetryTransfer?(): Promise<void>;
+  onCreateDirectory?(remotePath: string): Promise<void>;
+  onDeleteEntry?(remotePath: string, recursive: boolean): Promise<void>;
+  onMoveEntry?(sourcePath: string, targetPath: string): Promise<void>;
+  onRenameEntry?(sourcePath: string, targetPath: string): Promise<void>;
+  onChmodEntry?(remotePath: string, permissions: number): Promise<void>;
+  conflict?: SftpConflictDetails | null;
+  onResolveConflict?(
+    action: SftpConflictAction,
+    applyToAll: boolean,
+  ): Promise<void>;
+  onCancelConflict?(): void;
 }
 
 export function SftpPane({
   busy,
+  canGoBack,
+  canGoForward,
   connected,
   directory,
   endpoint,
+  localBusy,
+  localDirectory,
+  transferNotice = null,
+  transferProgress = null,
+  transferError = null,
   transferResult,
+  transferId,
   onDownload,
+  onBack,
+  onForward,
+  onLocalNavigate,
+  onLocalRefresh,
   onNavigate,
   onRefresh,
   onUpload,
+  onCancelTransfer,
+  onRetryTransfer = async () => undefined,
+  onChmodEntry = async () => undefined,
+  onCreateDirectory = async () => undefined,
+  onDeleteEntry = async () => undefined,
+  onMoveEntry = async () => undefined,
+  onRenameEntry = async () => undefined,
+  conflict = null,
+  onResolveConflict = async () => undefined,
+  onCancelConflict = () => undefined,
 }: SftpPaneProps) {
   const { i18n, t } = useTranslation();
   const [pathDraft, setPathDraft] = useState<string | null>(null);
+  const [localPathDraft, setLocalPathDraft] = useState<string | null>(null);
   const [localUploadPath, setLocalUploadPath] = useState("");
   const [remoteUploadPath, setRemoteUploadPath] = useState("");
   const [remoteDownloadPath, setRemoteDownloadPath] = useState("");
   const [localDownloadPath, setLocalDownloadPath] = useState("");
+  const [showHidden, setShowHidden] = useState(false);
+  const [localSort, setLocalSort] = useState<SortState>(defaultSortState);
+  const [remoteSort, setRemoteSort] = useState<SortState>(defaultSortState);
+  const [selectedLocalPath, setSelectedLocalPath] = useState<string | null>(
+    null,
+  );
+  const [selectedRemotePath, setSelectedRemotePath] = useState<string | null>(
+    null,
+  );
+  const [selectedRemoteEntry, setSelectedRemoteEntry] =
+    useState<RemoteFileEntry | null>(null);
+  const [operation, setOperation] = useState<SftpOperation | null>(null);
+  const [operationValue, setOperationValue] = useState("");
+  const [recursiveDelete, setRecursiveDelete] = useState(false);
+  const [operationBusy, setOperationBusy] = useState(false);
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const [applyConflictToAll, setApplyConflictToAll] = useState(false);
 
   const pathInput = pathDraft ?? directory?.path ?? ".";
   const parentPath = directory ? remoteParentPath(directory.path) : ".";
+
+  const localPathInput = localPathDraft ?? localDirectory?.path ?? ".";
+  const visibleLocalEntries = useMemo(
+    () =>
+      sortEntries(
+        localDirectory?.entries.filter(
+          (entry) => showHidden || !entry.hidden,
+        ) ?? [],
+        localSort,
+      ),
+    [localDirectory?.entries, localSort, showHidden],
+  );
+  const visibleRemoteEntries = useMemo(
+    () =>
+      sortEntries(
+        directory?.entries.filter(
+          (entry) => showHidden || !entry.name.startsWith("."),
+        ) ?? [],
+        remoteSort,
+      ),
+    [directory?.entries, remoteSort, showHidden],
+  );
+
   const navigate = async (path: string) => {
     setPathDraft(null);
+    setSelectedRemotePath(null);
+    setSelectedRemoteEntry(null);
     await onNavigate(path);
+  };
+
+  const navigateLocal = async (path: string) => {
+    setLocalPathDraft(null);
+    setSelectedLocalPath(null);
+    await onLocalNavigate(path);
+  };
+
+  const selectLocalEntry = (entry: LocalFileEntry) => {
+    setSelectedLocalPath(entry.path);
+    if (entry.kind === "file" || entry.kind === "directory") {
+      setLocalUploadPath(entry.path);
+      setRemoteUploadPath(joinRemotePath(directory?.path ?? ".", entry.name));
+    }
+  };
+
+  const selectRemoteEntry = (entry: RemoteFileEntry) => {
+    setSelectedRemotePath(entry.path);
+    setSelectedRemoteEntry(entry);
+    if (entry.kind === "file" || entry.kind === "directory") {
+      setRemoteDownloadPath(entry.path);
+      setLocalDownloadPath(
+        joinLocalPath(localDirectory?.path ?? ".", entry.name),
+      );
+    }
+  };
+
+  const openOperation = (kind: SftpOperationKind) => {
+    if (
+      (kind === "mkdir" && !directory) ||
+      (kind !== "mkdir" && !selectedRemoteEntry)
+    ) {
+      return;
+    }
+    setOperation(
+      kind === "mkdir" ? { kind } : { kind, entry: selectedRemoteEntry! },
+    );
+    setRecursiveDelete(false);
+    if (kind === "rename") {
+      setOperationValue(selectedRemoteEntry?.name ?? "");
+    } else if (kind === "move") {
+      setOperationValue(selectedRemoteEntry?.path ?? "");
+    } else if (kind === "chmod") {
+      setOperationValue(
+        selectedRemoteEntry?.permissions === null ||
+          selectedRemoteEntry?.permissions === undefined
+          ? "0644"
+          : selectedRemoteEntry.permissions.toString(8).padStart(4, "0"),
+      );
+    } else {
+      setOperationValue("");
+    }
+  };
+
+  const closeOperation = () => {
+    if (!operationBusy) setOperation(null);
+  };
+
+  const submitOperation = async () => {
+    if (!operation) return;
+    const value = operationValue.trim();
+    if (!isValidOperationValue(operation, value)) return;
+    setOperationBusy(true);
+    try {
+      if (operation.kind === "mkdir") {
+        await onCreateDirectory!(joinRemotePath(directory!.path, value));
+      } else if (operation.kind === "delete") {
+        await onDeleteEntry!(operation.entry.path, recursiveDelete);
+      } else if (operation.kind === "rename") {
+        await onRenameEntry!(
+          operation.entry.path,
+          joinRemotePath(remoteParentPath(operation.entry.path), value),
+        );
+      } else if (operation.kind === "move") {
+        await onMoveEntry!(operation.entry.path, value);
+      } else {
+        const permissions = Number.parseInt(value, 8);
+        await onChmodEntry!(operation.entry.path, permissions);
+      }
+      setOperation(null);
+      setSelectedRemoteEntry(null);
+      setSelectedRemotePath(null);
+    } catch {
+      // App owns localized operation feedback; keep the dialog open for correction or retry.
+    } finally {
+      setOperationBusy(false);
+    }
+  };
+
+  const resolveConflict = async (action: SftpConflictAction) => {
+    if (conflictBusy) return;
+    setConflictBusy(true);
+    try {
+      await onResolveConflict(action, applyConflictToAll);
+    } finally {
+      setConflictBusy(false);
+      setApplyConflictToAll(false);
+    }
+  };
+
+  const cancelConflict = () => {
+    if (conflictBusy) return;
+    setApplyConflictToAll(false);
+    onCancelConflict();
   };
 
   return (
     <section className="sftp-pane" aria-label={t("sftp.aria")}>
       <div className="sftp-toolbar">
         <div className="sftp-path-controls">
+          <Tooltip title={t("sftp.back")}>
+            <Button
+              aria-label={t("sftp.back")}
+              icon={<ArrowLeft size={15} />}
+              disabled={!connected || busy || !canGoBack}
+              onClick={() => {
+                setSelectedRemotePath(null);
+                void onBack();
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t("sftp.forward")}>
+            <Button
+              aria-label={t("sftp.forward")}
+              icon={<ArrowRight size={15} />}
+              disabled={!connected || busy || !canGoForward}
+              onClick={() => {
+                setSelectedRemotePath(null);
+                void onForward();
+              }}
+            />
+          </Tooltip>
           <Tooltip title={t("sftp.parentDirectory")}>
             <Button
               aria-label={t("sftp.parentDirectory")}
@@ -81,7 +329,19 @@ export function SftpPane({
               icon={<RefreshCw size={15} />}
               loading={busy}
               disabled={!connected}
-              onClick={() => void onRefresh()}
+              onClick={() => {
+                setSelectedRemotePath(null);
+                void onRefresh();
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t("sftp.showHidden")}>
+            <Button
+              aria-label={t("sftp.showHidden")}
+              icon={<Eye size={15} />}
+              type={showHidden ? "primary" : "default"}
+              disabled={busy}
+              onClick={() => setShowHidden((current) => !current)}
             />
           </Tooltip>
         </div>
@@ -90,89 +350,496 @@ export function SftpPane({
         </span>
       </div>
 
-      <div className="sftp-list" aria-busy={busy}>
-        <table>
-          <thead>
-            <tr>
-              <th>{t("sftp.name")}</th>
-              <th>{t("sftp.size")}</th>
-              <th>{t("sftp.modified")}</th>
-              <th>{t("sftp.permissions")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {directory?.entries.map((entry) => (
-              <tr
-                key={entry.path}
-                tabIndex={0}
-                onClick={() => {
-                  if (entry.kind === "file") {
-                    setRemoteDownloadPath(entry.path);
+      <div className="sftp-browser-grid">
+        <section
+          className="sftp-file-panel sftp-local-panel"
+          aria-label={t("sftp.localPanel")}
+        >
+          <div className="sftp-panel-toolbar">
+            <strong>{t("sftp.local")}</strong>
+            <div className="sftp-local-path-controls">
+              <Tooltip title={t("sftp.localParentDirectory")}>
+                <Button
+                  aria-label={t("sftp.localParentDirectory")}
+                  icon={<ArrowUp size={15} />}
+                  disabled={localBusy || !localDirectory?.parentPath}
+                  onClick={() =>
+                    void navigateLocal(localDirectory?.parentPath ?? ".")
                   }
-                }}
-                onDoubleClick={() => {
-                  if (entry.kind === "directory") {
-                    void navigate(entry.path);
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    if (entry.kind === "directory") {
-                      void navigate(entry.path);
-                    } else if (entry.kind === "file") {
-                      setRemoteDownloadPath(entry.path);
+                />
+              </Tooltip>
+              <Input
+                aria-label={t("sftp.localPath")}
+                value={localPathInput}
+                disabled={localBusy}
+                onChange={(event) => setLocalPathDraft(event.target.value)}
+                onPressEnter={(event) =>
+                  void navigateLocal(event.currentTarget.value)
+                }
+              />
+              <Tooltip title={t("sftp.localRefresh")}>
+                <Button
+                  aria-label={t("sftp.localRefresh")}
+                  icon={<RefreshCw size={15} />}
+                  loading={localBusy}
+                  disabled={localBusy}
+                  onClick={() => {
+                    setSelectedLocalPath(null);
+                    void onLocalRefresh();
+                  }}
+                />
+              </Tooltip>
+            </div>
+          </div>
+          <div className="sftp-list" aria-busy={localBusy}>
+            <table>
+              <thead>
+                <tr>
+                  <SortableHeader
+                    label={t("sftp.name")}
+                    sort={localSort}
+                    sortKey="name"
+                    onSort={(key) => setLocalSort(nextSort(localSort, key))}
+                  />
+                  <SortableHeader
+                    label={t("sftp.size")}
+                    sort={localSort}
+                    sortKey="size"
+                    onSort={(key) => setLocalSort(nextSort(localSort, key))}
+                  />
+                  <SortableHeader
+                    label={t("sftp.modified")}
+                    sort={localSort}
+                    sortKey="modifiedAt"
+                    onSort={(key) => setLocalSort(nextSort(localSort, key))}
+                  />
+                  <th>{t("sftp.permissions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleLocalEntries.map((entry) => (
+                  <tr
+                    key={entry.path}
+                    aria-selected={selectedLocalPath === entry.path}
+                    className={
+                      selectedLocalPath === entry.path
+                        ? "sftp-entry-selected"
+                        : undefined
                     }
-                  }
-                }}
-              >
-                <td>
-                  <span className="sftp-file-name">
-                    {entry.kind === "directory" ? (
-                      <Folder size={15} />
-                    ) : (
-                      <File size={15} />
-                    )}
-                    <span>{entry.name}</span>
-                  </span>
-                </td>
-                <td>
-                  {entry.kind === "directory" ? "" : formatBytes(entry.size)}
-                </td>
-                <td>
-                  {formatModifiedTime(
-                    entry.modifiedAt,
-                    i18n.resolvedLanguage ?? "zh-CN",
-                  )}
-                </td>
-                <td>{formatPermissions(entry.permissions)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                    tabIndex={0}
+                    onClick={() => selectLocalEntry(entry)}
+                    onDoubleClick={() => {
+                      if (entry.kind === "directory") {
+                        void navigateLocal(entry.path);
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        if (entry.kind === "directory") {
+                          void navigateLocal(entry.path);
+                        } else {
+                          selectLocalEntry(entry);
+                        }
+                      }
+                    }}
+                  >
+                    <td>
+                      <span className="sftp-file-name">
+                        {entry.kind === "directory" ? (
+                          <Folder size={15} />
+                        ) : (
+                          <File size={15} />
+                        )}
+                        <span>{entry.name}</span>
+                      </span>
+                    </td>
+                    <td>
+                      {entry.kind === "directory"
+                        ? ""
+                        : formatBytes(entry.size)}
+                    </td>
+                    <td>
+                      {formatModifiedTime(
+                        entry.modifiedAt,
+                        i18n.resolvedLanguage ?? "zh-CN",
+                      )}
+                    </td>
+                    <td>{entry.readonly ? t("sftp.readOnly") : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!localDirectory && !localBusy && (
+              <EmptyState
+                className="sftp-empty"
+                icon={<FolderOpen size={34} strokeWidth={1.3} />}
+                title={t("sftp.localNotLoaded")}
+              />
+            )}
+            {localDirectory && visibleLocalEntries.length === 0 && (
+              <EmptyState
+                className="sftp-empty"
+                icon={<FolderOpen size={34} strokeWidth={1.3} />}
+                title={t("sftp.empty")}
+              />
+            )}
+            {localBusy && (
+              <LoadingState
+                className="sftp-loading-overlay"
+                label={t("feedback.loading")}
+              />
+            )}
+          </div>
+        </section>
 
-        {connected && directory?.entries.length === 0 && (
-          <EmptyState
-            className="sftp-empty"
-            icon={<FolderOpen size={34} strokeWidth={1.3} />}
-            title={t("sftp.empty")}
-          />
-        )}
-        {!connected && (
-          <EmptyState
-            className="sftp-empty"
-            icon={<FolderOpen size={34} strokeWidth={1.3} />}
-            title={t("sftp.notConnected")}
-          />
-        )}
-        {busy && (
-          <LoadingState
-            className="sftp-loading-overlay"
-            label={t("feedback.loading")}
-          />
-        )}
+        <section
+          className="sftp-file-panel sftp-remote-panel"
+          aria-label={t("sftp.remotePanel")}
+        >
+          <div className="sftp-panel-toolbar">
+            <strong>{t("sftp.remote")}</strong>
+            <span className="sftp-panel-path">{pathInput}</span>
+            <div className="sftp-entry-actions">
+              <Tooltip title={t("sftp.createDirectory")}>
+                <Button
+                  size="small"
+                  aria-label={t("sftp.createDirectory")}
+                  icon={<FolderPlus size={14} />}
+                  disabled={!connected || busy || !directory}
+                  onClick={() => openOperation("mkdir")}
+                />
+              </Tooltip>
+              <Tooltip title={t("sftp.renameEntry")}>
+                <Button
+                  size="small"
+                  aria-label={t("sftp.renameEntry")}
+                  icon={<FilePenLine size={14} />}
+                  disabled={!connected || busy || !selectedRemoteEntry}
+                  onClick={() => openOperation("rename")}
+                />
+              </Tooltip>
+              <Tooltip title={t("sftp.moveEntry")}>
+                <Button
+                  size="small"
+                  aria-label={t("sftp.moveEntry")}
+                  icon={<MoveRight size={14} />}
+                  disabled={!connected || busy || !selectedRemoteEntry}
+                  onClick={() => openOperation("move")}
+                />
+              </Tooltip>
+              <Tooltip title={t("sftp.chmodEntry")}>
+                <Button
+                  size="small"
+                  aria-label={t("sftp.chmodEntry")}
+                  icon={<ShieldCheck size={14} />}
+                  disabled={!connected || busy || !selectedRemoteEntry}
+                  onClick={() => openOperation("chmod")}
+                />
+              </Tooltip>
+              <Tooltip title={t("sftp.deleteEntry")}>
+                <Button
+                  size="small"
+                  danger
+                  aria-label={t("sftp.deleteEntry")}
+                  icon={<Trash2 size={14} />}
+                  disabled={!connected || busy || !selectedRemoteEntry}
+                  onClick={() => openOperation("delete")}
+                />
+              </Tooltip>
+            </div>
+          </div>
+          <div className="sftp-list" aria-busy={busy}>
+            <table>
+              <thead>
+                <tr>
+                  <SortableHeader
+                    label={t("sftp.name")}
+                    sort={remoteSort}
+                    sortKey="name"
+                    onSort={(key) => setRemoteSort(nextSort(remoteSort, key))}
+                  />
+                  <SortableHeader
+                    label={t("sftp.size")}
+                    sort={remoteSort}
+                    sortKey="size"
+                    onSort={(key) => setRemoteSort(nextSort(remoteSort, key))}
+                  />
+                  <SortableHeader
+                    label={t("sftp.modified")}
+                    sort={remoteSort}
+                    sortKey="modifiedAt"
+                    onSort={(key) => setRemoteSort(nextSort(remoteSort, key))}
+                  />
+                  <th>{t("sftp.permissions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRemoteEntries.map((entry) => (
+                  <tr
+                    key={entry.path}
+                    aria-selected={selectedRemotePath === entry.path}
+                    className={
+                      selectedRemotePath === entry.path
+                        ? "sftp-entry-selected"
+                        : undefined
+                    }
+                    tabIndex={0}
+                    onClick={() => selectRemoteEntry(entry)}
+                    onDoubleClick={() => {
+                      if (entry.kind === "directory") {
+                        void navigate(entry.path);
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        if (entry.kind === "directory") {
+                          void navigate(entry.path);
+                        } else {
+                          selectRemoteEntry(entry);
+                        }
+                      }
+                    }}
+                  >
+                    <td>
+                      <span className="sftp-file-name">
+                        {entry.kind === "directory" ? (
+                          <Folder size={15} />
+                        ) : (
+                          <File size={15} />
+                        )}
+                        <span>{entry.name}</span>
+                      </span>
+                    </td>
+                    <td>
+                      {entry.kind === "directory"
+                        ? ""
+                        : formatBytes(entry.size)}
+                    </td>
+                    <td>
+                      {formatModifiedTime(
+                        entry.modifiedAt,
+                        i18n.resolvedLanguage ?? "zh-CN",
+                      )}
+                    </td>
+                    <td>{formatPermissions(entry.permissions)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {connected && directory && visibleRemoteEntries.length === 0 && (
+              <EmptyState
+                className="sftp-empty"
+                icon={<FolderOpen size={34} strokeWidth={1.3} />}
+                title={t("sftp.empty")}
+              />
+            )}
+            {!connected && (
+              <EmptyState
+                className="sftp-empty"
+                icon={<FolderOpen size={34} strokeWidth={1.3} />}
+                title={t("sftp.notConnected")}
+              />
+            )}
+            {busy && (
+              <LoadingState
+                className="sftp-loading-overlay"
+                label={t("feedback.loading")}
+              />
+            )}
+          </div>
+        </section>
       </div>
 
+      <Modal
+        open={operation !== null}
+        title={operationTitle(operation, t)}
+        okText={t("common.confirm")}
+        cancelText={t("common.cancel")}
+        confirmLoading={operationBusy}
+        okButtonProps={{
+          danger: operation?.kind === "delete",
+          disabled: operation
+            ? !isValidOperationValue(operation, operationValue.trim())
+            : true,
+        }}
+        onOk={() => void submitOperation()}
+        onCancel={closeOperation}
+        destroyOnHidden
+      >
+        {operation?.kind === "delete" ? (
+          <div className="sftp-operation-confirmation">
+            <p>
+              {t("sftp.deleteConfirmation", {
+                path: operation.entry.path,
+              })}
+            </p>
+            {operation.entry.kind === "directory" && (
+              <Checkbox
+                checked={recursiveDelete}
+                onChange={(event) => setRecursiveDelete(event.target.checked)}
+              >
+                {t("sftp.recursiveDelete")}
+              </Checkbox>
+            )}
+          </div>
+        ) : operation ? (
+          <Input
+            autoFocus
+            value={operationValue}
+            aria-label={operationInputLabel(operation, t)}
+            placeholder={operationInputPlaceholder(operation, t)}
+            onChange={(event) => setOperationValue(event.target.value)}
+            onPressEnter={() => void submitOperation()}
+          />
+        ) : null}
+        {operation?.kind === "chmod" && (
+          <p className="sftp-operation-help">{t("sftp.chmodHelp")}</p>
+        )}
+      </Modal>
+
+      <Modal
+        open={conflict !== null}
+        title={
+          <span className="sftp-conflict-title">
+            <AlertTriangle size={16} />
+            {t("sftp.conflictTitle")}
+          </span>
+        }
+        closable={!conflictBusy}
+        maskClosable={false}
+        keyboard={!conflictBusy}
+        cancelButtonProps={{ disabled: conflictBusy }}
+        okButtonProps={{ style: { display: "none" } }}
+        cancelText={t("common.cancel")}
+        onCancel={() => {
+          cancelConflict();
+        }}
+        footer={[
+          <Button
+            key="skip"
+            autoFocus
+            disabled={conflictBusy}
+            onClick={() => void resolveConflict("skip")}
+          >
+            {t("sftp.conflictSkip")}
+          </Button>,
+          <Button
+            key="rename"
+            disabled={conflictBusy}
+            onClick={() => void resolveConflict("rename")}
+          >
+            {t("sftp.conflictRename")}
+          </Button>,
+          <Button
+            key="overwrite"
+            danger
+            type="primary"
+            loading={conflictBusy}
+            onClick={() => void resolveConflict("overwrite")}
+          >
+            {t("sftp.conflictOverwrite")}
+          </Button>,
+        ]}
+        destroyOnHidden
+      >
+        {conflict && (
+          <div className="sftp-conflict-content">
+            <p>{t("sftp.conflictDescription")}</p>
+            <div className="sftp-conflict-comparison">
+              <ConflictPathRow
+                label={t("sftp.conflictSource")}
+                path={conflict.sourcePath}
+                size={conflict.sourceSize}
+                modifiedAt={conflict.sourceModifiedAt}
+                language={i18n.language}
+              />
+              <ConflictPathRow
+                label={t("sftp.conflictTarget")}
+                path={conflict.targetPath}
+                size={conflict.targetSize}
+                modifiedAt={conflict.targetModifiedAt}
+                language={i18n.language}
+              />
+            </div>
+            <Checkbox
+              checked={applyConflictToAll}
+              disabled={conflictBusy}
+              onChange={(event) => setApplyConflictToAll(event.target.checked)}
+            >
+              <span className="sftp-conflict-batch-label">
+                <span>{t("sftp.conflictApplyToAll")}</span>
+                <span>{t("sftp.conflictApplyToAllHelp")}</span>
+              </span>
+            </Checkbox>
+          </div>
+        )}
+      </Modal>
+
       <div className="sftp-transfer-panel">
+        {transferNotice && (
+          <FeedbackNotice
+            className="sftp-transfer-notice"
+            message={transferNotice}
+          />
+        )}
+        {transferError && (
+          <FeedbackNotice
+            className="sftp-transfer-notice"
+            type="error"
+            showIcon
+            message={transferError}
+            action={
+              <Button
+                size="small"
+                disabled={busy}
+                onClick={() => void onRetryTransfer()}
+              >
+                {t("sftp.transferRetry")}
+              </Button>
+            }
+          />
+        )}
+        {transferProgress && (
+          <div
+            className="sftp-transfer-progress"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="sftp-transfer-progress-heading">
+              <span>{transferProgress.path}</span>
+              <span>
+                {formatBytes(transferProgress.bytesTransferred)}
+                {transferProgress.totalBytes == null
+                  ? ""
+                  : ` / ${formatBytes(transferProgress.totalBytes)}`}
+              </span>
+            </div>
+            <div
+              className={`sftp-transfer-progress-track${
+                transferProgress.totalBytes == null ? " indeterminate" : ""
+              }`}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={transferProgress.totalBytes ?? undefined}
+              aria-valuenow={transferProgress.bytesTransferred}
+            >
+              <span
+                style={
+                  transferProgress.totalBytes
+                    ? {
+                        width: `${Math.min(
+                          100,
+                          (transferProgress.bytesTransferred /
+                            transferProgress.totalBytes) *
+                            100,
+                        )}%`,
+                      }
+                    : undefined
+                }
+              />
+            </div>
+          </div>
+        )}
         <div className="sftp-transfer-row">
           <Upload size={15} />
           <Input
@@ -227,6 +894,19 @@ export function SftpPane({
           </Button>
         </div>
 
+        {transferId && (
+          <div
+            className="sftp-transfer-active"
+            role="status"
+            aria-live="polite"
+          >
+            <span>{t("sftp.directoryTransferActive")}</span>
+            <Button size="small" danger onClick={() => void onCancelTransfer()}>
+              {t("common.cancel")}
+            </Button>
+          </div>
+        )}
+
         {transferResult && (
           <div
             className="sftp-transfer-result"
@@ -241,12 +921,249 @@ export function SftpPane({
             </span>
             <strong>{formatBytes(transferResult.summary.bytes)}</strong>
             <span>{formatBytes(transferResult.summary.bytesPerSecond)}/s</span>
-            <code>{transferResult.summary.sha256}</code>
+            {"sha256" in transferResult.summary ? (
+              <code>{transferResult.summary.sha256}</code>
+            ) : (
+              <span>
+                {t("sftp.batchTransferSummary", {
+                  files: transferResult.summary.files,
+                  directories: transferResult.summary.directories,
+                })}
+              </span>
+            )}
           </div>
         )}
       </div>
     </section>
   );
+}
+
+type SftpOperationKind = "mkdir" | "delete" | "move" | "rename" | "chmod";
+type SftpOperation =
+  | { kind: "mkdir" }
+  | { kind: Exclude<SftpOperationKind, "mkdir">; entry: RemoteFileEntry };
+
+function operationTitle(
+  operation: SftpOperation | null,
+  t: (key: string) => string,
+): string {
+  if (!operation) return "";
+  return t(
+    operation.kind === "mkdir"
+      ? "sftp.createDirectory"
+      : operation.kind === "delete"
+        ? "sftp.deleteEntry"
+        : operation.kind === "move"
+          ? "sftp.moveEntry"
+          : operation.kind === "rename"
+            ? "sftp.renameEntry"
+            : "sftp.chmodEntry",
+  );
+}
+
+function operationInputLabel(
+  operation: SftpOperation,
+  t: (key: string) => string,
+): string {
+  return t(
+    operation.kind === "mkdir"
+      ? "sftp.newDirectoryName"
+      : operation.kind === "rename"
+        ? "sftp.newName"
+        : operation.kind === "move"
+          ? "sftp.moveTargetPath"
+          : "sftp.permissions",
+  );
+}
+
+function operationInputPlaceholder(
+  operation: SftpOperation,
+  t: (key: string) => string,
+): string {
+  return t(
+    operation.kind === "mkdir"
+      ? "sftp.newDirectoryName"
+      : operation.kind === "rename"
+        ? "sftp.newName"
+        : operation.kind === "move"
+          ? "sftp.moveTargetPath"
+          : "sftp.chmodPlaceholder",
+  );
+}
+
+function isValidOperationValue(
+  operation: SftpOperation,
+  value: string,
+): boolean {
+  if (operation.kind === "delete") return true;
+  if (operation.kind === "chmod") return /^[0-7]{1,4}$/.test(value);
+  if (operation.kind === "move") {
+    return (
+      value !== operation.entry.path &&
+      value.startsWith("/") &&
+      value !== "/" &&
+      !value.endsWith("/") &&
+      !value
+        .split("/")
+        .slice(1)
+        .some((part) => part === "" || part === "." || part === "..")
+    );
+  }
+  return (
+    value.length > 0 &&
+    (operation.kind !== "rename" || value !== operation.entry.name) &&
+    value !== "." &&
+    value !== ".." &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !value.includes("\0")
+  );
+}
+
+function ConflictPathRow({
+  label,
+  path,
+  size,
+  modifiedAt,
+  language,
+}: {
+  label: string;
+  path: string;
+  size: number;
+  modifiedAt: number | null;
+  language: string;
+}) {
+  return (
+    <div className="sftp-conflict-row">
+      <File size={14} />
+      <div>
+        <span>{label}</span>
+        <code>{path}</code>
+        <small>
+          {formatBytes(size)} ·{" "}
+          {modifiedAt === null
+            ? "—"
+            : new Date(modifiedAt * 1000).toLocaleString(language)}
+        </small>
+      </div>
+    </div>
+  );
+}
+
+type SortKey = "name" | "size" | "modifiedAt";
+type SortDirection = "asc" | "desc";
+
+interface SortState {
+  key: SortKey;
+  direction: SortDirection;
+}
+
+const defaultSortState: SortState = {
+  key: "name",
+  direction: "asc",
+};
+
+interface SortableEntry {
+  kind: "directory" | "file" | "symlink" | "other";
+  name: string;
+  size: number;
+  modifiedAt: number | null;
+}
+
+interface SortableHeaderProps {
+  label: string;
+  sort: SortState;
+  sortKey: SortKey;
+  onSort(key: SortKey): void;
+}
+
+function SortableHeader({ label, sort, sortKey, onSort }: SortableHeaderProps) {
+  const active = sort.key === sortKey;
+  const Icon = active
+    ? sort.direction === "asc"
+      ? sortKey === "name"
+        ? ArrowDownAZ
+        : ArrowDownWideNarrow
+      : sortKey === "name"
+        ? ArrowUpAZ
+        : ArrowUpWideNarrow
+    : null;
+  return (
+    <th
+      aria-sort={
+        active
+          ? sort.direction === "asc"
+            ? "ascending"
+            : "descending"
+          : "none"
+      }
+    >
+      <button
+        type="button"
+        className="sftp-sort-button"
+        aria-label={label}
+        onClick={() => onSort(sortKey)}
+      >
+        <span>{label}</span>
+        {Icon && <Icon size={13} aria-hidden="true" />}
+      </button>
+    </th>
+  );
+}
+
+function nextSort(current: SortState, key: SortKey): SortState {
+  return current.key === key
+    ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+    : { key, direction: "asc" };
+}
+
+function sortEntries<T extends SortableEntry>(
+  entries: T[],
+  sort: SortState,
+): T[] {
+  return [...entries].sort((left, right) => {
+    const kindResult = fileKindOrder(left.kind) - fileKindOrder(right.kind);
+    if (kindResult !== 0) {
+      return kindResult;
+    }
+    let result: number;
+    if (sort.key === "name") {
+      result = left.name.localeCompare(right.name, undefined, {
+        sensitivity: "base",
+      });
+    } else {
+      result = (left[sort.key] ?? -1) - (right[sort.key] ?? -1);
+    }
+    return (
+      (sort.direction === "asc" ? 1 : -1) *
+      (result || left.name.localeCompare(right.name))
+    );
+  });
+}
+
+function fileKindOrder(kind: SortableEntry["kind"]): number {
+  return kind === "directory"
+    ? 0
+    : kind === "file"
+      ? 1
+      : kind === "symlink"
+        ? 2
+        : 3;
+}
+
+function joinRemotePath(directory: string, name: string): string {
+  if (directory === "." || directory === "") {
+    return name;
+  }
+  return `${directory.replace(/\/+$/, "")}/${name}`;
+}
+
+function joinLocalPath(directory: string, name: string): string {
+  const separator = directory.includes("\\") ? "\\" : "/";
+  if (directory === "." || directory === "") {
+    return name;
+  }
+  return `${directory.replace(/[\\/]+$/, "")}${separator}${name}`;
 }
 
 function remoteParentPath(path: string): string {
