@@ -5,6 +5,7 @@ mod error;
 mod fingerprint;
 mod session;
 mod sftp;
+mod sftp_read;
 mod shell;
 
 pub use algorithms::{product_algorithm_policy, SshAlgorithmPolicy, SshNegotiatedAlgorithms};

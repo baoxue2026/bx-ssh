@@ -145,7 +145,17 @@ impl ClientSession {
             .request_subsystem(true, "sftp")
             .await
             .map_err(SshError::ChannelOpenFailed)?;
-        SftpClient::open(channel.into_stream()).await
+
+        let mut sftp = SftpClient::open(channel.into_stream()).await?;
+        // russh-sftp's high-level File only exposes sequential reads. Use one
+        // additional subsystem for bounded read-ahead on a single raw handle.
+        // Servers with MaxSessions=1 retain the compatible sequential path.
+        if let Ok(read_channel) = self.handle.channel_open_session().await {
+            if read_channel.request_subsystem(true, "sftp").await.is_ok() {
+                sftp.enable_read_ahead(read_channel.into_stream()).await;
+            }
+        }
+        Ok(sftp)
     }
 
     pub async fn wait_for_transport(&mut self) -> Result<(), SshError> {

@@ -1,13 +1,16 @@
 use std::env;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use bx_contracts::SftpConflictAction;
 use bx_ssh_core::{
     authenticate_password, probe_host_key, ConnectionCancellation, SshEndpoint, SshError,
 };
+use russh_sftp::{client::error::Error as SftpError, protocol::StatusCode};
+use sha2::{Digest, Sha256};
 use tokio::fs::{self, File};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
 const DEFAULT_TEST_BYTES: u64 = 8 * 1024 * 1024;
@@ -30,6 +33,10 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     let windows_server = env::var("BX_SSH_TEST_WINDOWS_SERVER")
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
     if require_one_gib {
+        assert!(
+            !cfg!(debug_assertions),
+            "the 1 GiB performance gate requires cargo test --release"
+        );
         assert_eq!(
             test_bytes, ONE_GIB_BYTES,
             "BX_SSH_TEST_SFTP_REQUIRE_ONE_GIB requires BX_SSH_TEST_SFTP_BYTES=1073741824"
@@ -41,14 +48,37 @@ async fn validates_sftp_directory_transfer_and_sha256() {
         (1..=100).contains(&minimum_speed_percent),
         "BX_SSH_TEST_SFTP_MIN_SPEED_PERCENT must be between 1 and 100"
     );
-    let baseline_speed = optional_env_u64("BX_SSH_TEST_SFTP_BASELINE_BPS");
-    if let Some(baseline_speed) = baseline_speed {
-        assert!(
-            baseline_speed > 0,
-            "BX_SSH_TEST_SFTP_BASELINE_BPS must be greater than zero"
+    if require_one_gib {
+        assert_eq!(
+            minimum_speed_percent, 80,
+            "the formal performance gate is 80%"
         );
-    } else if require_one_gib {
-        panic!("BX_SSH_TEST_SFTP_REQUIRE_ONE_GIB also requires BX_SSH_TEST_SFTP_BASELINE_BPS");
+    }
+    let baseline_speed = if require_one_gib {
+        None
+    } else {
+        optional_env_u64("BX_SSH_TEST_SFTP_BASELINE_BPS")
+    };
+    let baseline_upload_speed =
+        optional_env_u64("BX_SSH_TEST_SFTP_BASELINE_UPLOAD_BPS").or(baseline_speed);
+    let baseline_download_speed =
+        optional_env_u64("BX_SSH_TEST_SFTP_BASELINE_DOWNLOAD_BPS").or(baseline_speed);
+    for (name, baseline) in [
+        (
+            "BX_SSH_TEST_SFTP_BASELINE_UPLOAD_BPS",
+            baseline_upload_speed,
+        ),
+        (
+            "BX_SSH_TEST_SFTP_BASELINE_DOWNLOAD_BPS",
+            baseline_download_speed,
+        ),
+    ] {
+        if let Some(baseline) = baseline {
+            assert!(baseline > 0, "{name} must be greater than zero");
+        }
+    }
+    if require_one_gib && (baseline_upload_speed.is_none() || baseline_download_speed.is_none()) {
+        panic!("BX_SSH_TEST_SFTP_REQUIRE_ONE_GIB requires per-direction OpenSSH SFTP baselines");
     }
     let phase_timeout = env::var("BX_SSH_TEST_SFTP_PHASE_TIMEOUT_SECS")
         .map(|value| Duration::from_secs(value.parse().unwrap()))
@@ -89,6 +119,8 @@ async fn validates_sftp_directory_transfer_and_sha256() {
         format!("{}/{remote_name}", remote_home.trim_end_matches('/'))
     };
     let source_directory = test_root.join("source-directory");
+    let cancelled_download_path = test_root.join("cancelled-download.bin");
+    let cancelled_upload_path = format!("{remote_path}.cancelled");
     let source_deep_directory = source_directory.join("deep").join("a").join("b");
     let source_empty_directory = source_directory.join("empty");
     let source_directory_file = source_deep_directory.join("source.bin");
@@ -136,12 +168,39 @@ async fn validates_sftp_directory_transfer_and_sha256() {
         .await?;
         assert!(!initial_directory.path.is_empty());
 
+        let upload_started = Instant::now();
         let upload = run_phase(
             "upload_and_verify",
             phase_timeout,
             sftp.upload_file(&source_path, &remote_path),
         )
         .await?;
+        let upload_total_ms = upload_started.elapsed().as_millis();
+        run_phase("cancel_upload_without_publishing", phase_timeout, async {
+            let cancellation = ConnectionCancellation::default();
+            let result = sftp.upload_file_with_progress(
+                &source_path, &cancelled_upload_path, Some(&cancellation), SftpConflictAction::Ask,
+                &mut |_| cancellation.cancel(),
+            ).await;
+            assert!(matches!(result, Err(SshError::TransferCancelled)));
+            assert!(matches!(sftp.stat_path(&cancelled_upload_path).await,
+                Err(SshError::Sftp(SftpError::Status(status))) if status.status_code == StatusCode::NoSuchFile));
+            Ok(())
+        }).await?;
+        run_phase("cancel_download_without_publishing", phase_timeout, async {
+            let cancellation = ConnectionCancellation::default();
+            let result = sftp.download_file_with_progress(
+                &remote_path, &cancelled_download_path, Some(&cancellation), SftpConflictAction::Ask,
+                &mut |_| cancellation.cancel(),
+            ).await;
+            assert!(matches!(result, Err(SshError::TransferCancelled)));
+            assert!(!fs::try_exists(&cancelled_download_path).await?);
+            let mut entries = fs::read_dir(&test_root).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                assert!(!entry.file_name().to_string_lossy().starts_with("cancelled-download.bin.bx-ssh-part"));
+            }
+            Ok(())
+        }).await?;
         let uploaded_directory = run_phase(
             "list_uploaded_directory",
             phase_timeout,
@@ -170,12 +229,31 @@ async fn validates_sftp_directory_transfer_and_sha256() {
             assert_eq!(chmod_file.permissions, Some(0o640));
         }
 
+        let download_started = Instant::now();
+        let mut download_last_progress_ms = 0;
         let download = run_phase(
             "download_and_verify",
             phase_timeout,
-            sftp.download_file(&remote_path, &download_path),
+            sftp.download_file_with_progress(
+                &remote_path, &download_path, None, SftpConflictAction::Ask,
+                &mut |bytes| { if bytes == test_bytes && download_last_progress_ms == 0 {
+                    download_last_progress_ms = download_started.elapsed().as_millis();
+                } },
+            ),
         )
-        .await?;
+        .await?.expect("the download target is new");
+        let download_total_ms = download_started.elapsed().as_millis();
+        eprintln!("BX_SFTP_TIMING download_last_progress_ms={download_last_progress_ms} download_durable_ms={} download_total_ms={download_total_ms}", download.elapsed_ms);
+        let source_sha256 = hash_local_file(&source_path)
+            .await
+            .map_err(|error| error.to_string())?;
+        assert_eq!(upload.sha256, source_sha256);
+        assert_eq!(
+            source_sha256,
+            hash_local_file(&download_path)
+                .await
+                .map_err(|error| error.to_string())?
+        );
         let directory_upload = run_phase(
             "upload_directory",
             phase_timeout,
@@ -198,10 +276,8 @@ async fn validates_sftp_directory_transfer_and_sha256() {
         .await?;
         assert!(download_directory.join("empty").is_dir());
         assert_eq!(
-            fs::read(&source_directory_file)
-                .await
-                .map_err(|error| error.to_string())?,
-            fs::read(download_directory.join("deep/a/b/source.bin"))
+            source_sha256,
+            hash_local_file(&download_directory.join("deep/a/b/source.bin"))
                 .await
                 .map_err(|error| error.to_string())?
         );
@@ -262,17 +338,30 @@ async fn validates_sftp_directory_transfer_and_sha256() {
             sftp.delete_entry(&remote_operations, true),
         )
         .await?;
-        Ok((upload, download, directory_upload, directory_download))
+        Ok((
+            upload,
+            download,
+            directory_upload,
+            directory_download,
+            upload_total_ms,
+            download_total_ms,
+        ))
     }
     .await;
 
-    cleanup_phase(
+    cleanup_remote_phase(
+        "remove_cancelled_upload_target",
+        phase_timeout,
+        sftp.remove_file(&cancelled_upload_path),
+    )
+    .await;
+    cleanup_remote_phase(
         "remove_remote_test_file",
         phase_timeout,
         sftp.remove_file(&remote_path),
     )
     .await;
-    cleanup_phase(
+    cleanup_remote_phase(
         "remove_remote_directory_file",
         phase_timeout,
         sftp.remove_file(&format!("{remote_directory}/deep/a/b/source.bin")),
@@ -285,14 +374,14 @@ async fn validates_sftp_directory_transfer_and_sha256() {
         format!("{remote_directory}/empty"),
         remote_directory.clone(),
     ] {
-        cleanup_phase(
+        cleanup_remote_phase(
             "remove_remote_test_directory",
             phase_timeout,
             sftp.remove_empty_directory(&directory),
         )
         .await;
     }
-    cleanup_phase(
+    cleanup_remote_phase(
         "remove_remote_operations_directory",
         phase_timeout,
         sftp.delete_entry(&remote_operations, true),
@@ -305,7 +394,14 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     })
     .await;
 
-    let (upload, download, directory_upload, directory_download) = validation.unwrap();
+    let (
+        upload,
+        download,
+        directory_upload,
+        directory_download,
+        upload_total_ms,
+        download_total_ms,
+    ) = validation.unwrap();
     assert_eq!(upload.bytes, test_bytes);
     assert_eq!(download.bytes, test_bytes);
     assert_eq!(upload.sha256, download.sha256);
@@ -316,38 +412,47 @@ async fn validates_sftp_directory_transfer_and_sha256() {
     assert_eq!(directory_download.directories, directory_upload.directories);
     assert_eq!(directory_download.bytes, directory_upload.bytes);
     println!(
-        "BX_SFTP_RESULT bytes={} upload_bps={} download_bps={} sha256={} required_one_gib={}",
+        "BX_SFTP_RESULT bytes={} upload_bps={} download_bps={} sha256={} required_one_gib={} upload_ms={} download_ms={} upload_total_ms={} download_total_ms={}",
         test_bytes,
         upload.bytes_per_second,
         download.bytes_per_second,
         upload.sha256,
         require_one_gib,
+        upload.elapsed_ms,
+        download.elapsed_ms,
+        upload_total_ms,
+        download_total_ms,
     );
-    if let Some(baseline_speed) = baseline_speed {
-        let minimum_speed = minimum_speed(baseline_speed, minimum_speed_percent);
+    if let (Some(upload_baseline), Some(download_baseline)) =
+        (baseline_upload_speed, baseline_download_speed)
+    {
+        let minimum_upload_speed = minimum_speed(upload_baseline, minimum_speed_percent);
+        let minimum_download_speed = minimum_speed(download_baseline, minimum_speed_percent);
+        println!(
+            "BX_SFTP_SPEED baseline_upload_bps={} baseline_download_bps={} minimum_percent={} minimum_upload_bps={} minimum_download_bps={} upload_percent={} download_percent={}",
+            upload_baseline,
+            download_baseline,
+            minimum_speed_percent,
+            minimum_upload_speed,
+            minimum_download_speed,
+            speed_percent(upload.bytes_per_second, upload_baseline),
+            speed_percent(download.bytes_per_second, download_baseline),
+        );
         assert!(
-            upload.bytes_per_second >= minimum_speed,
-            "SFTP upload speed {} B/s is below the {}% OpenSSH baseline target of {} B/s (baseline {} B/s)",
+            upload.bytes_per_second >= minimum_upload_speed,
+            "SFTP upload speed {} B/s is below the {}% OpenSSH upload baseline target of {} B/s (baseline {} B/s)",
             upload.bytes_per_second,
             minimum_speed_percent,
-            minimum_speed,
-            baseline_speed
+            minimum_upload_speed,
+            upload_baseline
         );
         assert!(
-            download.bytes_per_second >= minimum_speed,
-            "SFTP download speed {} B/s is below the {}% OpenSSH baseline target of {} B/s (baseline {} B/s)",
+            download.bytes_per_second >= minimum_download_speed,
+            "SFTP download speed {} B/s is below the {}% OpenSSH download baseline target of {} B/s (baseline {} B/s)",
             download.bytes_per_second,
             minimum_speed_percent,
-            minimum_speed,
-            baseline_speed
-        );
-        println!(
-            "BX_SFTP_SPEED baseline_bps={} minimum_percent={} minimum_bps={} upload_percent={} download_percent={}",
-            baseline_speed,
-            minimum_speed_percent,
-            minimum_speed,
-            speed_percent(upload.bytes_per_second, baseline_speed),
-            speed_percent(download.bytes_per_second, baseline_speed),
+            minimum_download_speed,
+            download_baseline
         );
     }
 }
@@ -358,9 +463,13 @@ async fn run_phase<T>(
     future: impl Future<Output = Result<T, SshError>>,
 ) -> Result<T, String> {
     eprintln!("BX_SFTP_PHASE name={name} status=started");
+    let started = Instant::now();
     match timeout(phase_timeout, future).await {
         Ok(Ok(value)) => {
-            eprintln!("BX_SFTP_PHASE name={name} status=completed");
+            eprintln!(
+                "BX_SFTP_PHASE name={name} status=completed elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
             Ok(value)
         }
         Ok(Err(error)) => Err(format!("SFTP phase {name} failed: {error}")),
@@ -406,7 +515,33 @@ async fn cleanup_phase(
     }
 }
 
+async fn cleanup_remote_phase(
+    name: &str,
+    phase_timeout: Duration,
+    future: impl Future<Output = Result<(), SshError>>,
+) {
+    eprintln!("BX_SFTP_PHASE name={name} status=started");
+    match timeout(phase_timeout, future).await {
+        Ok(Ok(())) => eprintln!("BX_SFTP_PHASE name={name} status=completed"),
+        Ok(Err(SshError::Sftp(SftpError::Status(status))))
+            if status.status_code == StatusCode::NoSuchFile =>
+        {
+            eprintln!("BX_SFTP_PHASE name={name} status=completed detail=already_absent")
+        }
+        Ok(Err(error)) => eprintln!("BX_SFTP_PHASE name={name} status=failed error={error}"),
+        Err(_) => eprintln!("BX_SFTP_PHASE name={name} status=timed_out"),
+    }
+}
+
 async fn create_test_file(path: &Path, bytes: u64) -> Result<(), SshError> {
+    if let Some(source) = env::var_os("BX_SSH_TEST_SFTP_SOURCE_FILE") {
+        let copied = fs::copy(source, path).await?;
+        assert_eq!(
+            copied, bytes,
+            "the OpenSSH baseline source must have the same size"
+        );
+        return Ok(());
+    }
     let mut file = File::create(path).await?;
     let block = (0..DATA_BLOCK_BYTES)
         .map(|index| ((index * 31 + 17) % 251) as u8)
@@ -421,6 +556,23 @@ async fn create_test_file(path: &Path, bytes: u64) -> Result<(), SshError> {
     file.flush().await?;
     file.sync_all().await?;
     Ok(())
+}
+
+async fn hash_local_file(path: &Path) -> Result<String, SshError> {
+    let mut file = File::open(path).await?;
+    let mut buffer = vec![0; DATA_BLOCK_BYTES];
+    let mut hasher = Sha256::new();
+    loop {
+        let count = file.read(&mut buffer).await?;
+        if count == 0 {
+            return Ok(hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect());
+        }
+        hasher.update(&buffer[..count]);
+    }
 }
 
 fn temporary_test_directory() -> PathBuf {

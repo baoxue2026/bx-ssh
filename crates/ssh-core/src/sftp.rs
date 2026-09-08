@@ -15,22 +15,26 @@ use russh_sftp::client::{error::Error as SftpError, Config, SftpSession};
 use russh_sftp::protocol::{FileAttributes, FileType, OpenFlags, StatusCode};
 use sha2::{Digest, Sha256};
 use tokio::fs::{self, File, OpenOptions};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufWriter};
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::MoveFileW;
 
+use crate::sftp_read::ReadAheadSession;
 use crate::{ConnectionCancellation, SshError};
 
 const TRANSFER_BUFFER_BYTES: usize = 256 * 1024;
-const SFTP_MAX_PACKET_BYTES: u32 = 32 * 1024;
+// Keep the packet size compatible with older OpenSSH SFTP servers. Larger
+// packets are rejected by the Windows OpenSSH 8.1 compatibility target.
+const SFTP_MAX_PACKET_BYTES: u32 = 64 * 1024;
 const SFTP_MAX_CONCURRENT_WRITES: usize = 64;
 const SFTP_REQUEST_TIMEOUT_SECONDS: u64 = 30;
 static TEMPORARY_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub struct SftpClient {
     session: SftpSession,
+    read_ahead: Option<ReadAheadSession>,
 }
 
 struct CreatedRemoteEntries {
@@ -46,7 +50,14 @@ struct CreatedLocalEntries {
 impl SftpClient {
     pub(crate) async fn open(stream: russh::ChannelStream<client::Msg>) -> Result<Self, SshError> {
         let session = SftpSession::new_with_config(stream, sftp_config()).await?;
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            read_ahead: None,
+        })
+    }
+
+    pub(crate) async fn enable_read_ahead(&mut self, stream: russh::ChannelStream<client::Msg>) {
+        self.read_ahead = ReadAheadSession::open(stream, sftp_config()).await.ok();
     }
 
     pub async fn canonicalize(&self, path: &str) -> Result<String, SshError> {
@@ -539,34 +550,25 @@ impl SftpClient {
         };
 
         let temporary_path = temporary_local_path(&local_path)?;
-        let mut remote_file = self.session.open(remote_path).await?;
-        let mut local_file = OpenOptions::new()
+        let local_file = OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&temporary_path)
             .await?;
+        let mut local_file = BufWriter::with_capacity(1024 * 1024, local_file);
         let started_at = Instant::now();
-        let result = copy_and_hash_with_progress(
-            &mut remote_file,
-            &mut local_file,
-            cancellation,
-            on_progress,
-        )
-        .await;
+        let result = self
+            .copy_remote_with_progress(remote_path, &mut local_file, cancellation, on_progress)
+            .await;
 
         let summary = match result {
             Ok((bytes, sha256)) => {
-                if let Err(error) = remote_file.shutdown().await {
-                    drop(local_file);
-                    let _ = fs::remove_file(&temporary_path).await;
-                    return Err(error.into());
-                }
                 if let Err(error) = local_file.flush().await {
                     drop(local_file);
                     let _ = fs::remove_file(&temporary_path).await;
                     return Err(error.into());
                 }
-                if let Err(error) = local_file.sync_all().await {
+                if let Err(error) = local_file.get_ref().sync_all().await {
                     drop(local_file);
                     let _ = fs::remove_file(&temporary_path).await;
                     return Err(error.into());
@@ -824,13 +826,36 @@ impl SftpClient {
         let remote_path = validate_remote_path(remote_path)?;
         self.reject_remote_symlink_components(remote_path, true)
             .await?;
-        let mut remote_file = self.session.open(remote_path).await?;
         let mut sink = tokio::io::sink();
         let started_at = Instant::now();
-        let (bytes, sha256) =
-            copy_and_hash_with_cancellation(&mut remote_file, &mut sink, cancellation).await?;
-        remote_file.shutdown().await?;
+        let (bytes, sha256) = self
+            .copy_remote_with_progress(remote_path, &mut sink, cancellation, &mut |_| {})
+            .await?;
         Ok(transfer_summary(bytes, sha256, started_at))
+    }
+
+    async fn copy_remote_with_progress<W>(
+        &self,
+        remote_path: &str,
+        writer: &mut W,
+        cancellation: Option<&ConnectionCancellation>,
+        on_progress: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<(u64, String), SshError>
+    where
+        W: AsyncWrite + Unpin + Send,
+    {
+        if let Some(reader) = &self.read_ahead {
+            return reader
+                .copy_to(remote_path, writer, cancellation, on_progress)
+                .await;
+        }
+        let mut remote_file = self.session.open(remote_path).await?;
+        let result =
+            copy_and_hash_with_progress(&mut remote_file, writer, cancellation, on_progress).await;
+        let close_result = remote_file.shutdown().await;
+        let result = result?;
+        close_result?;
+        Ok(result)
     }
 
     pub async fn remove_file(&self, remote_path: &str) -> Result<(), SshError> {
@@ -1142,7 +1167,14 @@ impl SftpClient {
     }
 
     pub async fn close(&self) -> Result<(), SshError> {
-        self.session.close().await?;
+        let read_result = self
+            .read_ahead
+            .as_ref()
+            .map(ReadAheadSession::close)
+            .transpose();
+        let session_result = self.session.close().await;
+        read_result?;
+        session_result?;
         Ok(())
     }
 }
@@ -1674,7 +1706,7 @@ mod tests {
     fn pipelines_small_sftp_write_packets() {
         let config = sftp_config();
 
-        assert_eq!(config.max_packet_len, 32 * 1024);
+        assert_eq!(config.max_packet_len, 64 * 1024);
         assert_eq!(config.max_concurrent_writes, 64);
         assert_eq!(config.request_timeout_secs, 30);
     }
