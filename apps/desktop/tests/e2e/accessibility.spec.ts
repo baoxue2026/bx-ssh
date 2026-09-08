@@ -30,7 +30,7 @@ type AccessibilityScanResult =
 
 describe("BX SSH accessibility", () => {
   before(async () => {
-    await prepareApplication();
+    await prepareApplication({ clearSshFixtures: true });
     await browser.execute(axe.source);
   });
 

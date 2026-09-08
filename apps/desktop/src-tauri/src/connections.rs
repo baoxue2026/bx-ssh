@@ -17,9 +17,17 @@ use tauri::{AppHandle, Manager, State};
 use crate::command_error::{CommandError, CommandErrorCode};
 
 const DATABASE_FILE_NAME: &str = "bx-ssh.db";
-const CREDENTIAL_SERVICE: &str = "io.github.baoxue2026.bx-ssh";
+const CREDENTIAL_SERVICE: &str = if cfg!(feature = "e2e") {
+    "io.github.baoxue2026.bx-ssh.e2e"
+} else {
+    "io.github.baoxue2026.bx-ssh"
+};
 const DATABASE_KEY_ACCOUNT: &str = "database-data-key-v1";
-const PASSWORD_CREDENTIAL_SERVICE: &str = "io.github.baoxue2026.bx-ssh.password";
+const PASSWORD_CREDENTIAL_SERVICE: &str = if cfg!(feature = "e2e") {
+    "io.github.baoxue2026.bx-ssh.e2e.password"
+} else {
+    "io.github.baoxue2026.bx-ssh.password"
+};
 
 #[derive(Clone, Default)]
 pub(crate) struct ConnectionRepositoryState {

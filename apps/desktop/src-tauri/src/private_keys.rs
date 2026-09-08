@@ -19,8 +19,16 @@ use uuid::Uuid;
 use crate::command_error::{CommandError, CommandErrorCode};
 use crate::connections::{app_data_directory, run_query, ConnectionRepositoryState};
 
-pub(crate) const PRIVATE_KEY_MATERIAL_SERVICE: &str = "bx-ssh-private-key-material";
-pub(crate) const PRIVATE_KEY_PASSPHRASE_SERVICE: &str = "bx-ssh-private-key-passphrase";
+pub(crate) const PRIVATE_KEY_MATERIAL_SERVICE: &str = if cfg!(feature = "e2e") {
+    "bx-ssh-e2e-private-key-material"
+} else {
+    "bx-ssh-private-key-material"
+};
+pub(crate) const PRIVATE_KEY_PASSPHRASE_SERVICE: &str = if cfg!(feature = "e2e") {
+    "bx-ssh-e2e-private-key-passphrase"
+} else {
+    "bx-ssh-private-key-passphrase"
+};
 const MAX_PRIVATE_KEY_BYTES: u64 = 4 * 1024 * 1024;
 
 #[tauri::command]

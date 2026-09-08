@@ -195,6 +195,14 @@ fn export_typescript_bindings() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(feature = "e2e")]
+    assert_eq!(
+        context.config().identifier,
+        "io.github.baoxue2026.bx-ssh.e2e",
+        "E2E builds must use the isolated application identity"
+    );
+
     #[cfg(debug_assertions)]
     export_typescript_bindings();
 
@@ -326,7 +334,7 @@ pub fn run() {
             save_private_key_reference,
             delete_private_key_reference
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build BX SSH")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {

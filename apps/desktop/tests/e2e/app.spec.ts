@@ -17,7 +17,7 @@ interface AppInfo {
 
 describe("BX SSH desktop shell", () => {
   before(async () => {
-    await prepareApplication();
+    await prepareApplication({ clearSshFixtures: true });
   });
 
   it("loads the application and invokes the Rust backend", async () => {

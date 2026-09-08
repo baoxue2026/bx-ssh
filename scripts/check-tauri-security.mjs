@@ -123,6 +123,14 @@ checkFrontendCommandSurface(
   reviewedApplicationCommands,
 );
 const e2eCapabilities = e2eConfig.app?.security?.capabilities ?? [];
+if (
+  e2eConfig.identifier !== `${tauriConfig.identifier}.e2e` ||
+  e2eConfig.identifier === tauriConfig.identifier
+) {
+  violations.push(
+    "E2E must use a separate application and data-directory identity",
+  );
+}
 if (e2eCapabilities.length !== 1) {
   violations.push("E2E configuration must define exactly one capability");
 } else {
