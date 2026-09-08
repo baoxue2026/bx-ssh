@@ -202,6 +202,7 @@ jobs:
 
       - name: Validate signed Windows installer lifecycle
         if: runner.os == 'Windows'
+        timeout-minutes: 25
         shell: pwsh
         run: >-
           ./scripts/test-windows-installation.ps1

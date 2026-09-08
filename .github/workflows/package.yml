@@ -75,6 +75,11 @@ jobs:
       - name: Validate Windows installation policy
         run: node scripts/check-windows-packaging.mjs
 
+      - name: Test Windows installer process handling
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-process.ps1
+
       - name: Prepare updater signing directory
         run: >-
           node -e "require('node:fs').mkdirSync(process.argv[1], { recursive: true })"
@@ -123,6 +128,7 @@ jobs:
 
       - name: Validate Windows installer lifecycle
         if: runner.os == 'Windows'
+        timeout-minutes: 15
         shell: pwsh
         run: >-
           ./scripts/test-windows-installation.ps1
@@ -142,7 +148,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: bx-ssh-${{ matrix.platform }}-${{ github.ref_name }}-${{ github.sha }}
+          name: bx-ssh-${{ matrix.platform }}-${{ github.sha }}
           if-no-files-found: warn
           retention-days: 90
           path: |

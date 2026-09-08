@@ -12,43 +12,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "windows-process.ps1")
 $resolvedBundleRoot = [System.IO.Path]::GetFullPath($BundleRoot)
 $resolvedReportPath = [System.IO.Path]::GetFullPath($ReportPath)
 $reportDirectory = Split-Path -Parent $resolvedReportPath
-$runRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("bx-ssh-install-" + [guid]::NewGuid())
+$temporaryRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+$runRoot = [System.IO.Path]::GetFullPath((Join-Path $temporaryRoot ("bx-ssh-install-" + [guid]::NewGuid())))
 $results = @()
 $upgrade = [ordered]@{
   requested = -not [string]::IsNullOrWhiteSpace($PreviousInstaller)
   result = "not-run"
   reason = "未提供上一版本安装包"
-}
-
-function Invoke-ProcessChecked {
-  param(
-    [Parameter(Mandatory = $true)][string]$FilePath,
-    [string[]]$ArgumentList = @(),
-    [int[]]$AllowedExitCodes = @(0),
-    [string]$WorkingDirectory = "",
-    [int]$TimeoutSeconds = 120
-  )
-
-  $start = @{
-    FilePath = $FilePath
-    ArgumentList = $ArgumentList
-    Wait = $true
-    PassThru = $true
-    WindowStyle = "Hidden"
-  }
-  if ($WorkingDirectory) { $start.WorkingDirectory = $WorkingDirectory }
-  $process = Start-Process @start
-  if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-    try { $process.Kill() } catch { }
-    throw "命令超时（${TimeoutSeconds} 秒）：$FilePath $($ArgumentList -join ' ')"
-  }
-  if ($process.ExitCode -notin $AllowedExitCodes) {
-    throw "命令失败（退出码 $($process.ExitCode)）：$FilePath $($ArgumentList -join ' ')"
-  }
-  return $process.ExitCode
 }
 
 function Assert-Authenticode {
@@ -101,8 +75,7 @@ function Install-Nsis {
     [Parameter(Mandatory = $true)][string]$InstallRoot
   )
   New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
-  Invoke-ProcessChecked -FilePath $Installer.FullName -ArgumentList @("/S", "/D=$InstallRoot") | Out-Null
-  Start-Sleep -Seconds 2
+  Invoke-ProcessChecked -FilePath $Installer.FullName -RawArguments "/S /D=$InstallRoot" | Out-Null
   $executables = @(Get-ChildItem -LiteralPath $InstallRoot -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue)
   if ($executables.Count -eq 0) {
     throw "NSIS 安装后未发现可执行文件：$($Installer.Name)"
@@ -112,6 +85,22 @@ function Install-Nsis {
     throw "NSIS 安装后未发现卸载程序：$($Installer.Name)"
   }
   return $uninstaller
+}
+
+function Uninstall-Nsis {
+  param(
+    [Parameter(Mandatory = $true)][System.IO.FileInfo]$Uninstaller,
+    [Parameter(Mandatory = $true)][string]$InstallRoot
+  )
+  Invoke-ProcessChecked -FilePath $Uninstaller.FullName -ArgumentList @("/S") | Out-Null
+  # NSIS copies its uninstaller to a child process before the original exits.
+  $deadline = [DateTime]::UtcNow.AddSeconds(120)
+  do {
+    $remaining = @(Get-ChildItem -LiteralPath $InstallRoot -Recurse -File -ErrorAction SilentlyContinue)
+    if ($remaining.Count -eq 0) { return }
+    Start-Sleep -Milliseconds 200
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "NSIS 卸载超时，仍有安装文件：$InstallRoot"
 }
 
 function Invoke-InstallerLifecycle {
@@ -131,27 +120,20 @@ function Invoke-InstallerLifecycle {
     $record.signature = Assert-Authenticode $Installer
   }
 
+  Write-Host "验证 $($Installer.Name) 的安装与卸载"
   if ($extension -eq ".exe") {
     $installRoot = Join-Path $runRoot ("nsis-" + [guid]::NewGuid())
     $uninstaller = Install-Nsis -Installer $Installer -InstallRoot $installRoot
     $record.install = "passed"
-    Invoke-ProcessChecked -FilePath $uninstaller.FullName -ArgumentList @("/S") | Out-Null
-    Start-Sleep -Seconds 2
-    if (Test-Path -LiteralPath $installRoot) {
-      $remaining = @(Get-ChildItem -LiteralPath $installRoot -Recurse -File -ErrorAction SilentlyContinue)
-      if ($remaining.Count -gt 0) {
-        throw "NSIS 卸载后仍有安装文件：$($Installer.Name)"
-      }
-    }
+    Uninstall-Nsis -Uninstaller $uninstaller -InstallRoot $installRoot
     $record.uninstall = "passed"
     $record.dataPreserved = $null
   }
   else {
-    $logPath = Join-Path $runRoot ($Installer.BaseName + ".msi.log")
+    $logPath = Join-Path $reportDirectory ($Installer.BaseName + ".msi.log")
     Invoke-ProcessChecked -FilePath "msiexec.exe" -ArgumentList @(
       "/i", $Installer.FullName, "/qn", "/norestart", "/l*v", $logPath
     ) -AllowedExitCodes @(0, 3010) | Out-Null
-    Start-Sleep -Seconds 2
     $after = @(Find-UninstallEntries)
     $entry = $after | Where-Object { $_.DisplayName -like "BX SSH*" } | Select-Object -First 1
     if ($null -eq $entry) {
@@ -163,9 +145,8 @@ function Invoke-InstallerLifecycle {
       throw "MSI 卸载注册表项缺少 ProductCode：$($Installer.Name)"
     }
     Invoke-ProcessChecked -FilePath "msiexec.exe" -ArgumentList @(
-      "/x", $productCode, "/qn", "/norestart", "/l*v", (Join-Path $runRoot ($Installer.BaseName + ".uninstall.log"))
+      "/x", $productCode, "/qn", "/norestart", "/l*v", (Join-Path $reportDirectory ($Installer.BaseName + ".uninstall.log"))
     ) -AllowedExitCodes @(0, 3010) | Out-Null
-    Start-Sleep -Seconds 2
     if (@(Find-UninstallEntries | Where-Object { $_.DisplayName -like "BX SSH*" }).Count -gt 0) {
       throw "MSI 卸载后仍存在 BX SSH 注册表项：$($Installer.Name)"
     }
@@ -179,7 +160,11 @@ try {
   if (-not (Test-Path -LiteralPath $resolvedBundleRoot -PathType Container)) {
     throw "安装包目录不存在：$resolvedBundleRoot"
   }
+  if (@(Find-UninstallEntries).Count -gt 0) {
+    throw "检测到已有 BX SSH 安装，请在干净测试环境运行安装验收"
+  }
   New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
+  New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
   $installers = @(Get-ChildItem -LiteralPath $resolvedBundleRoot -Recurse -File |
     Where-Object { $_.Extension.ToLowerInvariant() -in @(".exe", ".msi") })
   if ($installers.Count -eq 0) { throw "未找到 Windows MSI/NSIS 安装包" }
@@ -202,8 +187,7 @@ try {
       if (@(Get-ChildItem -LiteralPath $upgradeRoot -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue).Count -eq 0) {
         throw "NSIS 覆盖升级后未发现可执行文件"
       }
-      Invoke-ProcessChecked -FilePath $currentUninstaller.FullName -ArgumentList @("/S") | Out-Null
-      Start-Sleep -Seconds 2
+      Uninstall-Nsis -Uninstaller $currentUninstaller -InstallRoot $upgradeRoot
       $upgrade.result = "passed"
       $upgrade.reason = "上一版本到当前版本的 NSIS 覆盖升级、最终卸载均通过"
     }
@@ -218,7 +202,8 @@ try {
     installers = $results
     upgrade = $upgrade
   } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedReportPath -Encoding utf8NoBOM
-  Write-Output "Windows 安装、卸载和签名验收通过：$resolvedReportPath"
+  Write-Output "Windows 安装、卸载验收通过：$resolvedReportPath"
+  if ($RequireAuthenticodeSignature) { Write-Output "正式 Authenticode 签名验证已通过" }
 }
 catch {
   New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
@@ -235,6 +220,12 @@ catch {
 }
 finally {
   if (Test-Path -LiteralPath $runRoot) {
+    $cleanupPath = [System.IO.Path]::GetFullPath($runRoot)
+    $expectedParent = $temporaryRoot.TrimEnd('\')
+    if ((Split-Path -Parent $cleanupPath).TrimEnd('\') -ne $expectedParent -or
+        (Split-Path -Leaf $cleanupPath) -notmatch '^bx-ssh-install-[0-9a-f-]{36}$') {
+      throw "拒绝清理测试目录之外的路径：$cleanupPath"
+    }
     Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
