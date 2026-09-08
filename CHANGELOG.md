@@ -11,6 +11,8 @@ The format follows Keep a Changelog, and release versions follow Semantic Versio
 - Isolate desktop E2E application data and credential services from normal installations.
 - Improve SFTP download throughput with bounded read-ahead and buffered local writes while preserving integrity checks, cancellation, and atomic publication.
 - Fix vulnerable development dependency paths and enforce reviewed security exception expiry in local checks.
+- Preserve Windows installer argument boundaries, enforce process timeouts, and wait for NSIS uninstall completion.
+- Repair Linux CI credential setup, PAM empty-prompt assertions, historical test-marker secret-scan findings, and pull-request artifact names.
 
 ### Added
 

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "phase": "P1",
-  "updatedAt": "2026-09-08T11:07:22.634Z",
+  "updatedAt": "2026-09-08T13:34:19.7720975Z",
   "releaseReadiness": "blocked",
   "releaseReadinessReason": "代码与本地回归已修复，完整当前提交 CI、Win11 参考设备性能/人工/24h 稳定性、独立审批者和正式签名环境仍待验收。",
   "items": [
@@ -35,7 +35,9 @@
         ".github/workflows/package.yml",
         ".github/workflows/release.yml",
         "pnpm check:windows-packaging 已通过",
-        "本机 release NSIS 安装包静默安装和卸载通过"
+        "本机 release NSIS 安装包静默安装和卸载通过",
+        "2026-09-08：修复进程参数与超时后，本机 0.1.0 MSI/NSIS 安装、卸载均通过（未要求正式签名，未执行跨版本升级）",
+        "scripts/test-windows-process.ps1（真实验证参数边界、退出码、超时及子进程清理）"
       ],
       "pendingEvidence": [
         "CI 构建出的 MSI/NSIS 安装包真实安装、升级和卸载报告",
@@ -54,8 +56,8 @@
         "本机十会话：BX_SESSION_RESULT sessions=10 elapsed_ms=410",
         "本机 1GiB 上传/下载及 SHA-256 一致性通过",
         "crates/ssh-core/src/sftp_read.rs（有界预读、顺序校验、短读与取消测试）",
-        "artifacts/test-reports/openssh-phase1-release-read-ahead.json（1GiB 下载 75.7 MB/s，原顺序路径 34.6 MB/s）",
-        "本机为 Windows 10 + SATA SSD；传输后持久化增加约 9 秒，总速率仍未达到 OpenSSH 的 80%"
+        "artifacts/test-reports/openssh-phase1-final-release-1g.json（干净提交 500ccee，1GiB 下载 98.1 MB/s，OpenSSH 基线 160.1 MB/s，61%）",
+        "本机为 Windows 10 + SATA SSD；数据传输 5.6 秒，持久化完成 10.9 秒，总速率仍未达到 OpenSSH 的 80%"
       ],
       "pendingEvidence": [
         "Windows 11 24H2 / NVMe 参考设备同文件、双向独立 OpenSSH 基线，含持久化的传输速度达到 80%",
