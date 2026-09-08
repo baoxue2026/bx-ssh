@@ -4,6 +4,11 @@
 一位管理员；尚无 GitHub environment 或 repository secrets。现有发布 workflow 已
 定义门禁，但配置与真实签名验收尚未完成。
 
+开发提交 `4de6662` 的 CI、Security 和三平台 Package 已全部通过，Windows
+0.1.1 MSI/NSIS 安装与卸载也通过；可复核的 run 链接见
+`quality/phase-1-acceptance-progress.md`。这些原型包未要求正式 Authenticode 签名，
+跨版本升级与用户数据保留尚未验证。
+
 ## main 分支保护
 
 可审阅的 REST 请求内容位于 `quality/phase-1-main-branch-protection.json`。该配置
@@ -42,7 +47,7 @@ Tauri 公钥必须与正式私钥匹配，换钥时通过代码审查更新应�
 
 ## 发布前仍需取得的证据
 
-- 当前候选提交的全平台 CI、Security、Package 与安装/升级/卸载结果。
+- 最终 RC 提交的全平台检查与发布证据复核，以及上一版本升级和用户数据保留结果。
 - Windows 11 24H2 的性能、人工兼容、断网恢复和 24 小时稳定性原始记录。
 - 正式 Windows 安装包签名与时间戳、Tauri updater 签名、篡改和降级拒绝报告。
 - 针对同一版本/提交生成的 SBOM、符号、SHA-256、发布 manifest 和缺陷处置记录。

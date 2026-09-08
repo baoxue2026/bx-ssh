@@ -31,7 +31,7 @@
   超时会终止所启动的进程树。NSIS 卸载等待子进程实际删除文件，MSI 日志保留在
   报告目录；检测到已有安装时拒绝运行，避免影响日常安装。
 
-## 本地验证与性能边界
+## 自动化验证与性能边界
 
 `pnpm check` 已通过：160 项前端测试、166 项 Rust 测试，以及额外的 IPC 生成检查。
 原有 9 项桌面 E2E 与新增 3 项真实 SSH 桌面测试已通过；Windows Release 的
@@ -39,11 +39,23 @@ SSH/SFTP、取消清理及单 subsystem 回退测试已通过。
 Windows 安装脚本还通过参数边界、非零退出码、真实超时和子进程清理回归；本机
 0.1.0 MSI/NSIS 的安装与卸载均通过，未要求 Authenticode，也未验证跨版本升级。
 
-首轮云端 CI（`34221851911`）中三平台 Rust、前端、QA、Windows 三种 SSH 算法、
-四档缩放及 macOS 桌面 E2E 已通过。Linux 的两类环境/断言问题已修正，待新一轮
-矩阵验证。首轮 Security 的依赖、许可证、SBOM 均通过，历史误报修正后本地
-完整 111 个提交扫描通过；Package 的构建及更新签名反例验证通过，制品上传
-命名和 Windows 安装进程等待问题已修复，仍须以新提交的完整云端结果为准。
+开发提交 `4de66627f36602d3900bcbd36a0ade9ef00621aa` 的云端检查已全部通过，
+测试使用 GitHub PR 合并提交 `9b0327949c3ee4ac37873bd7a2cc1925c5452f8c`：
+
+- [CI 34238620274](https://github.com/baoxue2026/bx-ssh/actions/runs/34238620274)：
+  27 个作业通过，包含 12 组 Linux / 3 组 Windows OpenSSH、三平台 Rust、六组
+  桌面 E2E 和 Release gate。Windows 100% 额外执行的 3 项真实 SSH 桌面测试
+  实际通过；其他普通桌面步骤中未启用的 SSH 用例不计为通过。
+- [Security 34238620271](https://github.com/baoxue2026/bx-ssh/actions/runs/34238620271)：
+  依赖、许可证、例外到期、完整历史扫描、Dependency Review 与 SBOM 均通过。
+  推送后本地另扫描完整 114 个提交，无新的密钥扫描命中。
+- [Package 34238620319](https://github.com/baoxue2026/bx-ssh/actions/runs/34238620319)：
+  三平台构建、体积检查、临时 updater 签名与篡改/错误密钥拒绝、制品归档通过。
+  Windows 0.1.1 MSI/NSIS 安装卸载约 4 秒完成，未要求正式 Authenticode 签名，
+  未提供上一版本安装包，跨版本升级和用户数据保留仍待验收。
+
+上述结果证明本轮自动化修复有效；RC 还须在最终发布提交重新核对同一版本的
+全部证据与正式签名，不能仅凭这些开发阶段通过记录发布。
 
 本机是 Windows 10 19045，系统盘为 SATA SSD，不符合性能预算指定的 Windows 11
 24H2、4 核/16 GiB/NVMe 参考环境。本地 1 GiB 实测如下，单位为十进制 MB/s：
@@ -93,7 +105,8 @@ pwsh scripts/test-openssh-windows.ps1 -MatrixId local-real-ssh -IncludeDesktopE2
 
 ## 剩余工作
 
-1. 在当前发布候选提交上取得完整 GitHub CI、Security 和 Package 结果。
+1. 以已通过自动化的开发提交为基础，补齐上一版本覆盖升级与用户数据保留报告；
+   在最终 RC 提交上复核 CI、Security、Package 和版本化发布证据。
 2. 在 Windows 11 24H2 参考设备上复验 1 GiB 的 80% 门槛、启动、十会话内存、
    标签切换和连续 5 分钟终端输出；完成 24 小时真实应用 soak。此前短时 pwsh
    采集结果只是采集器自检。

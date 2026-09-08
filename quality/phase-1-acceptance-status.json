@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "phase": "P1",
-  "updatedAt": "2026-09-08T13:34:19.7720975Z",
+  "updatedAt": "2026-09-08T15:40:43.5796727Z",
   "releaseReadiness": "blocked",
-  "releaseReadinessReason": "代码与本地回归已修复，完整当前提交 CI、Win11 参考设备性能/人工/24h 稳定性、独立审批者和正式签名环境仍待验收。",
+  "releaseReadinessReason": "开发提交 4de6662 的 CI、Security、Package 已全部通过；Win11 参考设备性能/人工/24h 稳定性、跨版本升级与数据保留、独立审批者和正式签名环境仍待验收。",
   "items": [
     {
       "id": "QA-COMP-01",
@@ -16,13 +16,10 @@
         "crates/ssh-core/tests/openssh.rs",
         "本机 Windows 10 OpenSSH 8.1p1：Ed25519、ECDSA P-256、RSA-SHA2 已通过",
         "2026-09-08：Windows Release SFTP、上传/下载取消、单 subsystem 兼容路径和十会话已通过",
-        "apps/desktop/tests/e2e/ssh-workflows.spec.ts（真实 OpenSSH 的三项桌面流程已通过）"
+        "apps/desktop/tests/e2e/ssh-workflows.spec.ts（真实 OpenSSH 的三项桌面流程已通过）",
+        "https://github.com/baoxue2026/bx-ssh/actions/runs/34238620274（4de6662：15 组 OpenSSH、6 组桌面矩阵与 Windows 真实 SSH 流程全部通过）"
       ],
-      "pendingEvidence": [
-        "CI：Ubuntu 22.04/24.04、Debian 12、Rocky Linux 9 三种主机密钥矩阵",
-        "CI：Windows Server 2025 OpenSSH 三种主机密钥矩阵",
-        "Windows 11 24H2 系统代理、输入法和高 DPI 人工验收"
-      ]
+      "pendingEvidence": ["Windows 11 24H2 系统代理、输入法和高 DPI 人工验收"]
     },
     {
       "id": "QA-INSTALL-01",
@@ -37,10 +34,11 @@
         "pnpm check:windows-packaging 已通过",
         "本机 release NSIS 安装包静默安装和卸载通过",
         "2026-09-08：修复进程参数与超时后，本机 0.1.0 MSI/NSIS 安装、卸载均通过（未要求正式签名，未执行跨版本升级）",
-        "scripts/test-windows-process.ps1（真实验证参数边界、退出码、超时及子进程清理）"
+        "scripts/test-windows-process.ps1（真实验证参数边界、退出码、超时及子进程清理）",
+        "https://github.com/baoxue2026/bx-ssh/actions/runs/34238620319（4de6662：三平台打包归档通过，Windows 0.1.1 MSI/NSIS 安装卸载约 4 秒完成）"
       ],
       "pendingEvidence": [
-        "CI 构建出的 MSI/NSIS 安装包真实安装、升级和卸载报告",
+        "上一版本到当前版本的覆盖升级及用户数据保留报告",
         "正式 Windows Authenticode 签名证书验证"
       ]
     },
@@ -94,7 +92,9 @@
         "scripts/check-release-gate.mjs",
         "scripts/prepare-release-evidence.mjs",
         "quality/phase-1-acceptance-progress.md",
-        "quality/phase-1-release-setup.md"
+        "quality/phase-1-release-setup.md",
+        "https://github.com/baoxue2026/bx-ssh/actions/runs/34238620271（4de6662：完整 Security 与 SBOM 通过）",
+        "https://github.com/baoxue2026/bx-ssh/actions/runs/34238620319/artifacts/10061867924（Windows 原型安装包、符号与验收报告已归档，保留至 2026-12-07）"
       ],
       "pendingEvidence": ["每个 blocking 套件的版本化测试报告和发布附件"]
     },
